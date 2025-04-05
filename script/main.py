@@ -1,13 +1,23 @@
 import threading
-import time
 from queue import Queue
 from model_loader import load_models # 函数现在返回4个值
 from knowledge_base import KnowledgeBase
 from streamer import CustomStreamer
-from config import *
+from script.config import *
 from query_rewriter import generate_rewritten_query
 
 def chat_loop():
+
+    print("Initializing Knowledge Base...")
+    try:
+        # 必须提供原始知识库文件路径，以便在需要时（首次运行或加载失败时）创建索引
+        kb = KnowledgeBase(similarity_mode=SEARCH_MODE, knowledge_file=KNOWLEDGE_BASE_FILE)
+    except Exception as e:
+        print(f"FATAL: Failed to initialize Knowledge Base: {e}")
+        print("Please ensure the knowledge file exists and/or the processed data directory is valid.")
+        return  # 如果 KB 初始化失败，程序无法继续
+    print("Knowledge Base initialization complete.")
+
     # ================== 修改：接收两个模型 ==================
     # 加载两个模型和它们的分词器
     print("Loading models...")
@@ -19,10 +29,6 @@ def chat_loop():
     if rewriter_model is None or rewriter_tokenizer is None:
         print("Warning: Rewriter model not loaded. Query rewriting will be skipped.")
 
-    print("Initializing Knowledge Base...")
-    kb = KnowledgeBase(SEARCH_MODE)
-    kb.create_index(KNOWLEDGE_BASE_FILE)
-    print("Knowledge Base initialized.")
 
     messages = []
     MAX_HISTORY = 5

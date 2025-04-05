@@ -3,7 +3,7 @@
 from modelscope import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 import torch
-from config import *
+from script.config import *
 
 def load_models():
     """
