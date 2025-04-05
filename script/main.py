@@ -1,28 +1,30 @@
 import threading
 from queue import Queue
-from model_loader import load_models # 函数现在返回4个值
+from model_loader import load_models
 from knowledge_base import KnowledgeBase
 from streamer import CustomStreamer
-from script.config import *
+from config import *
 from query_rewriter import generate_rewritten_query
 
 def chat_loop():
-
-    print("Initializing Knowledge Base...")
-    try:
-        # 必须提供原始知识库文件路径，以便在需要时（首次运行或加载失败时）创建索引
-        kb = KnowledgeBase(similarity_mode=SEARCH_MODE, knowledge_file=KNOWLEDGE_BASE_FILE)
-    except Exception as e:
-        print(f"FATAL: Failed to initialize Knowledge Base: {e}")
-        print("Please ensure the knowledge file exists and/or the processed data directory is valid.")
-        return  # 如果 KB 初始化失败，程序无法继续
-    print("Knowledge Base initialization complete.")
-
-    # ================== 修改：接收两个模型 ==================
-    # 加载两个模型和它们的分词器
     print("Loading models...")
     generator_model, generator_tokenizer, rewriter_model, rewriter_tokenizer = load_models()
     print("Models loaded.")
+
+    # === 修改：使用目录和模式初始化 KnowledgeBase ===
+    print("Initializing Knowledge Base...")
+    try:
+        # 传入目录和文件模式
+        kb = KnowledgeBase(
+            similarity_mode=SEARCH_MODE,
+            knowledge_dir=KNOWLEDGE_BASE_DIR,
+            knowledge_file_pattern=KNOWLEDGE_FILE_PATTERN
+        )
+    except Exception as e:
+         print(f"FATAL: Failed to initialize Knowledge Base: {e}")
+         print("Please ensure the knowledge directory and pattern are set correctly in config.py.")
+         return
+    print("Knowledge Base initialization complete.")
     # =======================================================
 
     # 检查重写模型是否加载成功（如果 load_models 中没有抛出异常而是返回 None）

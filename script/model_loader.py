@@ -45,6 +45,7 @@ def load_models():
             trust_remote_code=True,
             torch_dtype=torch.bfloat16, # 选择适合模型的类型
         )
+        rewriter_model = PeftModel.from_pretrained(rewriter_model, ADAPTER_PATH)
         rewriter_model.eval()
 
         # 假设 tokenizer 和模型在同一路径，如果不是，请修改 config.py 并使用 REWRITER_TOKENIZER_PATH
