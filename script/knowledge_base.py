@@ -1,5 +1,3 @@
-# test/knowledge_base.py
-
 import faiss
 import numpy as np
 import json
@@ -10,11 +8,7 @@ import time
 
 from FlagEmbedding import BGEM3FlagModel
 from text_processing import split_text
-from config import (
-    EMBEDDING_MODEL_PATH, CHUNK_SIZE, OVERLAP, MIN_CHUNK_LENGTH,
-    PROCESSED_DATA_DIR, KNOWLEDGE_BASE_DIR, KNOWLEDGE_FILE_PATTERN, # 导入新配置
-    SEARCH_MODE
-)
+from config import *
 
 class KnowledgeBase:
     # 修改 __init__ 参数
@@ -74,7 +68,7 @@ class KnowledgeBase:
 
     def _save_processed_data(self):
         """保存处理后的数据，包括源文件元数据。"""
-        if not self.chunks:
+        if not self.chunks_data:
             print("Warning: No data available to save.")
             return False
         try:
@@ -84,7 +78,7 @@ class KnowledgeBase:
             # 保存 chunks, dense_embeddings, sparse_weights, index (与之前类似)
             # ... (省略了这部分代码，假设与上一版本相同) ...
             # 1. 保存 chunks (JSON)
-            chunks_path = self.processed_data_dir / "chunks.json"; json.dump(self.chunks, open(chunks_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2); print(f"Saved chunks to {chunks_path}")
+            chunks_path = self.processed_data_dir / "chunks.json"; json.dump(self.chunks_data, open(chunks_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2); print(f"Saved chunks to {chunks_path}")
             # 2. 保存 dense embeddings (NumPy)
             if self.dense_embeddings is not None: dense_emb_path = self.processed_data_dir / "dense_embeddings.npy"; np.save(dense_emb_path, self.dense_embeddings); print(f"Saved dense embeddings to {dense_emb_path}")
             # 3. 保存 sparse weights (Pickle)
@@ -162,17 +156,28 @@ class KnowledgeBase:
             print("Processed data appears up-to-date.")
             # ==========================
 
-            # (可选) 检查 similarity_mode 是否匹配
+            #  检查 similarity_mode 是否匹配
             saved_mode = metadata.get("similarity_mode")
             if saved_mode and saved_mode != self.similarity_mode:
                 print(f"Warning: Saved data mode '{saved_mode}' differs from current mode '{self.similarity_mode}'.")
-                # return False # 如果要求模式必须匹配，则取消注释
+                return False # 如果要求模式必须匹配，则取消注释
 
             # 如果数据是新鲜的，继续加载 chunks, embeddings, index 等
-            # ... (粘贴上一版本中加载 chunks, dense_embeddings, sparse_weights, index 的代码) ...
-            # ... (确保对文件存在性做了检查) ...
-            # 1. 加载 chunks
-            chunks_path = self.processed_data_dir / "chunks.json"; self.chunks = json.load(open(chunks_path, "r", encoding="utf-8")); print(f"Loaded chunks from {chunks_path}")
+            # 1. 加载 chunks_data (字典列表)
+            chunks_path = self.processed_data_dir / "chunks.json"
+            if chunks_path.exists():
+                with open(chunks_path, "r", encoding="utf-8") as f:
+                    self.chunks_data = json.load(f)  # 加载字典列表
+                # 同时填充纯文本列表 self.chunks 以便后续校验和使用
+                self.chunks = [item.get("text", "") for item in self.chunks_data]
+                print(f"Loaded structured chunks (with source) from {chunks_path}")
+                if not self.chunks:  # 基于纯文本列表检查是否为空
+                    print("Warning: Loaded chunks list is empty after extracting text.")
+                    all_loaded = False  # 标记加载失败
+            else:
+                print(f"Chunks file not found: {chunks_path}");
+                all_loaded = False
+            # ==========================
             # 2. 加载 dense embeddings (如果需要)
             if self.similarity_mode in ["dense", "hybrid"]: dense_emb_path = self.processed_data_dir / "dense_embeddings.npy"; self.dense_embeddings = np.load(dense_emb_path); print(f"Loaded dense embeddings from {dense_emb_path}")
             # 3. 加载 sparse weights (如果需要)
@@ -219,13 +224,20 @@ class KnowledgeBase:
                        full_text = f.read()
                   # 使用 text_processing.py 中的函数进行分块
                   file_chunks = split_text(full_text, CHUNK_SIZE, OVERLAP, MIN_CHUNK_LENGTH)
-                  # 清理空块
-                  file_chunks = [c for c in file_chunks if len(c.strip()) >= MIN_CHUNK_LENGTH]
-                  all_chunks.extend(file_chunks) # 合并所有文件的块
+                  source_filename = file_path.name  # 获取文件名
+                  for chunk_text in file_chunks:
+                      if len(chunk_text.strip()) >= MIN_CHUNK_LENGTH:
+                          all_chunks.append({
+                              "text": chunk_text,
+                              "source": source_filename  # 存储文件名
+                          })
              except Exception as e:
                   print(f"  Error processing file {file_path}: {e}. Skipping this file.")
 
-        self.chunks = all_chunks
+        # 保存结构化数据
+        self.chunks_data = all_chunks  # <--- 保存包含来源的字典列表
+
+        self.chunks = [item.get("text", "") for item in self.chunks_data] # <--- 提取纯文本列表
         if not self.chunks:
              raise ValueError("No valid chunks generated from any source files.")
         print(f"Total chunks generated from all files: {len(self.chunks)}")
@@ -269,22 +281,47 @@ class KnowledgeBase:
         query_output = self.embedding_model.encode(query, return_dense=self.similarity_mode in ["dense", "hybrid"], return_sparse=self.similarity_mode in ["lexical", "hybrid"], return_colbert_vecs=False)
         query_dense = query_output.get("dense_vecs", None); query_sparse = query_output.get("lexical_weights", None)
         if query_dense is not None: query_dense = query_dense.astype(np.float32).reshape(1, -1)
-        if self.similarity_mode == "dense": #... (dense logic)
-             if self.index is None or query_dense is None: raise ValueError("Index/query dense missing for dense search.")
-             _, indices = self.index.search(query_dense, top_k); valid_indices = [i for i in indices[0] if 0 <= i < len(self.chunks)]; return [self.chunks[i] for i in valid_indices]
-        elif self.similarity_mode == "lexical": # ... (lexical logic)
-             if not self.sparse_weights or query_sparse is None: raise ValueError("Sparse weights missing for lexical search.")
-             scores = [(i, self.embedding_model.compute_lexical_matching_score(query_sparse, cs)) for i, cs in enumerate(self.sparse_weights)]; scores.sort(key=lambda x: x[1], reverse=True)
-             top_k_indices = [idx for idx, _ in scores[:top_k]]; valid_indices = [i for i in top_k_indices if 0 <= i < len(self.chunks)]; return [self.chunks[i] for i in valid_indices]
-        elif self.similarity_mode == "hybrid": # ... (hybrid logic)
-             if self.index is None or self.dense_embeddings is None or not self.sparse_weights or query_dense is None or query_sparse is None: raise ValueError("Components missing for hybrid search.")
-             candidate_multiplier = 10; num_candidates = min(top_k * candidate_multiplier, self.index.ntotal)
-             _, dense_indices = self.index.search(query_dense, num_candidates)
-             candidate_indices = [i for i in dense_indices[0] if 0 <= i < len(self.dense_embeddings) and 0 <= i < len(self.sparse_weights)]
-             hybrid_scores = []; query_dense_1d = query_dense.squeeze()
-             for i in candidate_indices:
-                 chunk_dense = self.dense_embeddings[i]; chunk_sparse = self.sparse_weights[i]
-                 hybrid_score = self._compute_hybrid_score(query_dense_1d, query_sparse, chunk_dense, chunk_sparse); hybrid_scores.append((i, hybrid_score))
-             hybrid_scores.sort(key=lambda x: x[1], reverse=True); top_k_indices = [idx for idx, _ in hybrid_scores[:top_k]]
-             valid_indices = [i for i in top_k_indices if 0 <= i < len(self.chunks)]; return [self.chunks[idx] for idx in valid_indices]
-        return []
+        valid_indices = []  # 用于存储最终选出的块的索引
+
+        # --- 根据不同模式获取索引列表 ---
+        if self.similarity_mode == "dense":
+            # ... (dense 检索逻辑，得到 indices[0]) ...
+            if self.index is None or query_dense is None: raise ValueError(
+                "Index/query dense missing for dense search.")
+            _, indices = self.index.search(query_dense, top_k)
+            valid_indices = [i for i in indices[0] if 0 <= i < len(self.chunks_data)]  # 基于 chunks_data 长度校验
+
+        elif self.similarity_mode == "lexical":
+            # ... (lexical 检索逻辑，得到 top_k_indices) ...
+            if not self.sparse_weights or query_sparse is None: raise ValueError(
+                "Sparse weights missing for lexical search.")
+            scores = [(i, self.embedding_model.compute_lexical_matching_score(query_sparse, cs)) for i, cs in
+                      enumerate(self.sparse_weights)]
+            scores.sort(key=lambda x: x[1], reverse=True)
+            top_k_indices = [idx for idx, _ in scores[:top_k]]
+            valid_indices = [i for i in top_k_indices if 0 <= i < len(self.chunks_data)]  # 基于 chunks_data 长度校验
+
+        elif self.similarity_mode == "hybrid":
+            # ... (hybrid 检索逻辑，得到 top_k_indices) ...
+            if self.index is None or self.dense_embeddings is None or not self.sparse_weights or query_dense is None or query_sparse is None: raise ValueError(
+                "Components missing for hybrid search.")
+            candidate_multiplier = 10;
+            num_candidates = min(top_k * candidate_multiplier, self.index.ntotal)
+            _, dense_indices = self.index.search(query_dense, num_candidates)
+            candidate_indices = [i for i in dense_indices[0] if
+                                 0 <= i < len(self.dense_embeddings) and 0 <= i < len(self.sparse_weights)]
+            hybrid_scores = [];
+            query_dense_1d = query_dense.squeeze()
+            for i in candidate_indices:
+                chunk_dense = self.dense_embeddings[i];
+                chunk_sparse = self.sparse_weights[i]
+                hybrid_score = self._compute_hybrid_score(query_dense_1d, query_sparse, chunk_dense, chunk_sparse);
+                hybrid_scores.append((i, hybrid_score))
+            hybrid_scores.sort(key=lambda x: x[1], reverse=True);
+            top_k_indices = [idx for idx, _ in hybrid_scores[:top_k]]
+            valid_indices = [i for i in top_k_indices if 0 <= i < len(self.chunks_data)]  # 基于 chunks_data 长度校验
+
+        # === 修改：返回结构化数据 ===
+        # 使用 valid_indices 从 self.chunks_data 中提取对应的字典
+        return [self.chunks_data[i] for i in valid_indices]
+        # ==========================

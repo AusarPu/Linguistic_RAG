@@ -63,12 +63,33 @@ def chat_loop():
         # =======================================================
 
         # RAG 检索 (使用最终确定的查询语句)
-        relevant_chunks = kb.retrieve_chunks(rewritten_query, top_k=TOP_K)
-        context = "\n".join([f"知识库来源{i + 1}: {chunk}" for i, chunk in enumerate(relevant_chunks)])
-        print("--- Retrieved Context ---")
-        print(context)
-        print("-----------------------")
-        print("--"*25)
+        try:
+            # retrieve_chunks 现在返回字典列表 [{"text": ..., "source": ...}, ...]
+            relevant_chunks_data = kb.retrieve_chunks(rewritten_query)
+
+            # === 修改：构建包含文件名的 context ===
+            context_parts = []
+            if relevant_chunks_data:
+                print("--- Retrieved Context (with sources) ---")
+                for i, chunk_data in enumerate(relevant_chunks_data):
+                    chunk_text = chunk_data.get("text", "内容缺失")
+                    source_file = chunk_data.get("source", "未知来源文件")  # 获取文件名
+                    context_parts.append(f"知识库来源{i+1} (文件: {source_file}):\n{chunk_text}")
+                print("-------------------------------------")
+            else:
+                print("--- No relevant context found ---")
+
+            context = "\n\n".join(context_parts)  # 使用双换行符分隔不同的来源块
+            print(context)
+            if not context:
+                context = "知识库中未找到相关内容。"  # 保持无结果时的提示
+            # ======================================
+
+            print("--" * 25)  # 分隔符
+
+        except Exception as e:
+            print(f"Error during RAG retrieval: {e}")
+            context = "知识库检索出错。"
 
         # ================== 修改：使用生成模型生成最终答案 ==================
         # 构建最终生成答案的 Prompt (逻辑不变，但确保使用 generator_tokenizer)
