@@ -43,11 +43,11 @@ def chat_loop():
 
         # ================== 修改：使用重写模型 ==================
         # 只有在重写模型加载成功时才进行重写
-        rewritten_query = user_input # 默认使用原始查询
+        rewriter_output_str = user_input # 默认使用原始查询
         if rewriter_model and rewriter_tokenizer:
             try:
                  # 调用重写函数，传入重写模型和分词器
-                 rewritten_query = generate_rewritten_query(
+                 rewriter_output_str = generate_rewritten_query(
                      rewriter_model,        # <--- 使用重写模型
                      rewriter_tokenizer,    # <--- 使用重写分词器
                      messages,
@@ -57,49 +57,94 @@ def chat_loop():
             except Exception as rewrite_err:
                  print(f"Error during query rewriting: {rewrite_err}")
                  print("Falling back to original query.")
-                 rewritten_query = user_input # 出错时也回退
+                 rewriter_output_str = user_input # 出错时也回退
         else:
             print("Skipping query rewriting as rewriter model is not available.")
         # =======================================================
 
-        # RAG 检索 (使用最终确定的查询语句)
-        try:
-            # retrieve_chunks 现在返回字典列表 [{"text": ..., "source": ...}, ...]
-            relevant_chunks_data = kb.retrieve_chunks(rewritten_query)
+        # === 2. 解析规划结果为查询词列表 ===
+        search_terms = [term.strip() for term in rewriter_output_str.strip().split('\n') if term.strip()]
+        if not search_terms:  # 如果输出为空或无效，则使用原始输入作为查询
+            search_terms = [user_input]
+            print("Query planner returned empty or invalid output, using original query.")
 
-            # === 修改：构建包含文件名的 context ===
-            context_parts = []
-            if relevant_chunks_data:
-                print("--- Retrieved Context (with sources) ---")
-                for i, chunk_data in enumerate(relevant_chunks_data):
-                    chunk_text = chunk_data.get("text", "内容缺失")
-                    source_file = chunk_data.get("source", "未知来源文件")  # 获取文件名
-                    context_parts.append(f"知识库来源{i+1} (文件: {source_file}):\n{chunk_text}")
-                print("-------------------------------------")
-            else:
-                print("--- No relevant context found ---")
+        print(f"--- Planned Search Terms ({len(search_terms)}) ---")
+        for term in search_terms: print(f"- '{term}'")
+        print("-----------------------------")
 
-            context = "\n\n".join(context_parts)  # 使用双换行符分隔不同的来源块
-            print(context)
-            if not context:
-                context = "知识库中未找到相关内容。"  # 保持无结果时的提示
-            # ======================================
+        # === 3. 循环检索、合并与去重 ===
+        all_retrieved_data = []  # 存储最终合并、去重后的块字典列表
+        processed_chunk_texts = set()  # 用于根据文本内容去重
 
-            print("--" * 25)  # 分隔符
+        print("--- Starting Multi-Query Retrieval & Aggregation ---")
+        for term in search_terms:
+            print(f"Retrieving for sub-query: '{term}'")
+            try:
+                # retrieve_chunks 返回字典列表 [{"text": ..., "source": ...}, ...]
+                # 它内部已经处理了阈值和 MAX_THRESHOLD_RESULTS 限制 (针对单次查询)
+                term_chunks_data = kb.retrieve_chunks(term)
+                print(f"  Retrieved {len(term_chunks_data)} chunks for this term.")
 
-        except Exception as e:
-            print(f"Error during RAG retrieval: {e}")
-            context = "知识库检索出错。"
+                # 合并与去重
+                added_count = 0
+                for chunk_data in term_chunks_data:
+                    chunk_text = chunk_data.get("text")
+                    # 只有当文本内容有效且之前未处理过时才添加
+                    if chunk_text and chunk_text not in processed_chunk_texts:
+                        all_retrieved_data.append(chunk_data)
+                        processed_chunk_texts.add(chunk_text)
+                        added_count += 1
+                if added_count > 0:
+                    print(f"  Added {added_count} unique chunks to aggregation.")
+
+            except Exception as retrieval_err:
+                print(f"  Error retrieving for term '{term}': {retrieval_err}")
+        print("--- Multi-Query Retrieval Finished ---")
+        print(f"Total unique chunks aggregated: {len(all_retrieved_data)}")
+
+        # === 4. 控制总上下文长度 ===
+        # 对合并去重后的结果应用最终的总数量限制
+        final_chunks_data = []
+        if len(all_retrieved_data) > MAX_AGGREGATED_RESULTS:
+            print(
+                f"Aggregated results ({len(all_retrieved_data)}) exceed limit ({MAX_AGGREGATED_RESULTS}). Truncating...")
+            # 简单截断：取列表前面的部分。
+            # 更好的方法：可以基于与原始 user_input 的相似度对 all_retrieved_data 进行重排序，再截断。
+            final_chunks_data = all_retrieved_data[:MAX_AGGREGATED_RESULTS]
+        else:
+            final_chunks_data = all_retrieved_data
+        print(f"Final number of chunks for context: {len(final_chunks_data)}")
+
+        # === 5. 格式化最终上下文 ===
+        context_parts = []
+        if final_chunks_data:
+            print("--- Final Context Sources ---")
+            for i, chunk_data in enumerate(final_chunks_data):
+                chunk_text = chunk_data.get("text", "内容缺失")
+                source_file = chunk_data.get("source", "未知来源")
+                # 使用你选择的格式
+                context_parts.append(f"知识库来源 (文件: {source_file}):\n{chunk_text}")
+                print(f"  Context {i + 1}: File='{source_file}'")
+            print("--------------------------")
+        else:
+            print("--- No relevant context found after aggregation ---")
+
+        context = "\n".join(context_parts)
+        if not context:
+            context = "根据规划的子主题，知识库中未找到相关内容。"  # 更具体的无结果提示
+
+        print("--" * 25)  # 分隔符
+
 
         # ================== 修改：使用生成模型生成最终答案 ==================
         # 构建最终生成答案的 Prompt (逻辑不变，但确保使用 generator_tokenizer)
         sys_prompt = """
-        你是一个语言学智能助手，请总结知识库的内容来回答问题，请列举知识库中的数据详细回答。
-        在回答时你需要明确提到“根据来源{}”作为引用。
-        注意！-----------------------------------------------------
+        你是一个语言学智能助手，请根据提供的知识库内容来回答问题。
+        知识库内容会以 "知识库来源 (文件: 文件名):" 开头。
+        在回答时，如果引用了知识库信息，请明确说明信息来源于哪个文件，例如“根据文件 '文件名.txt' 中的信息...” 或使用 “([来源: 文件名.txt])” 这样的标记。
         当所有知识库内容都与问题无关时，你的回答必须包括“知识库中未找到您要的答案！”这句话。
-        ----------------------------------------------------------
-        在回答的最后，（无论是否查询到结果）你可以根据自己的知识来回答，但是，注意！要注明是AI生成而非查询到的结果。"""
+        回答需要考虑聊天历史。
+        如果没有查询到答案，你可以根据自己的知识来回答，但是要注明是AI生成而非查询到的结果。"""
 
         generation_messages = [{"role": "system", "content": sys_prompt}]
         generation_messages.extend(messages)
