@@ -4,8 +4,17 @@ TOP_K = 10
 CHUNK_SIZE = 256
 OVERLAP = 50
 MIN_CHUNK_LENGTH = 128
-SIMILARITY_THRESHOLD = 0.8
 SEARCH_MODE = "hybrid"
+# === 新增：阈值检索相关配置 ===
+# 设置检索模式为阈值模式
+RETRIEVAL_STRATEGY = "threshold" # 或者 "top_k"，用于区分策略
+
+# 设置混合相似度阈值 (需要根据你的数据实验调整，0到1之间，越高越严格)
+HYBRID_SIMILARITY_THRESHOLD = 0.5 # <--- 示例值，请调整！
+
+# 设置阈值模式下，最多返回的结果数量 (防止上下文过长)
+MAX_THRESHOLD_RESULTS = 15 # <--- 示例值，请调整！
+# ============================
 
 # 模型路径
 BASE_MODEL_PATH = "/home/pushihao/model-dir"

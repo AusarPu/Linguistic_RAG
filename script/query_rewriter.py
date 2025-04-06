@@ -87,7 +87,8 @@ def generate_rewritten_query(
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            **GENERATION_CONFIG,
+            max_new_tokens = 1024,
+            do_sample = False,
             pad_token_id=tokenizer.eos_token_id,
             eos_token_id=tokenizer.eos_token_id
         )

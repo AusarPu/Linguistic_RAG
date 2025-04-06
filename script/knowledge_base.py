@@ -260,8 +260,7 @@ class KnowledgeBase:
             print(f"Faiss index created ({self.index.ntotal} vectors).")
 
     # _compute_hybrid_score 和 retrieve_chunks 方法保持不变
-    def _compute_hybrid_score(self, query_dense, query_sparse, chunk_dense, chunk_sparse, dense_weight=0.6):
-        # (与上版本相同)
+    def _compute_hybrid_score(self, query_dense, query_sparse, chunk_dense, chunk_sparse, dense_weight=0.7):
          if chunk_dense is None or len(chunk_dense) == 0: dense_score = 0.0
          else:
              if query_dense.ndim > 1: query_dense = query_dense.squeeze()
@@ -273,9 +272,8 @@ class KnowledgeBase:
          return dense_weight * dense_score + (1 - dense_weight) * lexical_score
 
     def retrieve_chunks(self, query, top_k=None):
-        # (与上版本相同)
         from config import TOP_K as config_top_k
-        top_k = top_k if top_k is not None else config_top_k
+        effective_top_k = top_k if top_k is not None else config_top_k
         if not self.chunks: raise ValueError("Knowledge base chunks are not loaded or created.")
         # ... (粘贴上版本完整的检查和检索逻辑) ...
         query_output = self.embedding_model.encode(query, return_dense=self.similarity_mode in ["dense", "hybrid"], return_sparse=self.similarity_mode in ["lexical", "hybrid"], return_colbert_vecs=False)
@@ -283,43 +281,59 @@ class KnowledgeBase:
         if query_dense is not None: query_dense = query_dense.astype(np.float32).reshape(1, -1)
         valid_indices = []  # 用于存储最终选出的块的索引
 
-        # --- 根据不同模式获取索引列表 ---
-        if self.similarity_mode == "dense":
-            # ... (dense 检索逻辑，得到 indices[0]) ...
-            if self.index is None or query_dense is None: raise ValueError(
-                "Index/query dense missing for dense search.")
-            _, indices = self.index.search(query_dense, top_k)
-            valid_indices = [i for i in indices[0] if 0 <= i < len(self.chunks_data)]  # 基于 chunks_data 长度校验
+        # --- 主要修改 hybrid 分支 ---
 
-        elif self.similarity_mode == "lexical":
-            # ... (lexical 检索逻辑，得到 top_k_indices) ...
-            if not self.sparse_weights or query_sparse is None: raise ValueError(
-                "Sparse weights missing for lexical search.")
-            scores = [(i, self.embedding_model.compute_lexical_matching_score(query_sparse, cs)) for i, cs in
-                      enumerate(self.sparse_weights)]
-            scores.sort(key=lambda x: x[1], reverse=True)
-            top_k_indices = [idx for idx, _ in scores[:top_k]]
-            valid_indices = [i for i in top_k_indices if 0 <= i < len(self.chunks_data)]  # 基于 chunks_data 长度校验
-
-        elif self.similarity_mode == "hybrid":
-            # ... (hybrid 检索逻辑，得到 top_k_indices) ...
-            if self.index is None or self.dense_embeddings is None or not self.sparse_weights or query_dense is None or query_sparse is None: raise ValueError(
-                "Components missing for hybrid search.")
-            candidate_multiplier = 10;
-            num_candidates = min(top_k * candidate_multiplier, self.index.ntotal)
-            _, dense_indices = self.index.search(query_dense, num_candidates)
+        if self.similarity_mode == "hybrid":
+            # 检查必要组件是否存在
+            if self.index is None or self.dense_embeddings is None or not self.sparse_weights or query_dense is None or query_sparse is None:
+                raise ValueError("Required components missing for hybrid search.")
+            # 1. 获取初始候选集 (仍然基于 Faiss dense search)
+            # 可以获取比最终 MAX_THRESHOLD_RESULTS 更多的候选，例如 effective_top_k * 5 或固定值
+            candidate_multiplier = 10  # 或者设置一个固定较大的数，比如 100
+            num_candidates_to_fetch = min(effective_top_k * candidate_multiplier, self.index.ntotal)
+            print(f"Hybrid search: Fetching top {num_candidates_to_fetch} dense candidates...")
+            _, dense_indices = self.index.search(query_dense, num_candidates_to_fetch)
+            # 过滤无效索引 (可能因并发修改或索引问题产生)
             candidate_indices = [i for i in dense_indices[0] if
                                  0 <= i < len(self.dense_embeddings) and 0 <= i < len(self.sparse_weights)]
-            hybrid_scores = [];
+            print(f"Hybrid search: Found {len(candidate_indices)} valid candidates.")
+            # 2. 计算这些候选的混合分数
+            hybrid_scores = []
             query_dense_1d = query_dense.squeeze()
             for i in candidate_indices:
-                chunk_dense = self.dense_embeddings[i];
+                chunk_dense = self.dense_embeddings[i]
                 chunk_sparse = self.sparse_weights[i]
-                hybrid_score = self._compute_hybrid_score(query_dense_1d, query_sparse, chunk_dense, chunk_sparse);
-                hybrid_scores.append((i, hybrid_score))
-            hybrid_scores.sort(key=lambda x: x[1], reverse=True);
-            top_k_indices = [idx for idx, _ in hybrid_scores[:top_k]]
-            valid_indices = [i for i in top_k_indices if 0 <= i < len(self.chunks_data)]  # 基于 chunks_data 长度校验
+                hybrid_score = self._compute_hybrid_score(query_dense_1d, query_sparse, chunk_dense, chunk_sparse)
+                hybrid_scores.append((i, hybrid_score))  # 保存 (索引, 分数)
+            # 检查是否使用阈值策略
+            if RETRIEVAL_STRATEGY == "threshold":
+                # 3. 根据阈值过滤
+                print(f"Applying threshold: {HYBRID_SIMILARITY_THRESHOLD}")
+                threshold_results = [(i, score) for i, score in hybrid_scores if score >= HYBRID_SIMILARITY_THRESHOLD]
+                print(f"Found {len(threshold_results)} results above threshold.")
+                # 4. 按分数排序 (降序)
+                threshold_results.sort(key=lambda x: x[1], reverse=True)
+                # 5. 应用最大结果数量限制
+                if len(threshold_results) > MAX_THRESHOLD_RESULTS:
+                    print(f"Truncating results from {len(threshold_results)} to {MAX_THRESHOLD_RESULTS}")
+                    final_results = threshold_results[:MAX_THRESHOLD_RESULTS]
+                else:
+                    final_results = threshold_results
+                # 提取最终的索引列表
+                final_indices = [idx for idx, _ in final_results]
+
+            elif RETRIEVAL_STRATEGY == "top_k":
+                # 如果策略是 top_k，则按分数排序取前 effective_top_k 个 (旧逻辑)
+                hybrid_scores.sort(key=lambda x: x[1], reverse=True)
+                top_k_results = hybrid_scores[:effective_top_k]
+                final_indices = [idx for idx, _ in top_k_results]
+            else:
+                raise ValueError(f"Unknown RETRIEVAL_STRATEGY: {RETRIEVAL_STRATEGY}")
+            # 6. 根据最终索引列表，从 self.chunks_data 返回结果
+            print(f"Returning {len(final_indices)} final results.")
+            # 再次校验索引有效性 (以防万一)
+            valid_final_indices = [i for i in final_indices if 0 <= i < len(self.chunks_data)]
+            return [self.chunks_data[i] for i in valid_final_indices]
 
         # === 修改：返回结构化数据 ===
         # 使用 valid_indices 从 self.chunks_data 中提取对应的字典
