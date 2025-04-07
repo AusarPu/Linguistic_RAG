@@ -260,7 +260,7 @@ class KnowledgeBase:
             print(f"Faiss index created ({self.index.ntotal} vectors).")
 
     # _compute_hybrid_score 和 retrieve_chunks 方法保持不变
-    def _compute_hybrid_score(self, query_dense, query_sparse, chunk_dense, chunk_sparse, dense_weight=0.7):
+    def _compute_hybrid_score(self, query_dense, query_sparse, chunk_dense, chunk_sparse, dense_weight=0.9):
          if chunk_dense is None or len(chunk_dense) == 0: dense_score = 0.0
          else:
              if query_dense.ndim > 1: query_dense = query_dense.squeeze()
@@ -289,7 +289,7 @@ class KnowledgeBase:
                 raise ValueError("Required components missing for hybrid search.")
             # 1. 获取初始候选集 (仍然基于 Faiss dense search)
             # 可以获取比最终 MAX_THRESHOLD_RESULTS 更多的候选，例如 effective_top_k * 5 或固定值
-            candidate_multiplier = 10  # 或者设置一个固定较大的数，比如 100
+            candidate_multiplier = effective_top_k*5  # 或者设置一个固定较大的数，比如 100
             num_candidates_to_fetch = min(effective_top_k * candidate_multiplier, self.index.ntotal)
             print(f"Hybrid search: Fetching top {num_candidates_to_fetch} dense candidates...")
             _, dense_indices = self.index.search(query_dense, num_candidates_to_fetch)

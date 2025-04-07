@@ -98,6 +98,8 @@ def generate_rewritten_query(
 **约束:**
 * 生成的查询词/短语列表必须**紧密围绕**回答用户原始问题的核心需求。
 * 输出必须严格遵守上述格式要求。
+示例中的```只是为了表示,不要在正式输出中包含
+此外,只要输出问题列表,不要包含其他的任何语句.比如```（注：此输出严格按照示例格式要求，每一项均为独立查询词/短语，无多余内容，适合作为语言学知识库的检索关键词。）```
 
 注意：-------------------------------------------------------------
 现在，请分析提供的对话历史和用户最新查询: ```'{user_input}'```，并按要求输出分解后的查询词/短语列表。
@@ -142,7 +144,7 @@ def generate_rewritten_query(
     rewritten_query = rewritten_query_full.split("</think>")[-1]
 
     # 去除可能的引号包裹
-    rewritten_query = rewritten_query.strip('"').strip("'")
+    rewritten_query = rewritten_query.strip('\"').strip("\'")
 
     print(f"\n--- Query Rewriter ---")
     print(f"Original Query: {user_input}")

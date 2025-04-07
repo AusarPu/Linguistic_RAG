@@ -114,35 +114,42 @@ def chat_loop():
             final_chunks_data = all_retrieved_data
         print(f"Final number of chunks for context: {len(final_chunks_data)}")
 
-        # === 5. 格式化最终上下文 ===
+
+        # 2. (可选) 添加分隔符
+        print("\n" + "=" * 15 + " 参考知识库片段 " + "=" * 15)
+
+        # 3. 检查是否有检索到的内容 (final_chunks_data 是包含最终上下文块的列表)
         context_parts = []
         if final_chunks_data:
-            print("--- Final Context Sources ---")
+            # 遍历最终筛选出的知识块列表并打印
             for i, chunk_data in enumerate(final_chunks_data):
                 chunk_text = chunk_data.get("text", "内容缺失")
-                source_file = chunk_data.get("source", "未知来源")
-                # 使用你选择的格式
-                context_parts.append(f"知识库来源 (文件: {source_file}):\n{chunk_text}")
-                print(f"  Context {i + 1}: File='{source_file}'")
-            print("--------------------------")
-        else:
-            print("--- No relevant context found after aggregation ---")
+                source_file = chunk_data.get("source", "未知来源文件")
+                # 使用清晰的格式打印每个块及其来源
+                chunk_text = f"【片段 {i + 1} | 来源文件: {source_file}】| 内容: {chunk_text}"
+                context_parts.append(chunk_text)
 
+            print("\n" + "=" * 17 + " 参考内容结束 " + "=" * 17 + "\n")
+        else:
+            # 如果没有检索到任何相关内容
+            print("（本次回答未直接引用知识库中的具体文本片段）")
+            print("=" * 40 + "\n")
         context = "\n".join(context_parts)
         if not context:
             context = "根据规划的子主题，知识库中未找到相关内容。"  # 更具体的无结果提示
 
-        print("--" * 25)  # 分隔符
+        print(context)
 
 
         # ================== 修改：使用生成模型生成最终答案 ==================
         # 构建最终生成答案的 Prompt (逻辑不变，但确保使用 generator_tokenizer)
         sys_prompt = """
         你是一个语言学智能助手，请根据提供的知识库内容来回答问题。
-        知识库内容会以 "知识库来源 (文件: 文件名):" 开头。
-        在回答时，如果引用了知识库信息，请明确说明信息来源于哪个文件，例如“根据文件 '文件名.txt' 中的信息...” 或使用 “([来源: 文件名.txt])” 这样的标记。
+        知识库内容会以 "【片段 {} | 来源文件: {}】| 内容: {}" 开头。
+        在回答时，如果引用了知识库信息，请明确说明信息来源于哪个片段，例如“根据片段1 '文件名.txt' 中的信息...” 或使用 “([片段{}: 文件名.txt])” 这样的标记。
+        注意----------------------------
         当所有知识库内容都与问题无关时，你的回答必须包括“知识库中未找到您要的答案！”这句话。
-        回答需要考虑聊天历史。
+        -----------------------------------------------------------
         如果没有查询到答案，你可以根据自己的知识来回答，但是要注明是AI生成而非查询到的结果。"""
 
         generation_messages = [{"role": "system", "content": sys_prompt}]
