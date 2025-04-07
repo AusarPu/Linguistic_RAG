@@ -12,7 +12,7 @@ def generate_rewritten_query(
     tokenizer,
     messages: List[Dict[str, str]],
     user_input: str,
-    max_history: int = 10, # 允许指定使用的历史轮数
+    max_history: int = MAX_HISTORY, # 允许指定使用的历史轮数
     ) -> str:
     """
     使用 LLM 根据对话历史重写用户当前问题，生成适合知识库检索的查询。

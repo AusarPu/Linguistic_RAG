@@ -33,7 +33,6 @@ def chat_loop():
 
 
     messages = []
-    MAX_HISTORY = 5
 
     print("\n开始对话 (输入 'q' 或 'exit' 退出)")
     while True:
