@@ -1,13 +1,13 @@
 import logging # 导入 logging
 
 # ---- 日志配置 ----
-LOG_LEVEL = logging.WARNING # 设置全局日志级别 (可以是 DEBUG, INFO, WARNING, ERROR, CRITICAL)
+LOG_LEVEL = logging.DEBUG # 设置全局日志级别 (可以是 DEBUG, INFO, WARNING, ERROR, CRITICAL)
 LOG_FORMAT = '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 # -----------------
 
 # ---- RAG 配置 ----
-TOP_K_INITIAL_RETRIEVAL = 500 # Hybrid 模式下，初始从向量数据库检索的候选数量 (可以比最终需要的多)
+TOP_K_INITIAL_RETRIEVAL = 5000 # Hybrid 模式下，初始从向量数据库检索的候选数量 (可以比最终需要的多)
 CHUNK_SIZE = 400
 OVERLAP = 20
 MIN_CHUNK_LENGTH = 150

@@ -29,8 +29,8 @@ logging.basicConfig(
     level=LOG_LEVEL,
     format=LOG_FORMAT,
     datefmt=LOG_DATE_FORMAT,
-    # filename='rag_chat.log', # 可选：将日志写入文件
-    # filemode='a' # 可选：追加模式
+    filename='rag_chat.log', # 可选：将日志写入文件
+    filemode='w' # 可选：追加模式
 )
 logger = logging.getLogger(__name__)
 # --------------------
@@ -144,8 +144,8 @@ def chat_loop():
 
             logger.info(f"Planned search terms ({len(search_terms)}): {search_terms}")
             # 使用 DEBUG 级别打印更详细的列表
-            # for i, term in enumerate(search_terms):
-            #      logger.debug(f"  Search Term {i+1}: '{term}'")
+            for i, term in enumerate(search_terms):
+                 logger.debug(f"  Search Term {i+1}: '{term}'")
 
             # --- 5.3 循环检索、合并与去重 ---
             all_retrieved_data: List[Dict[str, str]] = []  # 存储最终合并、去重后的块字典列表
@@ -214,7 +214,7 @@ def chat_loop():
                 logger.info("No relevant chunks found in knowledge base for the query.")
                 print("\n（本次回答未直接引用知识库中的具体文本片段）\n")
                 # 可以在这里设置一个默认的 context 字符串告知 LLM 没有找到内容
-                # context = "根据规划的子主题，知识库中未找到相关内容。"
+                context = "根据规划的子主题，知识库中未找到相关内容。"
 
             # 组合最终的上下文文本
             context = "\n\n".join(context_parts) # 使用空行分隔不同的片段
