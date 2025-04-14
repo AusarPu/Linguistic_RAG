@@ -5,22 +5,11 @@ import logging
 from queue import Queue
 from typing import List, Dict, Optional # 添加类型注解
 
-# 使用相对导入 (假设 main.py 与其他模块在同一目录下或上一级目录运行 `python -m test.main`)
-# 如果直接运行 `python main.py`，请改回绝对导入
-try:
-    from .model_loader import load_models
-    from .knowledge_base import KnowledgeBase
-    from .streamer import CustomStreamer
-    from .query_rewriter import generate_rewritten_query
-    from .config import * # 导入所有配置
-except ImportError:
-    print("Error: Failed to import modules using relative paths. Trying absolute paths...")
-    # 如果相对导入失败，尝试绝对导入（适用于直接运行脚本的情况）
-    from model_loader import load_models
-    from knowledge_base import KnowledgeBase
-    from streamer import CustomStreamer
-    from query_rewriter import generate_rewritten_query
-    from config import *
+from model_loader import load_models
+from knowledge_base import KnowledgeBase
+from streamer import CustomStreamer
+from query_rewriter import generate_rewritten_query
+from config import *
 
 # --- 配置 logging ---
 # 注意：basicConfig 最好只调用一次。如果其他模块也配置了，可能会有冲突。
