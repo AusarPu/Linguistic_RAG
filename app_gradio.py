@@ -390,7 +390,7 @@ def respond(
 
         # 格式化最终显示效果
         # 将思考部分用 Markdown 斜体表示 (更简单通用)
-        formatted_thinking = f"_{thinking_part}_"
+        formatted_thinking = f" ```{thinking_part}```"
 
         # 检查回答部分是否为空
         if final_answer_for_history.strip():
