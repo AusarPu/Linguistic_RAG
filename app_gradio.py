@@ -164,16 +164,41 @@ def format_context_for_display(chunks_data: List[Dict[str, str]]) -> str:
         md_str += f"> {display_text}\n\n" # 使用 Markdown 引用块
     return md_str
 
+
 def convert_gradio_to_openai(chat_history: List[Tuple[str, str]]) -> List[Dict[str, str]]:
-    """将 Gradio 的历史格式转换为 OpenAI/HuggingFace messages 格式"""
+    """将 Gradio 的历史格式转换为 OpenAI/HuggingFace messages 格式，
+    并根据新的逻辑清理助手的思考过程 (提取第一个 </think> 之后的内容)"""
     messages = []
+    think_end_tag = "</think>" # 定义结束标记
+
     for user_msg, assistant_msg in chat_history:
         if user_msg:
             messages.append({"role": "user", "content": user_msg})
         if assistant_msg:
-            messages.append({"role": "assistant", "content": assistant_msg})
-    return messages
+            # 默认清理后的消息就是原始消息
+            cleaned_assistant_msg = assistant_msg
+            # 查找第一个 </think> 标记
+            first_think_end_index = assistant_msg.find(think_end_tag)
 
+            if first_think_end_index != -1:
+                 # 如果找到了标记，则真实的回答是标记之后的部分
+                 # 注意：这里直接从原始 assistant_msg 中提取，因为它包含了我们需要的信息
+                 cleaned_assistant_msg = assistant_msg[first_think_end_index + len(think_end_tag):].strip()
+
+                 # 移除我们在 final_formatted_display 中添加的格式
+                 # 特别是如果思考部分和回答部分之间加了 \n\n
+                 # 如果 cleaned_assistant_msg 是从包含 \n\n 的字符串中提取的，它应该已经是干净的
+                 # 但如果原始 assistant_msg 本身以斜体开头，我们需要处理
+                 # if assistant_msg.startswith("_") and assistant_msg.find("_\n\n") > -1:
+                 #     actual_answer_start_index = assistant_msg.find("_\n\n") + len("_\n\n")
+                 #     cleaned_assistant_msg = assistant_msg[actual_answer_start_index:].strip()
+                 # 上面的逻辑基于特定的格式，直接提取 </think> 之后的内容更通用
+
+            # else: 如果没找到 </think>，则假定整个消息都是回答，无需清理
+
+            messages.append({"role": "assistant", "content": cleaned_assistant_msg})
+
+    return messages
 # --- Gradio 核心回调函数 ---
 # 使用 TextIteratorStreamer 处理流式输出
 # 需要安装: pip install transformers torch accelerate bitsandbytes sentencepiece # 根据你的模型需要
@@ -188,49 +213,49 @@ except ImportError:
 def respond(
     message: str,
     chat_history_tuples: List[Tuple[str, str]],
-    # 可以添加其他 Gradio 输入组件的状态作为参数
-    ): # 返回类型注解帮助理解
-
-    if not models_loaded or not kb_initialized or not prompts_loaded:
-         # 如果资源加载失败，显示错误信息
-         err_msg = "错误：系统资源未能完全加载，无法处理请求。请检查日志。"
-         chat_history_tuples.append((message, err_msg))
-         yield {chatbot: chat_history_tuples, context_display: "# 系统错误\n资源加载失败"}
-         return
-
+    ):
+    # ... (初始检查和资源加载检查) ...
     if not message or not message.strip():
-         yield {chatbot: chat_history_tuples, context_display: ""} # 空输入，不处理
+         # 在 yield 中为新组件提供默认值
+         yield {chatbot: chat_history_tuples, context_display: "", rewritten_query_display: ""}
          return
 
     logger.info(f"Received message: '{message[:100]}...'")
 
-    # 1. 转换历史记录格式
-    # 注意：我们需要维护一个内部的 messages 列表，用于 RAG 逻辑，和 Gradio 的 tuple 列表分开
+    # 1. 转换历史记录格式 (保持不变)
     messages_history = convert_gradio_to_openai(chat_history_tuples)
 
-    # 2. 查询重写 (如果 Rewriter 模型可用)
-    rewritten_query_str = message # 默认使用原始查询
+    # 2. 查询重写 (捕获结果用于显示)
+    rewritten_query_str = message # 用于后续检索的查询串，默认为原始输入
+    actual_rewritten_query_str_for_display = "(未进行重写)" # 用于显示，给个默认值
     if rewriter_model and rewriter_tokenizer and rewriter_instruction_template:
         logger.info("Performing query rewriting...")
         try:
-            rewritten_query_str = generate_rewritten_query(
+            # 调用重写函数并保存结果
+            rewritten_query_result = generate_rewritten_query(
                 model=rewriter_model,
                 tokenizer=rewriter_tokenizer,
-                messages=messages_history, # 使用转换后的 history
+                messages=messages_history,
                 user_input=message,
                 rewriter_instruction_template=rewriter_instruction_template,
                 max_history=MAX_HISTORY,
-                generation_config=GENERATION_CONFIG # 可能需要为重写调整参数
+                generation_config=GENERATION_CONFIG
             )
+            # 更新用于检索的查询串
+            rewritten_query_str = rewritten_query_result
+            # 更新用于显示的值
+            actual_rewritten_query_str_for_display = rewritten_query_result
             logger.info("Query rewriting finished.")
         except Exception as rewrite_err:
             logger.error(f"Error during query rewriting: {rewrite_err}", exc_info=True)
             logger.warning("Falling back to original query due to rewrite error.")
-            rewritten_query_str = message # 出错时回退
+            rewritten_query_str = message # 出错时，检索用原始查询
+            actual_rewritten_query_str_for_display = f"(重写出错: {rewrite_err})" # 显示错误信息
     else:
         logger.info("Skipping query rewriting (Rewriter model/template not available).")
+        actual_rewritten_query_str_for_display = "(重写功能未启用)" # 显示未启用信息
 
-    # 3. 解析重写结果为查询词列表
+    # 3. 解析重写结果为查询词列表 (使用 rewritten_query_str)
     search_terms = [term.strip() for term in rewritten_query_str.strip().split('\n') if term.strip()]
     if not search_terms:
         search_terms = [message]
@@ -262,6 +287,14 @@ def respond(
     # 先更新一次界面，显示上下文，并将用户消息加入 history
     # chat_history_tuples.append((message, None)) # Gradio 推荐在 yield 中更新 history
     yield {chatbot: chat_history_tuples + [(message, "...")], context_display: formatted_context_md}
+
+    # 7. 第一次 yield: 更新所有需要立即更新的组件
+    #    包括：聊天机器人占位符、上下文内容、重构查询内容
+    yield {
+        chatbot: chat_history_tuples + [(message, "...")], # 添加带占位符的新聊天记录
+        context_display: formatted_context_md,             # 更新上下文显示
+        rewritten_query_display: actual_rewritten_query_str_for_display # 更新重构查询显示
+    }
 
 
     # 7. 构建最终生成 Prompt
@@ -315,44 +348,87 @@ def respond(
     thread = Thread(target=generator_model.generate, kwargs=generation_kwargs)
     thread.start()
 
-    # 10. 处理流式输出并更新 Gradio 界面
-    generated_text = ""
+    # 10. 处理流式输出并更新 Gradio 界面 (先显示原始流)
+    raw_generated_text = ""
+    # 先在聊天记录中添加一个占位符或用户消息本身
+    yield {chatbot: chat_history_tuples + [(message, "...")], context_display: formatted_context_md}
     try:
         for new_text in streamer:
-            if new_text: # 可能有空 token
-                generated_text += new_text
-                # 更新 Gradio Chatbot 的最新一条消息
-                current_chatbot_state = chat_history_tuples + [(message, generated_text)]
+            if new_text:  # 可能有空 token
+                raw_generated_text += new_text
+                # 实时更新聊天机器人，显示原始累积文本
+                current_chatbot_state = chat_history_tuples + [(message, raw_generated_text)]
                 yield {chatbot: current_chatbot_state, context_display: formatted_context_md}
         logger.info("Streaming finished.")
-        logger.debug(f"Full generated text: {generated_text}")
+        logger.debug(f"Full raw generated text: {raw_generated_text}")
 
     except Exception as e:
         logger.error(f"Error during generation streaming: {e}", exc_info=True)
-        # 即使流式出错，也显示已生成的部分
-        current_chatbot_state = chat_history_tuples + [(message, generated_text + "\n[生成中断]"),]
+        # 显示错误和已生成的部分
+        error_msg = raw_generated_text + "\n[生成中断]"
+        current_chatbot_state = chat_history_tuples + [(message, error_msg)]
         yield {chatbot: current_chatbot_state, context_display: formatted_context_md}
+        # 出错时直接返回，不再进行后续格式化
+        return  # 退出函数
 
+        # app_gradio.py (修改 respond 函数内流式结束后的处理部分)
 
-    # 11. 更新内部 history (为 RAG 的下一次调用准备) - 这部分需要在 Gradio 组件外部管理，或者通过 Gradio State
-    # Gradio 的 chat_history_tuples 本身就是状态，下次调用会传入更新后的版本。
-    # 但我们需要确保它不超过 MAX_HISTORY
+    # --- 流式结束后 ---
+    # 11. 解析最终文本，区分思考和回答 (根据新逻辑)
+    final_formatted_display = raw_generated_text  # 默认显示原始内容
+    final_answer_for_history = raw_generated_text  # 默认回答是原始内容
 
-    # 这里我们已经通过 yield 更新了 chatbot 的显示状态，它会自动成为下一次调用的输入 history
-    # 我们只需要确保 chat_history_tuples 在传入时不超长即可，在函数开头处理。
-    # (可以在函数开始时检查 len(chat_history_tuples) 并截断)
+    # 查找第一个 </think> 标签的位置
+    think_end_tag = "</think>"
+    first_think_end_index = raw_generated_text.find(think_end_tag)
+
+    if first_think_end_index != -1:
+        # 思考部分 = 从开头到 </think> 标签结束的所有内容
+        thinking_part = raw_generated_text[:first_think_end_index + len(think_end_tag)].strip()
+        # 回答部分 = </think> 标签之后的所有内容
+        final_answer_for_history = raw_generated_text[first_think_end_index + len(think_end_tag):].strip()
+
+        # 格式化最终显示效果
+        # 将思考部分用 Markdown 斜体表示 (更简单通用)
+        formatted_thinking = f"_{thinking_part}_"
+
+        # 检查回答部分是否为空
+        if final_answer_for_history.strip():
+            # 如果有回答，组合思考(斜体) + 换行 + 回答(正常)
+            final_formatted_display = f"{formatted_thinking}\n\n{final_answer_for_history}"
+        else:
+            # 如果 </think> 后没有内容，只显示斜体的思考部分
+            final_formatted_display = formatted_thinking
+            # 同时，用于历史记录的回答也应为空
+            final_answer_for_history = ""
+
+    # else: 如果没有找到 </think> 标签，则认为整个输出都是最终回答
+    # final_formatted_display 和 final_answer_for_history 保持为 raw_generated_text
+
+    # 12. 最后一次更新 Chatbot，使用格式化后的最终文本
+    final_chatbot_state = chat_history_tuples + [(message, final_formatted_display)]
+    yield {
+        chatbot: final_chatbot_state,
+        context_display: formatted_context_md,
+        rewritten_query_display: actual_rewritten_query_str_for_display
+    }
+
+        # (内部 history 清理逻辑依赖于 convert_gradio_to_openai 函数)
+    # Gradio 的 history 状态会通过 final_chatbot_state 自动更新，
+    # 下次调用 process_and_respond 时会传入包含 final_formatted_display 的 history。
+    # 我们需要在下次调用的开始处清理 history 中的思考部分。
 
 # --- Gradio UI 定义 ---
 with gr.Blocks(theme=gr.themes.Soft(), title="RAG 对话系统") as demo:
     gr.Markdown("# RAG 对话系统 (Gradio)")
 
     with gr.Row():
-        with gr.Column(scale=3): # 聊天区域占主要部分
+        with gr.Column(scale=3): # 聊天区域加大
             chatbot = gr.Chatbot(
                 label="聊天窗口",
                 bubble_full_width=False,
-                height=600,
-                # render_markdown=True # 开启以支持 Markdown
+                height=850, # <--- 增加聊天框高度
+                render_markdown=True # 保持 Markdown 渲染开启
                 )
             with gr.Row():
                  msg_input = gr.Textbox(
@@ -360,11 +436,24 @@ with gr.Blocks(theme=gr.themes.Soft(), title="RAG 对话系统") as demo:
                      placeholder="请输入你的问题...",
                      scale=7,
                      autofocus=True,
-                     lines=1 # 设置为单行输入框
+                     lines=1
                  )
-                 send_button = gr.Button("发送", variant="primary", scale=1, min_width=0) # 显式添加发送按钮
-        with gr.Column(scale=2): # 上下文区域占侧边
-             context_display = gr.Markdown(label="参考知识库片段", value="上下文将显示在这里...")
+                 send_button = gr.Button("发送", variant="primary", scale=1, min_width=0)
+        with gr.Column(scale=2): # 右侧信息区域调整
+             # 新增：用于显示重构查询的可折叠块
+             with gr.Accordion("查看重构后的查询", open=False): # 默认折叠
+                 rewritten_query_display = gr.Textbox(
+                     label="重构查询列表", # Accordion自带label,这里的label可选
+                     lines=5,          # 显示几行作为预览
+                     interactive=False,  # 只读
+                     value="重构后的查询将显示在这里..." # 初始提示
+                 )
+             # 修改：将知识库上下文放入可折叠块
+             with gr.Accordion("查看参考知识库片段", open=True): # 默认展开
+                 context_display = gr.Markdown(
+                     # label="参考内容", # Accordion已有标题，内部label可省略
+                     value="上下文将显示在这里..." # 初始提示
+                     )
              clear_button = gr.Button("清除对话历史")
 
     # --- 事件绑定 ---
@@ -384,16 +473,24 @@ with gr.Blocks(theme=gr.themes.Soft(), title="RAG 对话系统") as demo:
     submit_args = {
         "fn": process_and_respond,
         "inputs": [msg_input, chatbot],
-        "outputs": [chatbot, context_display],
+        # 在 outputs 列表中添加新的组件 rewritten_query_display
+        "outputs": [chatbot, context_display, rewritten_query_display],
     }
     msg_input.submit(**submit_args)
     send_button.click(**submit_args)
-
     # 清除按钮功能
+    # 清除按钮功能 - 需要更新返回值以清除新组件
     def clear_history():
         logger.info("Clearing chat history.")
-        return [], "", "上下文将显示在这里..." # 清空 chatbot, input, context display
-    clear_button.click(clear_history, [], [chatbot, msg_input, context_display], queue=False)
+        # 返回对应 outputs 列表的清空值
+        return [], "", "上下文将显示在这里...", "重构后的查询将显示在这里..."
+    # 在 outputs 列表中添加新组件 rewritten_query_display
+    clear_button.click(
+        clear_history,
+        [],
+        [chatbot, msg_input, context_display, rewritten_query_display], # 确保与 outputs 匹配
+        queue=False
+        )
 
     # --- 应用加载时执行 ---
     demo.load(load_all_resources, outputs=None) # 在界面加载时尝试加载资源

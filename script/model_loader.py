@@ -36,7 +36,7 @@ def load_models() -> Tuple[Optional[AutoModelForCausalLM], Optional[AutoTokenize
     try:
         generator_model = AutoModelForCausalLM.from_pretrained(
             BASE_MODEL_PATH,
-            device_map='cuda:1', # 使用 'auto'，注意显存！确保 transformers 版本支持
+            device_map='cuda:0', # 使用 'auto'，注意显存！确保 transformers 版本支持
             trust_remote_code=True,
             torch_dtype=torch.bfloat16, # 或根据模型选择 torch.float16
         )

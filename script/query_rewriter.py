@@ -126,6 +126,8 @@ def generate_rewritten_query(
     # 5. 后处理
     # (之前的逻辑似乎是为了处理模型可能包含的思考过程 <think>...</think>，如果你的重写模型没有这个，可以简化)
     rewritten_query = rewritten_query_full.split("</think>")[-1] # 移除这行，除非你的重写模型确实输出 <think> 标签
+    rewritten_query = rewritten_query.replace(":","")
+    rewritten_query = rewritten_query.replace(":", "")
 
     # 去除可能的引号包裹和多余空白
     rewritten_query = rewritten_query.strip('\"\'').strip()
