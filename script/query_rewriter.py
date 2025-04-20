@@ -1,28 +1,11 @@
-# script/query_rewriter.py (修正并包含日志记录和解析逻辑)
-
 import logging
-import requests  # 导入 requests 库用于发送 HTTP 请求
-import json      # 导入 json 用于处理 JSON 数据
-from typing import List, Dict
-from config import *
+import time
 
-# 导入配置信息
-try:
-    from config import (
-        VLLM_REWRITER_API_BASE_URL,         # vLLM API 地址
-        VLLM_REWRITER_MODEL,       # vLLM 中的重写模型标识符
-        MAX_HISTORY,               # 最大历史记录轮数
-        REWRITER_INSTRUCTION_FILE, # 重写指令模板文件路径
-        REWRITER_GENERATION_CONFIG # 重写任务的生成参数
-    )
-except ImportError:
-    logging.critical("在 query_rewriter.py 中无法从 config.py 导入配置")
-    # 提供默认值或抛出错误
-    VLLM_API_BASE_URL = "http://localhost:8001/v1"
-    VLLM_REWRITER_MODEL = "placeholder-rewriter-model" # 需要替换为实际模型名
-    MAX_HISTORY = 5
-    REWRITER_INSTRUCTION_FILE = "../prompts/rewriter_instruction.txt" # 需要确保路径正确
-    REWRITER_GENERATION_CONFIG = {"max_tokens": 512, "temperature": 0.2}
+import aiohttp  # <--- 导入 aiohttp
+import asyncio  # <--- 可能需要 asyncio (例如用于超时)
+import json
+from typing import List, Dict, Optional
+from config import *
 
 logger = logging.getLogger(__name__)
 
@@ -38,23 +21,24 @@ except Exception as e:
     _REWRITER_INSTRUCTION_TEMPLATE_CONTENT = "根据对话历史重写用户问题，使其更适合知识库检索。\n用户问题：{user_input}"
 
 
-# 更新函数签名，移除 model 和 tokenizer 参数
-def generate_rewritten_query(
+# --- 将函数修改为异步 ---
+async def generate_rewritten_query(
     messages: List[Dict[str, str]],
     user_input: str,
-    # 不再需要从外部传入 template, max_history, generation_config，直接使用导入的配置
-    ) -> str:
+    ) -> str: # 返回值类型不变
     """
-    使用 vLLM API 端点根据对话历史重写用户当前问题。
+    使用 vLLM API 端点异步 (aiohttp) 地根据对话历史重写用户当前问题。
 
     Args:
         messages: 包含对话历史的列表。
         user_input: 用户当前输入的原始问题。
 
     Returns:
-        str: 重写后的查询字符串 (可能包含换行符)。如果重写失败或结果不佳，返回原始输入。
+        str: 重写后的查询字符串。如果失败则返回原始输入。
     """
-    logger.info(f"开始通过 vLLM API 进行查询重写，原始输入: '{user_input[:50]}...'")
+    func_start_time = time.time() # 可选：函数计时
+    logger.info(f"[{func_start_time:.3f}] 开始 ASYNC 查询重写 (vLLM API): '{user_input[:50]}...'")
+
 
     # 1. 准备对话历史 (逻辑保持不变)
     raw_rewrite_history = messages[-(MAX_HISTORY * 2):]
@@ -78,105 +62,95 @@ def generate_rewritten_query(
         {"role": "user", "content": final_rewrite_instruction},
     ]
 
-    # 4. 调用 vLLM API 端点
+    # 4. 准备 API 调用细节
     api_url = f"{VLLM_REWRITER_API_BASE_URL}/chat/completions"
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}  # 非流式，接受 JSON
+
+    # --- 构造 Payload (包含 LoRA 指定) ---
+    # !!! 重要: 请根据你的 vLLM 版本确认指定 LoRA 的正确方式 !!!
+    # 这里以方式 B (lora_request 字段) 作为示例，如果你的 vLLM 需要方式 A，请修改此处。
     payload = {
-        "model": VLLM_REWRITER_MODEL,
+        "model": VLLM_REWRITER_MODEL,  # 基础模型名称
         "messages": rewrite_api_messages,
-        "max_tokens": REWRITER_GENERATION_CONFIG.get("max_tokens", 512),
-        "temperature": REWRITER_GENERATION_CONFIG.get("temperature", 0.2),
-        "top_p": REWRITER_GENERATION_CONFIG.get("top_p", 0.95),
-        "repetition_penalty": REWRITER_GENERATION_CONFIG.get("repetition_penalty", 1.1),
-        "stop": REWRITER_GENERATION_CONFIG.get("stop"),
-        "stream": False, # 查询重写通常不需要流式返回
-        "lora_request": {  # <--- 添加这个字段
+        # 使用 REWRITER_GENERATION_CONFIG
+        **{k: v for k, v in REWRITER_GENERATION_CONFIG.items() if v is not None},
+        "stream": False,  # 重写不需要流式
+        # 指定 LoRA (方式 B 示例, 结构需核实)
+        "lora_request": {
             "lora_name": REWRITER_LORA_NAME,
-            "lora_int_id": 1  # 这个 ID 通常需要，具体值可能需要查看 vLLM LoRA 文档
-        },
+            "lora_int_id": 1  # 查阅 vLLM 文档确认是否需要以及具体值
+        }
+        # --- 或者使用 方式 A ---
+        # "model": f"{VLLM_REWRITER_MODEL}@@{REWRITER_LORA_NAME}", # 示例分隔符 @@
+        # ---------------------
     }
-    payload = {k: v for k, v in payload.items() if v is not None} # 清理 None 值
+    # payload = {k: v for k, v in payload.items() if v is not None} # 清理 None 值 (如果上面 **kwargs 已处理则无需重复)
 
-    rewritten_query_result = user_input # 初始化为原始输入，以便在出错时回退
+    rewritten_query_result = user_input  # 默认回退值
+
+    # 5. 使用 aiohttp 调用 API
     try:
-        logger.info(f"向 vLLM API 发送重写请求: {api_url}")
-        response = requests.post(api_url, headers=headers, json=payload, timeout=60) # 设置超时
-        response.raise_for_status() # 检查 HTTP 错误
+        # 设置超时 (例如 60 秒)
+        timeout = aiohttp.ClientTimeout(total=60.0)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            req_start_api_time = time.time()
+            logger.info(f"[{req_start_api_time:.3f}] 发送 ASYNC 重写请求到: {api_url}")
 
-        # --- 增加: 记录完整的原始响应 ---
-        try:
-            response_data = response.json()
-            # 使用 DEBUG 级别记录，避免日志过大，确保日志级别已设为 DEBUG
-            logger.debug(f"vLLM API (重写) 完整响应 JSON:\n{json.dumps(response_data, indent=2, ensure_ascii=False)}")
-        except json.JSONDecodeError as e:
-             logger.error(f"无法解析 vLLM API (重写) 响应 JSON: {e}")
-             logger.debug(f"vLLM API (重写) 原始响应文本: {response.text}") # 如果 JSON 解析失败，记录原始文本
-             response_data = None # 标记解析失败
-        # -----------------------------
+            async with session.post(api_url, headers=headers, json=payload) as response:
+                # 检查 HTTP 状态码
+                response.raise_for_status()  # 对 4xx/5xx 抛出 ClientResponseError
 
-        # 5. 处理 API 响应 (仅当 response_data 有效时)
-        if response_data:
-            if response_data.get("choices") and len(response_data["choices"]) > 0:
-                choice = response_data["choices"][0]
-                message = choice.get("message", {})
-                content = message.get("content")
-                if content:
-                    # === 在这里调整解析逻辑 ===
-                    raw_content_from_api = content.strip()
-                    logger.debug(f"从 API 获取的原始 content 用于重写: '{raw_content_from_api}'")
+                # 6. 处理成功的响应 (异步读取 JSON)
+                response_data = await response.json()
+                api_end_time = time.time()
+                logger.debug(
+                    f"[{api_end_time:.3f}] vLLM API (重写) 响应 JSON (耗时: {api_end_time - req_start_api_time:.3f}s):\n{json.dumps(response_data, indent=2, ensure_ascii=False)}")
 
-                    # 尝试根据 </think> 标签分割
-                    think_end_tag = "</think>"
-                    if think_end_tag in raw_content_from_api:
-                        parts = raw_content_from_api.split(think_end_tag, 1) # 只分割一次
-                        if len(parts) > 1:
-                            extracted_query = parts[1].strip()
-                            if extracted_query: # 确保分割后有内容
-                                rewritten_query_result = extracted_query
-                                logger.info(f"成功提取到 {think_end_tag} 之后的内容作为重写查询。")
+                # 提取内容 (逻辑同前)
+                if response_data.get("choices") and len(response_data["choices"]) > 0:
+                    content = response_data["choices"][0].get("message", {}).get("content")
+                    if content:
+                        # 处理 <think> 标签 (逻辑同前)
+                        raw_content = content.strip()
+                        think_end_tag = "</think>"
+                        if think_end_tag in raw_content:
+                            parts = raw_content.split(think_end_tag, 1)
+                            if len(parts) > 1 and parts[1].strip():
+                                rewritten_query_result = parts[1].strip()
                             else:
-                                logger.warning(f"在 {think_end_tag} 之后未找到有效内容。原始 content: '{raw_content_from_api}'。可能模型只返回了思考过程。")
-                                # 保持 rewritten_query_result 为 user_input (默认回退)
+                                logger.warning(f"{think_end_tag} 后无有效内容。")
                         else:
-                             # 理论上如果标签存在，分割总会产生至少两部分（可能第二部分为空）
-                             logger.warning(f"找到 {think_end_tag} 但分割异常。使用 API 返回的原始 content。")
-                             rewritten_query_result = raw_content_from_api
+                            rewritten_query_result = raw_content
                     else:
-                        # 如果没有找到 </think> 标签，则假定整个 content 就是结果
-                        logger.info(f"在 API 响应中未找到 {think_end_tag} 标签，将使用完整的 content。")
-                        rewritten_query_result = raw_content_from_api
-                    # ==========================
+                        logger.warning("API 响应 content 为空。")
                 else:
-                    logger.warning("vLLM API 响应 (重写) 中 'content' 字段为空或不存在。")
-            else:
-                logger.warning("vLLM API 响应 (重写) 格式不符合预期 (缺少 'choices')。")
-        else:
-             logger.warning("因 JSON 解析失败，无法处理 vLLM API (重写) 响应。")
+                    logger.warning("API 响应 choices 无效。")
 
-    except requests.exceptions.Timeout:
-        logger.error("请求 vLLM API (重写) 超时。")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"调用 vLLM API (重写) 时发生网络或HTTP错误: {e}", exc_info=False)
-    except Exception as e:
-        logger.error(f"处理查询重写 API 调用或响应时发生未知错误: {e}", exc_info=True)
+    # 7. 捕获 aiohttp 和 asyncio 的异常
+    except aiohttp.ClientResponseError as e:
+        logger.error(f"[{time.time():.3f}] vLLM API (重写) HTTP 错误: Status {e.status}, Message: {e.message}",
+                     exc_info=False)
+    except asyncio.TimeoutError:
+        logger.error(f"[{time.time():.3f}] 请求 vLLM API (重写) 超时。")
+    except aiohttp.ClientConnectorError as e:
+        logger.error(f"[{time.time():.3f}] 无法连接到 vLLM 重写服务: {e}", exc_info=False)
+    except aiohttp.ClientError as e:  # 其他 aiohttp 客户端错误
+        logger.error(f"[{time.time():.3f}] 调用 vLLM API (重写) 时发生 aiohttp 客户端错误: {e}", exc_info=True)
+    except Exception as e:  # 未知错误
+        logger.error(f"[{time.time():.3f}] 处理查询重写 API 调用时发生未知错误: {e}", exc_info=True)
 
-    # 6. 后处理 (对提取出的 rewritten_query_result 进行)
-    # 移除可能的引号等基础清理
+    # 8. 后处理和最终检查 (逻辑同前)
     rewritten_query_result = rewritten_query_result.strip('\"\'').strip()
-    # 这里可以添加更多针对性的清理，如果需要的话
 
-    logger.info(f"--- 查询重写结果 (来自 vLLM, 处理后) ---")
+    logger.info(f"--- 查询重写结果 (来自 vLLM Async, 处理后) ---")
     logger.info(f"原始查询: {user_input}")
-    logger.info(f"最终使用的重写查询 (用于检索): '{rewritten_query_result}'") # 记录最终结果
+    logger.info(f"最终使用的重写查询: '{rewritten_query_result}'")
     logger.info(f"-----------------------------------------")
 
-    # 7. 最终有效性检查与回退 (检查处理后的结果)
-    if not rewritten_query_result or len(rewritten_query_result) < 5:
-        logger.warning("最终重写查询结果无效 (空或过短)，回退到原始查询。")
-        return user_input
-    # 如果 rewritten_query_result 仍然是 user_input (因为出错或解析后为空)，这里也会回退
-    if rewritten_query_result == user_input:
-         logger.info("重写结果与原始输入相同或已回退到原始输入。")
+    if not rewritten_query_result or len(rewritten_query_result) < 5 or rewritten_query_result == user_input:
+        if rewritten_query_result != user_input:
+            logger.warning("最终重写查询结果无效或回退。")
+        return user_input  # 回退到原始输入
 
-
+    logger.info(f"[{time.time():.3f}] ASYNC 查询重写完成 (总耗时: {time.time() - func_start_time:.3f}s)。")
     return rewritten_query_result

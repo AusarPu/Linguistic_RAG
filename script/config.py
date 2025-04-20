@@ -7,7 +7,7 @@ LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 # -----------------
 
 # ---- RAG 配置 ----
-TOP_K_INITIAL_RETRIEVAL = 50000 # Hybrid 模式下，初始从向量数据库检索的候选数量
+TOP_K_INITIAL_RETRIEVAL = 500 # Hybrid 模式下，初始从向量数据库检索的候选数量
 CHUNK_SIZE = 250
 OVERLAP = 20
 MIN_CHUNK_LENGTH = 150
@@ -57,8 +57,8 @@ REWRITER_INSTRUCTION_FILE = os.path.join(_SCRIPT_DIR, "../prompts/rewriter_instr
 # ---- 生成参数 (用于 vLLM API 调用) ----
 # 这些参数现在将用于构造发送给 vLLM API 的请求体
 GENERATION_CONFIG = {
-    "max_tokens": 8192, # 在 vLLM API 中通常用 max_tokens
-    "temperature": 1.1,
+    "max_tokens": 5000, # 在 vLLM API 中通常用 max_tokens
+    "temperature": 0.9,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
     "stop": None, # 可以设置停止词，例如 ["\nUser:", "</s>"]

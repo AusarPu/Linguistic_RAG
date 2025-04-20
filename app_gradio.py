@@ -174,7 +174,7 @@ async def respond(
         try:
             # Consider running sync requests in executor for fully async app
             # await asyncio.to_thread(generate_rewritten_query, messages_history, message)
-            rewritten_query_result = generate_rewritten_query(messages_history, message)
+            rewritten_query_result = await generate_rewritten_query(messages_history, message)
             if rewritten_query_result != message: # Check if rewrite actually happened
                 rewritten_query_str = rewritten_query_result
                 actual_rewritten_query_str_for_display = rewritten_query_result
