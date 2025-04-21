@@ -70,7 +70,7 @@ async def generate_rewritten_query(
     # !!! 重要: 请根据你的 vLLM 版本确认指定 LoRA 的正确方式 !!!
     # 这里以方式 B (lora_request 字段) 作为示例，如果你的 vLLM 需要方式 A，请修改此处。
     payload = {
-        "model": VLLM_REWRITER_MODEL,  # 基础模型名称
+        "model": VLLM_REWRITER_MODEL_ID_FOR_API,  # 基础模型名称
         "messages": rewrite_api_messages,
         # 使用 REWRITER_GENERATION_CONFIG
         **{k: v for k, v in REWRITER_GENERATION_CONFIG.items() if v is not None},
@@ -80,11 +80,7 @@ async def generate_rewritten_query(
             "lora_name": REWRITER_LORA_NAME,
             "lora_int_id": 1  # 查阅 vLLM 文档确认是否需要以及具体值
         }
-        # --- 或者使用 方式 A ---
-        # "model": f"{VLLM_REWRITER_MODEL}@@{REWRITER_LORA_NAME}", # 示例分隔符 @@
-        # ---------------------
     }
-    # payload = {k: v for k, v in payload.items() if v is not None} # 清理 None 值 (如果上面 **kwargs 已处理则无需重复)
 
     rewritten_query_result = user_input  # 默认回退值
 

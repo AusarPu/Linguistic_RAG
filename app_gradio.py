@@ -169,7 +169,7 @@ async def respond(
     # 2. Query Rewriting (remains same)
     rewritten_query_str = message
     actual_rewritten_query_str_for_display = "(重写未启用或失败)"
-    if config.VLLM_REWRITER_MODEL: # Check if rewriter is configured
+    if VLLM_REWRITER_MODEL_ID_FOR_API: # Check if rewriter is configured
         logger.info("Performing query rewriting via API...")
         try:
             # Consider running sync requests in executor for fully async app
@@ -242,7 +242,7 @@ async def respond(
     api_url = f"{VLLM_GENERATOR_API_BASE_URL}/chat/completions"
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
     payload = {
-        "model": VLLM_GENERATOR_MODEL,
+        "model": VLLM_GENERATOR_MODEL_ID_FOR_API,
         "messages": generation_messages,
         "max_tokens": GENERATION_CONFIG.get("max_tokens", 4096),
         "temperature": GENERATION_CONFIG.get("temperature", 0.6),
