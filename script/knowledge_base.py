@@ -376,7 +376,7 @@ class KnowledgeBase:
                               query_sparse: Dict[int, float],
                               chunk_dense: np.ndarray,
                               chunk_sparse: Dict[int, float],
-                              dense_weight: float = 0.9 # 可配置
+                              dense_weight: float = DENSE_WEIGHT # 可配置
                               ) -> float:
          """计算单个查询与单个块之间的混合相似度得分。"""
          # 稠密得分 (余弦相似度)

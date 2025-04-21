@@ -16,21 +16,23 @@ PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 
 # --- RAG 应用配置 (保持不变) ---
-TOP_K_INITIAL_RETRIEVAL = 500
-CHUNK_SIZE = 250
-OVERLAP = 20
-MIN_CHUNK_LENGTH = 150
+TOP_K_INITIAL_RETRIEVAL = 50000
+CHUNK_SIZE = 1000
+OVERLAP = 200
+MIN_CHUNK_LENGTH = 250
 MAX_HISTORY = 5
 RETRIEVAL_STRATEGY = "threshold"
-HYBRID_SIMILARITY_THRESHOLD = 0.6 # 根据你的测试调整
-MAX_THRESHOLD_RESULTS = 4
-MAX_AGGREGATED_RESULTS = 30
+HYBRID_SIMILARITY_THRESHOLD = 0.55 # 根据你的测试调整
+MAX_THRESHOLD_RESULTS = 2
+MAX_AGGREGATED_RESULTS = 10
+DENSE_WEIGHT = 0.7
 # -----------------------------
 
 # --- 模型本地路径配置 ---
 # vLLM 使用的基础模型 (Generator 和 Rewriter 都用这个) 的本地路径
 # !! 需要确保这个路径在新设备上是正确的 !!
 VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B" #<--- 修改为你 base_llm 下载的实际路径
+VLLM_REWRITE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/DeepSeek-R1-Distill-Qwen-14B-AWQ"
 
 # Rewriter 使用的 LoRA adapter 的本地路径
 # !! 需要确保这个路径在新设备上是正确的 !!
@@ -70,7 +72,7 @@ VLLM_REWRITER_API_BASE_URL = f"http://{VLLM_REWRITER_HOST}:{VLLM_REWRITER_PORT}/
 # vLLM 使用的模型标识符 (通常就是基础模型路径，用于 API 请求中的 'model' 字段)
 # 注意：对于带 LoRA 的请求，实际 model 字段可能需要拼接 Lora 名称，这在 query_rewriter.py 中处理
 VLLM_GENERATOR_MODEL_ID_FOR_API = VLLM_BASE_MODEL_LOCAL_PATH
-VLLM_REWRITER_MODEL_ID_FOR_API = VLLM_BASE_MODEL_LOCAL_PATH # API 请求中 model 字段通常仍是基础模型
+VLLM_REWRITER_MODEL_ID_FOR_API = VLLM_REWRITE_MODEL_LOCAL_PATH # API 请求中 model 字段通常仍是基础模型
 # -------------------------
 
 # --- Prompt 文件路径 (使用绝对路径或相对于 config.py 的路径) ---
@@ -88,7 +90,7 @@ GENERATION_CONFIG = { # 用于生成器 vLLM API
     "stop": None,
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
-    "max_tokens": 1024,
+    "max_tokens": 1000,
     "temperature": 0.2,
     "top_p": 0.95,
     "repetition_penalty": 1.1,

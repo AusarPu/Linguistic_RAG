@@ -17,7 +17,7 @@ read_config() {
 }
 
 echo ">>> 读取重写器配置从 $CONFIG_MODULE..."
-BASE_MODEL_PATH=$(read_config VLLM_BASE_MODEL_LOCAL_PATH)
+BASE_MODEL_PATH=$(read_config VLLM_REWRITE_MODEL_LOCAL_PATH)
 LORA_PATH=$(read_config VLLM_REWRITER_LORA_LOCAL_PATH)
 LORA_NAME=$(read_config REWRITER_LORA_NAME)
 PORT=$(read_config VLLM_REWRITER_PORT)
@@ -43,6 +43,7 @@ echo "    显存限制: ${GPU_MEM_UTILIZATION:-默认}"
 echo "    最大 LoRA Rank: $MAX_LORA_RANK"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID $PYTHON_CMD -m vllm.entrypoints.openai.api_server \
+    --quantization awq_marlin \
     --model "$BASE_MODEL_PATH" \
     --port $PORT \
     --trust-remote-code \
@@ -51,8 +52,8 @@ CUDA_VISIBLE_DEVICES=$GPU_ID $PYTHON_CMD -m vllm.entrypoints.openai.api_server \
     --max-loras 1 \
     --max-lora-rank $MAX_LORA_RANK \
     $MEM_ARG \
-    --disable-log-requests #\
-    --max-model-len 100000
+    --disable-log-requests \
+    --max_model_len 30000
     #--log-config=logging.yaml
 
 echo ">>> [$(date +'%Y-%m-%d %H:%M:%S')] 重写器 vLLM 服务已退出。"

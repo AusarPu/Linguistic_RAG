@@ -75,11 +75,6 @@ async def generate_rewritten_query(
         # 使用 REWRITER_GENERATION_CONFIG
         **{k: v for k, v in REWRITER_GENERATION_CONFIG.items() if v is not None},
         "stream": False,  # 重写不需要流式
-        # 指定 LoRA (方式 B 示例, 结构需核实)
-        "lora_request": {
-            "lora_name": REWRITER_LORA_NAME,
-            "lora_int_id": 1  # 查阅 vLLM 文档确认是否需要以及具体值
-        }
     }
 
     rewritten_query_result = user_input  # 默认回退值

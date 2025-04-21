@@ -1,111 +1,203 @@
-# download_models.py
+# download_models.py (支持 Hugging Face 和 ModelScope, 使用镜像)
 import logging
 import os
 import sys
+
+# 确保导入 huggingface_hub
 try:
-    from modelscope.hub.snapshot_download import snapshot_download
-    # 尝试性导入，减少不必要的 modelscope 日志输出
-    from modelscope.utils.logger import get_logger
-    # 可以取消下面这行的注释来减少 modelscope 的日志等级
-    # get_logger().setLevel(logging.WARNING)
+    from huggingface_hub import snapshot_download as hf_snapshot_download
 except ImportError:
-    print("错误：无法导入 modelscope 库。请确保已在虚拟环境中安装 modelscope。")
-    print("运行: pip install \"modelscope[all]\"")
+    print("错误：无法导入 huggingface_hub 库。请确保已安装。")
+    print("运行: pip install huggingface-hub (或 uv pip install huggingface-hub)")
     sys.exit(1)
+
+# 可选导入 modelscope
+try:
+    from modelscope.hub.snapshot_download import snapshot_download as ms_snapshot_download
+    modelscope_available = True
+except ImportError:
+    modelscope_available = False
+    print("信息：未找到 modelscope 库，将无法下载 'modelscope' 来源的模型。")
+
 
 # 配置基础日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- 用户配置 ---
-# !!! 重要：请将下面的 model_id 替换为你要下载的真实 ModelScope 模型 ID !!!
-# !!! 并根据需要修改 model_root_dir !!!
+# !!! 重要：请仔细检查并修改下面的配置项 !!!
 
-# 定义一个统一存放所有模型的根目录
+# 1. 定义国内 Hugging Face 镜像地址 (如果需要)
+#    常见的有: https://hf-mirror.com/ (或者你可以留空 "" 不使用镜像)
+HF_MIRROR_ENDPOINT = "https://hf-mirror.com"
+
+# 2. 定义所有模型存放的根目录
 MODEL_ROOT_DIR = "/home/pushihao/RAG/models" # <--- 修改为你希望存放模型的本地根目录
 
+# 3. 配置要下载的模型列表
 models_to_download = {
-    # --- 基础 LLM (用于生成和重写的基础) ---
-    "base_llm": {
-        "model_id": "unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF", # <--- !! 替换 !! 例如 'qwen/Qwen-7B-Chat' 或其他
-        # "revision": "v1.0.0" # 可选：指定模型版本
+    # --- 基础 LLM (用于生成器) ---
+    # 假设生成器仍然使用之前从 ModelScope 下载的非量化模型
+    "base_llm_generator": {
+        "source": "manual",        # <--- 指定来源: "modelscope" 或 "huggingface"
+        "model_id": "qwen/Qwen1.5-7B-Chat", # <--- !! 确认或替换为你生成器用的基础模型 ID !!
+        # "revision": "v1.0.0"       # 可选：指定版本
+    },
+    # --- 量化 LLM (用于重写器) ---
+    "quantized_llm_rewriter": {
+        "source": "huggingface",         # <--- 指定来源: "huggingface"
+        "model_id": "stelterlab/DeepSeek-R1-Distill-Qwen-14B-AWQ", # <--- 使用你找到的 HF ID
+        # 为这个模型指定一个明确的本地存放目录 (会在 MODEL_ROOT_DIR 下创建)
+        "target_dir": os.path.join(MODEL_ROOT_DIR, "DeepSeek-R1-Distill-Qwen-14B-AWQ") #<--- 可以修改目录名
     },
     # --- 嵌入模型 ---
     "embedding": {
-        "model_id": "BAAI/bge-m3", # <--- !! 替换 !! 例如 'damo/nlp_gte_sentence-embedding_chinese-base' 或其他 BGE 模型
+        "source": "manual",        # <--- 指定来源
+        "model_id": "AI-ModelScope/bge-large-zh-v1.5", # <--- !! 确认或替换 !!
     },
+    # --- LoRA 适配器 (用于重写) ---
+    # LoRA 通常体积较小，可以手动下载或用 git clone
+    "rewriter_lora": {
+        "source": "manual",           # <--- 标记为手动处理
+        "model_id": "N/A",            # 无需 Hub ID
+        # 指定 LoRA 文件最终应该存放的目录
+        "target_dir": os.path.join(MODEL_ROOT_DIR, "rewriter_lora") #<--- 修改为你存放 LoRA 的目录
+    }
 }
 # --- 结束用户配置 ---
 
-def download_model(model_name, config):
-    """下载单个模型"""
-    model_id = config.get("model_id")
+
+def download_hf_model(model_name, config):
+    """使用 huggingface_hub 从 Hugging Face Hub 下载模型"""
+    repo_id = config.get("model_id")
+    target_dir = config.get("target_dir") # 使用指定的本地目录
     revision = config.get("revision")
 
-    # 检查 LoRA 是否需要特殊处理，如果 LoRA 不在 ModelScope，则跳过
-    if model_name == "rewriter_lora" and model_id == "YourUsername/YourLoraModelID":
-         logging.warning(f"跳过 '{model_name}'：请手动提供 LoRA 的 ModelScope ID 或使用其他方式下载。")
-         # 如果 LoRA 需要用 git clone，可以在这里添加逻辑或提示用户
-         # 例如： print(f"请手动 git clone <你的 LoRA 仓库地址> 到 {os.path.join(MODEL_ROOT_DIR, 'rewriter_lora')}")
-         return None # 返回 None 表示未通过 snapshot_download 下载
-
-    if not model_id:
-        logging.error(f"跳过 '{model_name}': 配置中缺少 model_id。")
+    if not repo_id or not target_dir:
+        logging.error(f"跳过 Hugging Face 模型 '{model_name}': 缺少 repo_id 或 target_dir 配置。")
         return None
 
-    logging.info(f"--- 开始下载模型: {model_name} ---")
-    logging.info(f"    Model ID: {model_id}")
-    logging.info(f"    根目录: {MODEL_ROOT_DIR}")
-    if revision:
-         logging.info(f"    版本: {revision}")
+    logging.info(f"--- 开始下载 Hugging Face 模型: {model_name} ---")
+    logging.info(f"    仓库 ID (Repo ID): {repo_id}")
+    logging.info(f"    目标本地目录 (Target Directory): {target_dir}")
+    if HF_MIRROR_ENDPOINT:
+        logging.info(f"    使用镜像 (Using Mirror): {HF_MIRROR_ENDPOINT}")
+    else:
+        logging.info("    使用官方源 (Using Official Hub)")
+    if revision: logging.info(f"    版本 (Revision): {revision}")
 
-    # 创建根目录（如果不存在）
-    os.makedirs(MODEL_ROOT_DIR, exist_ok=True)
+    # 确保目标目录存在
+    os.makedirs(target_dir, exist_ok=True)
 
     try:
-        # snapshot_download 会在 cache_dir (我们设为 MODEL_ROOT_DIR) 下创建基于 model_id 的子目录结构
-        # 它会返回实际下载到的快照目录的路径
-        download_path = snapshot_download(
-            model_id=model_id,
-            cache_dir=MODEL_ROOT_DIR, # 指定下载的根目录
+        # 使用 snapshot_download 下载整个仓库
+        # local_dir 参数指定下载/链接到的确切目录
+        # local_dir_use_symlinks=False 表示直接复制文件而非创建符号链接（更独立）
+        hf_snapshot_download(
+            repo_id=repo_id,
+            local_dir=target_dir,
+            local_dir_use_symlinks=False,
+            endpoint=HF_MIRROR_ENDPOINT if HF_MIRROR_ENDPOINT else None, # 传入镜像地址
             revision=revision,
-            local_files_only=False, # 确保从网络下载
-            # allow_patterns=["*.json", "*.safetensors", "*.bin", "*.py", "*.md", "token*"] # 可选：只下载特定文件类型
+            # token=os.environ.get("HF_TOKEN"), # 如果是私有仓库，需要 Token
+            # user_agent="my-rag-project" # 可选的用户代理
         )
-        logging.info(f"模型 '{model_name}' 下载成功，位于: {download_path}")
-        return download_path # 返回实际路径
-
+        logging.info(f"Hugging Face 模型 '{model_name}' 下载成功到: {target_dir}")
+        return target_dir # 返回指定的本地目录路径
     except Exception as e:
-        logging.error(f"下载模型 '{model_name}' ({model_id}) 失败: {e}", exc_info=True)
+        logging.error(f"下载 Hugging Face 模型 '{model_name}' ({repo_id}) 失败: {e}", exc_info=True)
         return None
+
+
+def download_ms_model(model_name, config):
+    """使用 modelscope 从 ModelScope Hub 下载模型"""
+    if not modelscope_available:
+        logging.error(f"跳过 ModelScope 模型 '{model_name}': modelscope 库未安装。")
+        return None
+
+    model_id = config.get("model_id")
+    revision = config.get("revision")
+    # ModelScope 下载时，文件会放在 cache_dir 下以 model_id 命名的目录结构中
+    cache_dir = MODEL_ROOT_DIR # 使用统一的根目录作为缓存目录
+
+    if not model_id:
+         logging.error(f"跳过 ModelScope 模型 '{model_name}': 缺少 model_id 配置。")
+         return None
+
+    logging.info(f"--- 开始下载 ModelScope 模型: {model_name} ---")
+    logging.info(f"    模型 ID (Model ID): {model_id}")
+    logging.info(f"    缓存根目录 (Cache Directory): {cache_dir}")
+    if revision: logging.info(f"    版本 (Revision): {revision}")
+
+    os.makedirs(cache_dir, exist_ok=True)
+
+    try:
+        # 调用 ModelScope 的下载函数
+        download_path = ms_snapshot_download(
+            model_id=model_id,
+            cache_dir=cache_dir,
+            revision=revision,
+        )
+        logging.info(f"ModelScope 模型 '{model_name}' 下载成功，位于: {download_path}")
+        return download_path # 返回 ModelScope 实际创建的路径
+    except Exception as e:
+        logging.error(f"下载 ModelScope 模型 '{model_name}' ({model_id}) 失败: {e}", exc_info=True)
+        return None
+
 
 # --- 主下载循环 ---
 if __name__ == "__main__":
     downloaded_paths = {}
-    all_successful = True
+    errors = False
 
+    print("开始处理模型下载任务...")
     for name, config in models_to_download.items():
-        actual_path = download_model(name, config)
+        source = config.get("source", "").lower()
+        actual_path = None
+
+        if source == "huggingface":
+            actual_path = download_hf_model(name, config)
+        elif source == "modelscope":
+            actual_path = download_ms_model(name, config)
+        elif source == "manual":
+             logging.info(f"跳过 '{name}': 标记为手动处理。请确保文件已放置在预期路径。")
+             actual_path = config.get("target_dir", os.path.join(MODEL_ROOT_DIR, name))
+             if not os.path.exists(actual_path):
+                  logging.warning(f"手动指定的路径 '{actual_path}' (用于 '{name}') 不存在!")
+                  # 可以选择在这里标记错误
+             downloaded_paths[name] = actual_path # 记录预期的路径
+             continue # 继续下一个
+        else:
+             logging.warning(f"跳过 '{name}': 未知的来源类型 '{source}'。请在配置中指定 'huggingface', 'modelscope' 或 'manual'。")
+             errors = True
+             continue
+
         if actual_path:
             downloaded_paths[name] = actual_path
-        elif name != "rewriter_lora": # 如果非 LoRA 下载失败，则标记失败
-             all_successful = False
-             # 如果 LoRA 是手动处理，上面 download_model 返回 None 不算失败
+        else:
+            # 如果下载函数返回 None，则标记为错误
+            errors = True
 
+    # --- 打印总结信息 ---
     print("-" * 40)
-    if not downloaded_paths and all_successful:
-         print("没有配置有效的模型 ID 进行下载（或者 LoRA 需要手动处理）。")
-    elif all_successful:
-        print("所有通过 ModelScope 配置的模型下载成功。")
+    if not errors and downloaded_paths:
+        print("模型下载/路径检查完成。")
+    elif errors:
+        print("!!! 部分模型下载失败或配置有误，请检查上面的日志。")
     else:
-        print("!!! 部分模型下载失败，请检查上面的日志。")
+         print("没有配置有效的模型进行下载或检查。")
 
-    print("\n下载完成后的模型路径:")
+    print("\n最终模型使用的参考路径:")
+    # 打印所有处理过的模型的预期或实际路径
     for name, path in downloaded_paths.items():
-        print(f"  {name}: {path}")
+        print(f"  [{name}]: {path}")
 
     print("\n重要提示:")
-    print("1. 请根据上面打印的 '实际路径' 更新你的 `script/config.py` 文件中的模型路径配置。")
-    print("   例如 `EMBEDDING_MODEL_PATH` 应指向 'embedding' 模型下载的路径。")
-    print("2. 更新你的 vLLM 启动脚本 (`.sh` 文件)，确保 `--model` 参数指向 'base_llm' 下载的基础模型路径。")
-    print("3. 如果 'rewriter_lora' 是手动下载的，请确保 `--lora-modules` 参数指向正确的 LoRA 文件路径。")
+    print("1. 请根据上面打印的路径，仔细检查并更新你的 `script/config.py` 文件中的相关路径配置。")
+    print("   - 例如 `VLLM_GENERATOR_MODEL_ID_FOR_API` 可能对应 'base_llm_generator' 的路径。")
+    print("   - `VLLM_REWRITER_MODEL_ID_FOR_API` 现在应该对应 'quantized_llm_rewriter' 的**基础模型标识符**（API调用时可能仍用基础模型ID，vLLM内部知道加载的是量化版，需测试确认）。")
+    print("   - `EMBEDDING_MODEL_PATH` 应指向 'embedding' 的路径。")
+    print("   - `VLLM_REWRITER_LORA_LOCAL_PATH` 应指向 'rewriter_lora' 的路径。")
+    print("2. 更新你的 vLLM 启动脚本 (`.sh` 文件):")
+    print("   - `start_generator_vllm.sh`: 确保 `--model` 参数指向 'base_llm_generator' 下载到的**实际路径**。")
+    print("   - `start_rewriter_vllm.sh`: 确保 `--model` 参数指向 'quantized_llm_rewriter' 下载到的**实际路径** (AWQ 模型目录)，并且**务必添加 `--quantization awq` 参数**。同时确保 `--lora-modules` 指向 'rewriter_lora' 的**实际路径**。")
     print("-" * 40)

@@ -50,8 +50,8 @@ CUDA_VISIBLE_DEVICES=$GPU_ID $PYTHON_CMD -m vllm.entrypoints.openai.api_server \
     --port $PORT \
     --trust-remote-code \
     $MEM_ARG \
-    --disable-log-requests #\
-    --max-model-len 100000
+    --disable-log-requests \
+    --max_model_len 30000
     #--log-config=logging.yaml # 可选
 
 echo ">>> [$(date +'%Y-%m-%d %H:%M:%S')] 生成器 vLLM 服务已退出。"
