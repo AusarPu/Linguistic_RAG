@@ -5,7 +5,7 @@ import aiohttp  # <--- 导入 aiohttp
 import asyncio  # <--- 可能需要 asyncio (例如用于超时)
 import json
 from typing import List, Dict, Optional
-from config import *
+from .config import *
 
 logger = logging.getLogger(__name__)
 

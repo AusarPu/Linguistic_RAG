@@ -20,9 +20,6 @@ MAX_THRESHOLD_RESULTS = 4 # 阈值模式下，最多返回的结果数量
 MAX_AGGREGATED_RESULTS = 30 # RAG 最终送入 LLM 的总块数上限
 
 # ---- 模型路径 (本地) ----
-# BASE_MODEL_PATH = "/home/pushihao/model-dir" # 不再需要，由 vLLM 加载
-# ADAPTER_PATH = "/home/pushihao/RAG/linguistic_ai" # 如果 adapter 在 vLLM 加载时合并，则不再需要
-# REWRITER_MODEL_PATH = "/home/pushihao/model-dir" # 不再需要，由 vLLM 加载
 EMBEDDING_MODEL_PATH = "/home/pushihao/RAG/sentence_similarity" # 嵌入模型仍然本地加载
 PROCESSED_DATA_DIR = "/home/pushihao/RAG/processed_knowledge_base" # 处理后的知识库数据目录
 

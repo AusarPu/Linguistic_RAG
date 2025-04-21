@@ -11,20 +11,8 @@ import logging # 导入 logging
 from typing import List, Dict, Optional, Tuple, Any # 增加类型注解
 
 from FlagEmbedding import BGEM3FlagModel
-from text_processing import split_text # 使用相对导入
-from config import ( # 使用相对导入
-    EMBEDDING_MODEL_PATH,
-    PROCESSED_DATA_DIR,
-    CHUNK_SIZE,
-    OVERLAP,
-    MIN_CHUNK_LENGTH,
-    TOP_K_INITIAL_RETRIEVAL, # 使用新的配置名
-    RETRIEVAL_STRATEGY,
-    HYBRID_SIMILARITY_THRESHOLD,
-    MAX_THRESHOLD_RESULTS,
-    # KNOWLEDGE_BASE_DIR and KNOWLEDGE_FILE_PATTERN will be passed during init
-)
-
+from .text_processing import split_text # 使用相对导入
+from .config import *
 # 获取 logger 实例
 logger = logging.getLogger(__name__)
 
