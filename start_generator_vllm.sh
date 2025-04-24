@@ -46,6 +46,7 @@ echo "    分配 GPU: $GPU_ID"
 echo "    显存限制: ${GPU_MEM_UTILIZATION:-默认}"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID $PYTHON_CMD -m vllm.entrypoints.openai.api_server \
+    --quantization fp8 \
     --model "$BASE_MODEL_PATH" \
     --port $PORT \
     --trust-remote-code \

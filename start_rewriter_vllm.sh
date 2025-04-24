@@ -43,17 +43,17 @@ echo "    显存限制: ${GPU_MEM_UTILIZATION:-默认}"
 echo "    最大 LoRA Rank: $MAX_LORA_RANK"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID $PYTHON_CMD -m vllm.entrypoints.openai.api_server \
-    --quantization awq_marlin \
     --model "$BASE_MODEL_PATH" \
+    --quantization fp8 \
     --port $PORT \
     --trust-remote-code \
-    --enable-lora \
-    --lora-modules ${LORA_NAME}="$LORA_PATH" \
-    --max-loras 1 \
-    --max-lora-rank $MAX_LORA_RANK \
     $MEM_ARG \
     --disable-log-requests \
-    --max_model_len 30000
-    #--log-config=logging.yaml
+    --max_model_len 20000\
+
+#    --enable-lora \
+#    --lora-modules ${LORA_NAME}="$LORA_PATH" \
+#    --max-loras 1 \
+#    --max-lora-rank $MAX_LORA_RANK \
 
 echo ">>> [$(date +'%Y-%m-%d %H:%M:%S')] 重写器 vLLM 服务已退出。"

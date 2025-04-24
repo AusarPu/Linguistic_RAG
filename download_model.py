@@ -38,21 +38,23 @@ models_to_download = {
     # --- 基础 LLM (用于生成器) ---
     # 假设生成器仍然使用之前从 ModelScope 下载的非量化模型
     "base_llm_generator": {
-        "source": "manual",        # <--- 指定来源: "modelscope" 或 "huggingface"
-        "model_id": "qwen/Qwen1.5-7B-Chat", # <--- !! 确认或替换为你生成器用的基础模型 ID !!
+        "source": "huggingface",        # <--- 指定来源: "modelscope" 或 "huggingface"
+        "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", # <--- !! 确认或替换为你生成器用的基础模型 ID !!
+        "target_dir": os.path.join(MODEL_ROOT_DIR,"deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"),
         # "revision": "v1.0.0"       # 可选：指定版本
     },
     # --- 量化 LLM (用于重写器) ---
     "quantized_llm_rewriter": {
-        "source": "huggingface",         # <--- 指定来源: "huggingface"
-        "model_id": "stelterlab/DeepSeek-R1-Distill-Qwen-14B-AWQ", # <--- 使用你找到的 HF ID
+        "source": "modelscope",         # <--- 指定来源: "huggingface"
+        "model_id": "ZhipuAI/GLM-4-32B-0414", # <--- 使用你找到的 HF ID
         # 为这个模型指定一个明确的本地存放目录 (会在 MODEL_ROOT_DIR 下创建)
-        "target_dir": os.path.join(MODEL_ROOT_DIR, "DeepSeek-R1-Distill-Qwen-14B-AWQ") #<--- 可以修改目录名
+        "target_dir": os.path.join(MODEL_ROOT_DIR,"ZhipuAI/GLM-Z1-Rumination-32B-0414") #<--- 可以修改目录名
     },
     # --- 嵌入模型 ---
     "embedding": {
-        "source": "manual",        # <--- 指定来源
-        "model_id": "AI-ModelScope/bge-large-zh-v1.5", # <--- !! 确认或替换 !!
+        "source": "modelscope",        # <--- 指定来源
+        "model_id": "BAAI/bge-large-zh-v1.5", # <--- !! 确认或替换 !!
+        "target_dir": os.path.join(MODEL_ROOT_DIR,"BAAI/bge-large-zh-v1.5")
     },
     # --- LoRA 适配器 (用于重写) ---
     # LoRA 通常体积较小，可以手动下载或用 git clone
