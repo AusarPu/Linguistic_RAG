@@ -16,23 +16,23 @@ PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 
 # --- RAG 应用配置 (保持不变) ---
-TOP_K_INITIAL_RETRIEVAL = 50000
+TOP_K_INITIAL_RETRIEVAL = 100
 CHUNK_SIZE = 500
 OVERLAP = 200
 MIN_CHUNK_LENGTH = 200
 MAX_HISTORY = 5
 RETRIEVAL_STRATEGY = "threshold"
-HYBRID_SIMILARITY_THRESHOLD = 0.65 # 根据你的测试调整
+HYBRID_SIMILARITY_THRESHOLD = 0.75 # 根据你的测试调整
 MAX_THRESHOLD_RESULTS = 4
 MAX_AGGREGATED_RESULTS = 15
-DENSE_WEIGHT = 0.9
+DENSE_WEIGHT = 0.99
 # -----------------------------
 
 # --- 模型本地路径配置 ---
 # vLLM 使用的基础模型 (Generator 和 Rewriter 都用这个) 的本地路径
 # !! 需要确保这个路径在新设备上是正确的 !!
-VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/ZhipuAI/GLM-4-32B-0414" #<--- 修改为你 base_llm 下载的实际路径
-VLLM_REWRITE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/ZhipuAI/GLM-4-32B-0414"
+VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B" #<--- 修改为你 base_llm 下载的实际路径
+VLLM_REWRITE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
 
 # Rewriter 使用的 LoRA adapter 的本地路径
 # !! 需要确保这个路径在新设备上是正确的 !!
