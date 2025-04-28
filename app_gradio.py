@@ -4,6 +4,7 @@ import time
 import logging
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional, AsyncGenerator
+from web_ui.chat_interface import create_chat_interface
 
 # -- New Imports --
 import json
@@ -337,28 +338,28 @@ with gr.Blocks(theme=gr.themes.Soft(), title="RAG 对话系统 (vLLM)") as demo:
     gr.Markdown("# RAG 对话系统 (vLLM 后端)")
 
     with gr.Row():
-        with gr.Column(scale=3):
-            chatbot = gr.Chatbot(label="聊天窗口", bubble_full_width=False, height=600, render_markdown=True)
-            with gr.Row():
-                 msg_input = gr.Textbox(label="输入消息", placeholder="请输入你的问题...", scale=7, autofocus=True, lines=1)
-                 send_button = gr.Button("发送", variant="primary", scale=1, min_width=0)
-        with gr.Column(scale=2):
+        # --- 调用函数创建聊天界面 ---
+        chatbot, msg_input, send_button = create_chat_interface()
+        # --------------------------
+
+        with gr.Column(scale=2): # <--- 侧边栏代码暂时保持不变
              with gr.Accordion("查看重构后的查询", open=False):
                  rewritten_query_display = gr.Textbox(label="重构查询列表", lines=5, interactive=False, value="重构后的查询将显示在这里...")
              with gr.Accordion("查看参考知识库片段", open=True):
                  context_display = gr.Markdown(value="上下文将显示在这里...")
              clear_button = gr.Button("清除对话历史")
 
-    # --- Event Binding (Bind directly to async respond) ---
+    # --- 事件绑定部分 ---
     submit_args = {
-        "fn": respond, # Use the async function directly
+        "fn": respond,
         "inputs": [msg_input, chatbot],
         "outputs": [chatbot, context_display, rewritten_query_display],
     }
     msg_input.submit(**submit_args)
     send_button.click(**submit_args)
 
-    # Clear button (remains same)
+
+    # Clear button
     def clear_history():
         logger.info("Clearing chat history.")
         # Return default/empty values for all outputs
@@ -369,10 +370,6 @@ with gr.Blocks(theme=gr.themes.Soft(), title="RAG 对话系统 (vLLM)") as demo:
         [chatbot, msg_input, context_display, rewritten_query_display],
         queue=False
     )
-
-    # --- App Loading ---
-    # Ensure inputs/outputs are explicitly None if load_all_resources takes/returns nothing relevant to UI
-    demo.load(load_all_resources, inputs=None, outputs=None)
 
 # --- App Launch ---
 if __name__ == "__main__":
