@@ -39,8 +39,8 @@ models_to_download = {
     # 假设生成器仍然使用之前从 ModelScope 下载的非量化模型
     "base_llm_generator": {
         "source": "modelscope",        # <--- 指定来源: "modelscope" 或 "huggingface"
-        "model_id": "ZhipuAI/GLM-Z1-32B-0414", # <--- !! 确认或替换为你生成器用的基础模型 ID !!
-        "target_dir": os.path.join(MODEL_ROOT_DIR,"ZhipuAI/GLM-Z1-32B-0414"),
+        "model_id": "Qwen/QwQ-32B", # <--- !! 确认或替换为你生成器用的基础模型 ID !!
+        "target_dir": os.path.join(MODEL_ROOT_DIR,"Qwen/QwQ-32B"),
         # "revision": "v1.0.0"       # 可选：指定版本
     },
     # --- 量化 LLM (用于重写器) ---

@@ -55,16 +55,8 @@ echo $! > "$GENERATOR_PID_FILE"
 echo "    Generator 服务 PID: $(cat "$GENERATOR_PID_FILE")，日志: $GENERATOR_LOG"
 
 # --- 等待 Generator 启动 (简单 sleep 或检查端口) ---
-echo "    等待 Generator 服务启动 (15 秒)..." # 根据实际启动时间调整
-sleep 1
-## 更健壮的方式是检查端口是否监听，例如:
-#generator_port=$(python3 -c "from script import config; print(config.VLLM_GENERATOR_PORT)")
-#echo "    检查端口 $generator_port 是否启动..."
-#while ! nc -z localhost $generator_port; do
-#   echo "    端口 $generator_port 未就绪，等待 5 秒..."
-#   sleep 5
-#done
-#echo "    端口 $generator_port 已启动。"
+echo "    等待 Generator 服务启动..." # 根据实际启动时间调整
+
 
 # --- 启动 Rewriter vLLM ---
 echo ">>> 正在后台启动 Rewriter vLLM 服务..."
@@ -73,9 +65,8 @@ echo $! > "$REWRITER_PID_FILE"
 echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_LOG"
 
 # --- 等待 Rewriter 启动 ---
-echo "    等待 Rewriter 服务启动 (15 秒)..."
-sleep 1
-# (同样可以加入端口检查逻辑)
+echo "    等待 Rewriter 服务启动..."
+
 
 # --- 启动 Gradio 应用 (前台运行) ---
 echo ">>> 启动 Gradio 应用 (前台运行)..."
