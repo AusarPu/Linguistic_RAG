@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional, AsyncGenerator
 from web_ui.chat_interface import create_chat_interface
+from web_ui.sidebar import create_sidebar
 
 # -- New Imports --
 import json
@@ -340,14 +341,11 @@ with gr.Blocks(theme=gr.themes.Soft(), title="RAG 对话系统 (vLLM)") as demo:
     with gr.Row():
         # --- 调用函数创建聊天界面 ---
         chatbot, msg_input, send_button = create_chat_interface()
+        # --- 修改开始: 侧边栏部分 ---
+        # 调用函数创建侧边栏组件，并接收返回的实例
+        rewritten_query_display, context_display, clear_button = create_sidebar()
+        # --- 修改结束 ---
         # --------------------------
-
-        with gr.Column(scale=2): # <--- 侧边栏代码暂时保持不变
-             with gr.Accordion("查看重构后的查询", open=False):
-                 rewritten_query_display = gr.Textbox(label="重构查询列表", lines=5, interactive=False, value="重构后的查询将显示在这里...")
-             with gr.Accordion("查看参考知识库片段", open=True):
-                 context_display = gr.Markdown(value="上下文将显示在这里...")
-             clear_button = gr.Button("清除对话历史")
 
     # --- 事件绑定部分 ---
     submit_args = {
