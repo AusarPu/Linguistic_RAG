@@ -11,7 +11,7 @@ def create_chat_interface():
             label="聊天窗口",
             bubble_full_width=False,
             height=600,
-            render_markdown=True
+            render_markdown=True,
         )
         with gr.Row():
              msg_input = gr.Textbox(
