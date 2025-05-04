@@ -75,44 +75,55 @@ async def generate_rewritten_query(
         # 使用 REWRITER_GENERATION_CONFIG
         **{k: v for k, v in REWRITER_GENERATION_CONFIG.items() if v is not None},
         "stream": False,  # 重写不需要流式
-        "chat_template_kwargs": {"enable_thinking": False}
+        # "chat_template_kwargs": {"enable_thinking": False}
     }
 
     rewritten_query_result = user_input  # 默认回退值
 
-    # 5. 使用 aiohttp 调用 API
+    # 5. 使用 aiohttp 调用 API (不变)
     try:
-        # 设置超时 (例如 60 秒)
-        timeout = aiohttp.ClientTimeout(total=60.0)
+        timeout = aiohttp.ClientTimeout(total=20.0)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             req_start_api_time = time.time()
-            logger.info(f"[{req_start_api_time:.3f}] 发送 ASYNC 重写请求到: {api_url}")
-
+            logger.info(f"[{req_start_api_time:.3f}] 发送 ASYNC 重写请求 (简化 JSON): {api_url}")
             async with session.post(api_url, headers=headers, json=payload) as response:
-                # 检查 HTTP 状态码
-                response.raise_for_status()  # 对 4xx/5xx 抛出 ClientResponseError
-
-                # 6. 处理成功的响应 (异步读取 JSON)
+                response.raise_for_status()
                 response_data = await response.json()
                 api_end_time = time.time()
                 logger.debug(
                     f"[{api_end_time:.3f}] vLLM API (重写) 响应 JSON (耗时: {api_end_time - req_start_api_time:.3f}s):\n{json.dumps(response_data, indent=2, ensure_ascii=False)}")
 
-                # 提取内容 (逻辑同前)
+                # 6. ★★★ 修改响应解析逻辑 ★★★
                 if response_data.get("choices") and len(response_data["choices"]) > 0:
-                    content = response_data["choices"][0].get("message", {}).get("content")
-                    if content:
-                        # 处理 <think> 标签 (逻辑同前)
-                        raw_content = content.strip()
-                        think_end_tag = "</think>"
-                        if think_end_tag in raw_content:
-                            parts = raw_content.split(think_end_tag, 1)
-                            if len(parts) > 1 and parts[1].strip():
-                                rewritten_query_result = parts[1].strip()
+                    content_str = response_data["choices"][0].get("message", {}).get("content")
+                    if content_str:
+                        logger.debug(f"从 API 获取的原始 content (应为 JSON 字符串): '{content_str}'")
+                        try:
+                            # 尝试直接解析 content 为 JSON 对象
+                            parsed_json = json.loads(content_str)
+                            # 提取 "rewritten_queries" 列表
+                            rewritten_queries_list = parsed_json.get("rewritten_queries")  # 不设默认值，后面判断
+
+                            # 检查提取结果是否为列表且包含字符串
+                            if isinstance(rewritten_queries_list, list) and all(
+                                    isinstance(q, str) for q in rewritten_queries_list):
+                                if rewritten_queries_list:
+                                    # ★ 将列表合并为多行字符串返回 ★
+                                    rewritten_query_result = "\n".join(rewritten_queries_list)
+                                    logger.info(f"成功从 JSON 提取查询列表，共 {len(rewritten_queries_list)} 条。")
+                                else:
+                                    logger.warning("JSON 中的 'rewritten_queries' 列表为空。")
+                                    # 保持默认回退
                             else:
-                                logger.warning(f"{think_end_tag} 后无有效内容。")
-                        else:
-                            rewritten_query_result = raw_content
+                                logger.warning("JSON 'rewritten_queries' 格式错误 (非字符串列表)。JSON 内容: %s",
+                                               parsed_json)
+                                # 保持默认回退
+                        except json.JSONDecodeError as e:
+                            logger.error(f"解析 API 返回的 content 为 JSON 时失败: {e}. Content: '{content_str}'")
+                            # 保持默认回退
+                        except Exception as e:
+                            logger.error(f"处理解析后的 JSON 时出错: {e}", exc_info=True)
+                            # 保持默认回退
                     else:
                         logger.warning("API 响应 content 为空。")
                 else:

@@ -330,6 +330,7 @@ async def respond(
         "repetition_penalty": GENERATION_CONFIG.get("repetition_penalty", 1.1),
         "stop": GENERATION_CONFIG.get("stop"), # Use stop sequences from config if any
         "stream": True,
+        "chat_template_kwargs": {"enable_thinking": True}
     }
     # Remove keys with None values as vLLM might not like them
     payload = {k: v for k, v in payload.items() if v is not None}
