@@ -75,6 +75,7 @@ async def generate_rewritten_query(
         # 使用 REWRITER_GENERATION_CONFIG
         **{k: v for k, v in REWRITER_GENERATION_CONFIG.items() if v is not None},
         "stream": False,  # 重写不需要流式
+        "chat_template_kwargs": {"enable_thinking": False}
     }
 
     rewritten_query_result = user_input  # 默认回退值
