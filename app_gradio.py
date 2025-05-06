@@ -330,7 +330,6 @@ async def respond(
         "repetition_penalty": GENERATION_CONFIG.get("repetition_penalty", 1.1),
         "stop": GENERATION_CONFIG.get("stop"), # Use stop sequences from config if any
         "stream": True,
-        "chat_template_kwargs": {"enable_thinking": True}
     }
     # Remove keys with None values as vLLM might not like them
     payload = {k: v for k, v in payload.items() if v is not None}
@@ -377,6 +376,7 @@ async def respond(
                                 # Combine history + user + current assistant response (internal format)
                                 streaming_messages_value = current_full_history_dicts + [current_assistant_message]
                                 # Yield list: [chatbot_tuples, no_update, no_update]
+                                print(raw_generated_text)
                                 yield [
                                     convert_openai_to_gradio_tuples(streaming_messages_value), # Chatbot (tuple format)
                                     gr.update(), # Context Display (no change)

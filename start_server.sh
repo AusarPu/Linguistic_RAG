@@ -67,7 +67,6 @@ echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_L
 # --- 等待 Rewriter 启动 ---
 echo "    等待 Rewriter 服务启动..."
 
-
 # --- 启动 Gradio 应用 (前台运行) ---
 echo ">>> 启动 Gradio 应用 (前台运行)..."
 echo "切换到项目根目录: $PROJECT_ROOT" # 假设 $PROJECT_ROOT 已正确设置
