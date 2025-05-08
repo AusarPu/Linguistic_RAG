@@ -48,7 +48,7 @@ CUDA_VISIBLE_DEVICES="0,1" $PYTHON_CMD -m vllm.entrypoints.openai.api_server \
     --trust-remote-code \
     $MEM_ARG \
     --disable-log-requests \
-    --max_model_len 100000 \
+    --max_model_len 40960 \
     --tensor-parallel-size 2
 
 

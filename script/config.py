@@ -31,8 +31,8 @@ DENSE_WEIGHT = 0.99
 # --- 模型本地路径配置 ---
 # vLLM 使用的基础模型 (Generator 和 Rewriter 都用这个) 的本地路径
 # !! 需要确保这个路径在新设备上是正确的 !!
-VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B" #<--- 修改为你 base_llm 下载的实际路径
-VLLM_REWRITE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B"
+VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-32B" #<--- 修改为你 base_llm 下载的实际路径
+VLLM_REWRITE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-32B"
 
 # Rewriter 使用的 LoRA adapter 的本地路径
 # !! 需要确保这个路径在新设备上是正确的 !!

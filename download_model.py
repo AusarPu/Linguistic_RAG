@@ -46,7 +46,7 @@ models_to_download = {
     # --- 量化 LLM (用于重写器) ---
     "quantized_llm_rewriter": {
         "source": "modelscope",         # <--- 指定来源: "huggingface"
-        "model_id": "Qwen/Qwen3-30B-A3B", # <--- 使用你找到的 HF ID
+        "model_id": "Qwen/Qwen3-32B", # <--- 使用你找到的 HF ID
         # 为这个模型指定一个明确的本地存放目录 (会在 MODEL_ROOT_DIR 下创建)
         "target_dir": os.path.join(MODEL_ROOT_DIR,"Qwen/Qwen3-30B-A3B") #<--- 可以修改目录名
     },

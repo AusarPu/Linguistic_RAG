@@ -193,6 +193,10 @@ async def respond(
     chat_history: Optional[List[Tuple[Optional[str], Optional[str]]]],
     # Type hint for yield: List containing chatbot value (List[Tuple]), context (str), rewritten (str)
     ) -> AsyncGenerator[List[Union[List[Tuple[Optional[str], Optional[str]]], str, gr.Markdown, gr.Textbox, gr.update]], None]:
+    # !!! 关键：确保每次调用 respond 时，raw_generated_text 都是全新的空字符串 !!!
+    raw_generated_text = ""
+    logger.debug(
+        f"respond 函数开始，raw_generated_text 初始化为空: '{raw_generated_text}' (ID: {id(raw_generated_text)})")
 
     # 1. Input Handling and Conversion
     chat_history_tuples = chat_history or []
@@ -306,6 +310,8 @@ async def respond(
         actual_rewritten_query_str_for_display                     # Rewritten Query Display
     ]
 
+    logger.debug(f"准备调用 vLLM API，此时 raw_generated_text: '{raw_generated_text}' (ID: {id(raw_generated_text)})")
+
     # 8. Prepare Generation Payload for vLLM API
     generation_api_messages = []
     if generator_system_prompt:
@@ -343,6 +349,9 @@ async def respond(
     current_full_history_dicts = messages_history + [user_message_internal]
     generation_start_time = time.time()
 
+    last_yield_time = time.time()
+    yield_interval = 0.5  # seconds
+
     try:
         # Increased timeout for potentially long generation
         timeout = aiohttp.ClientTimeout(total=300.0, connect=10.0)
@@ -368,25 +377,42 @@ async def respond(
 
                         try:
                             chunk_data = json.loads(data_str)
-                            delta_content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content")
-                            if delta_content:
+                            logger.debug(f"原始SSE数据块: {data_str}")  # 记录原始数据
+                            logger.debug(f"解析后 chunk_data: {chunk_data}")
+
+                            delta = chunk_data.get("choices", [{}])[0].get("delta", {})
+                            logger.debug(f"提取的 delta 对象: {delta}")
+
+                            delta_content = delta.get("content")  # 保持原样获取
+
+                            # !!! 关键修改：更准确地判断 delta_content !!!
+                            # 即使 delta_content 是空字符串 ""，也应该视为有效内容并尝试追加和 yield
+                            # 只有当 delta_content 是 None (JSON null) 时，才可能需要跳过（取决于模型语义）
+                            if delta_content is not None:  # <--- 修改这里的判断条件
                                 raw_generated_text += delta_content
-                                # Prepare current assistant message (internal format)
+                                logger.debug(f"追加后 raw_generated_text (前100字符): '{raw_generated_text[:100]}...'")
+
                                 current_assistant_message = {"role": "assistant", "content": raw_generated_text}
-                                # Combine history + user + current assistant response (internal format)
                                 streaming_messages_value = current_full_history_dicts + [current_assistant_message]
-                                # Yield list: [chatbot_tuples, no_update, no_update]
+                                converted_tuples_for_yield = convert_openai_to_gradio_tuples(streaming_messages_value)
+
+                                logger.debug(
+                                    f"准备 Yield 的数据 (部分): {str(converted_tuples_for_yield)[:200]}")  # 记录准备 yield 的数据
+
                                 yield [
-                                    convert_openai_to_gradio_tuples(streaming_messages_value), # Chatbot (tuple format)
-                                    gr.update(), # Context Display (no change)
-                                    gr.update()  # Rewritten Query Display (no change)
+                                    converted_tuples_for_yield,
+                                    gr.update(),
+                                    gr.update()
                                 ]
+                            else:
+                                logger.debug(f"收到的 delta_content 为 None，本次不追加也不 Yield。原始 delta: {delta}")
+
                         except json.JSONDecodeError:
-                            logger.warning(f"JSON decode error in stream: {data_str}")
+                            logger.warning(f"SSE 流 JSON 解析错误: {data_str}")
                         except Exception as e:
-                            # Catch potential errors in processing chunks (e.g., index errors)
-                            logger.error(f"Error processing stream chunk: {data_str}, Error: {e}", exc_info=False)
-                            # Continue processing stream if possible
+                            # 明确记录是在处理哪个数据块时出错
+                            logger.error(f"处理 SSE 数据块 '{data_str}' 时发生错误: {e}",
+                                         exc_info=True)  # 改为 exc_info=True 获取完整堆栈
 
     except asyncio.TimeoutError:
         error_occurred = True
