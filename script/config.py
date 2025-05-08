@@ -16,13 +16,13 @@ PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 
 # --- RAG 应用配置 (保持不变) ---
-TOP_K_INITIAL_RETRIEVAL = 100
+TOP_K_INITIAL_RETRIEVAL = 1000
 CHUNK_SIZE = 400
 OVERLAP = 50
 MIN_CHUNK_LENGTH = 200
 MAX_HISTORY = 5
 RETRIEVAL_STRATEGY = "threshold"
-HYBRID_SIMILARITY_THRESHOLD = 0.7 # 根据你的测试调整
+HYBRID_SIMILARITY_THRESHOLD = 0.65 # 根据你的测试调整
 MAX_THRESHOLD_RESULTS = 4
 MAX_AGGREGATED_RESULTS = 15
 DENSE_WEIGHT = 0.99
@@ -51,7 +51,7 @@ PROCESSED_DATA_DIR = os.path.join(PROJECT_ROOT_DIR, "processed_knowledge_base/")
 # --- vLLM 服务配置 ---
 # 生成器服务配置
 VLLM_GENERATOR_HOST = "localhost" # vLLM 监听的主机名 (通常 localhost 即可，因为 Gradio 和 vLLM 在同一容器/机器)
-VLLM_GENERATOR_PORT = 8000        # vLLM 生成器监听的端口
+VLLM_GENERATOR_PORT = 8001        # vLLM 生成器监听的端口
 VLLM_GENERATOR_GPU_ID = 0         # 分配给生成器的 GPU ID
 VLLM_GENERATOR_MEM_UTILIZATION = 0.9 # GPU 显存使用率 (例如 0.9 for 90%)
 
@@ -83,14 +83,14 @@ REWRITER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/rewriter_instr
 
 # --- 生成参数配置 ---
 GENERATION_CONFIG = { # 用于生成器 vLLM API
-    "max_tokens": 5000,
+    "max_tokens": 4096,
     "temperature": 0.9,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
     "stop": None,
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
-    "max_tokens": 1000,
+    "max_tokens": 4096,
     "temperature": 0.2,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
