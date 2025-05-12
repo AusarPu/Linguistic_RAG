@@ -53,8 +53,8 @@ models_to_download = {
     # --- 嵌入模型 ---
     "embedding": {
         "source": "modelscope",        # <--- 指定来源
-        "model_id": "BAAI/bge-large-zh-v1.5", # <--- !! 确认或替换 !!
-        "target_dir": os.path.join(MODEL_ROOT_DIR,"BAAI/bge-large-zh-v1.5")
+        "model_id": "BAAI/bge-reranker-v2-m3", # <--- !! 确认或替换 !!
+        "target_dir": os.path.join(MODEL_ROOT_DIR,"BAAI/bge-reranker-v2-m3")
     },
     # --- LoRA 适配器 (用于重写) ---
     # LoRA 通常体积较小，可以手动下载或用 git clone

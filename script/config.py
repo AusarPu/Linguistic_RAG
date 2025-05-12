@@ -17,8 +17,8 @@ PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # --- RAG 应用配置 (保持不变) ---
 TOP_K_INITIAL_RETRIEVAL = 1000
-CHUNK_SIZE = 400
-OVERLAP = 50
+CHUNK_SIZE = 800
+OVERLAP = 20
 MIN_CHUNK_LENGTH = 200
 MAX_HISTORY = 5
 RETRIEVAL_STRATEGY = "threshold"
@@ -31,8 +31,8 @@ DENSE_WEIGHT = 0.99
 # --- 模型本地路径配置 ---
 # vLLM 使用的基础模型 (Generator 和 Rewriter 都用这个) 的本地路径
 # !! 需要确保这个路径在新设备上是正确的 !!
-VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-32B" #<--- 修改为你 base_llm 下载的实际路径
-VLLM_REWRITE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-32B"
+VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B-FP8" #<--- 修改为你 base_llm 下载的实际路径
+VLLM_REWRITE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B-FP8"
 
 # Rewriter 使用的 LoRA adapter 的本地路径
 # !! 需要确保这个路径在新设备上是正确的 !!
