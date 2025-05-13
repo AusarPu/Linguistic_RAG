@@ -19,7 +19,7 @@ OPTIMIZER_MODEL_NAME = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B-FP8"  # 例
 # LLM 生成参数配置
 OPTIMIZER_GENERATION_CONFIG = {
     "temperature": 0.6,  # 对于编辑和遵循指令的任务，较低的温度通常更好
-    "max_tokens": 3000,  # 需要足够大以容纳优化后的块B，可以基于你块的平均/最大长度设置
+    "max_tokens": 5000,  # 需要足够大以容纳优化后的块B，可以基于你块的平均/最大长度设置
     "top_p": 0.95,      # 其他你可能想控制的参数
     # "stop": ["\n\n\n"] # 如果需要特定的停止符
 }
@@ -51,7 +51,8 @@ CHUNK_OPTIMIZATION_PROMPT_TEMPLATE = """
 {text_chunk_c}
 ```
 
-请严格按照以下JSON格式返回优化后的块B的文本，不要包含任何其他解释、对话或Markdown标记：
+请严格按照以下JSON格式返回优化后的块B的文本。
+确保 "optimized_chunk_B_text" 字段的值是一个符合JSON规范的字符串，这意味着字符串内部的特殊字符（如换行符、双引号、反斜杠等）都需要被正确转义（例如，换行符应表示为 \\n，双引号应表示为 \\"，反斜杠应表示为 \\\\）。
 {{
   "optimized_chunk_B_text": "这里是优化后的块B的文本内容..."
 }}
@@ -107,6 +108,7 @@ async def optimize_chunk_b_via_vllm(
                     try:
                         if message_content.startswith("```json"):
                             message_content = message_content.strip("```json").strip("`").strip()
+                        message_content = message_content.strip("\n")
                         parsed_json_output = json.loads(message_content)
                         optimized_text = parsed_json_output.get("optimized_chunk_B_text")
                         if optimized_text is not None and isinstance(optimized_text, str):
@@ -166,7 +168,7 @@ async def refine_all_chunks_with_llm(
     total_successful_optimizations = 0
 
     timeout = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT)
-    connector = aiohttp.TCPConnector(limit=1000)  # 你可以根据需要调整这个数字
+    connector = aiohttp.TCPConnector(limit=450)  # 你可以根据需要调整这个数字
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:  # 创建一个 session 供所有请求复用
         for doc_name, original_doc_chunks in chunks_by_doc.items():
             logger.info(f"\n开始处理文档 '{doc_name}' (共 {len(original_doc_chunks)} 个块)...")
@@ -249,8 +251,8 @@ async def refine_all_chunks_with_llm(
 
 if __name__ == '__main__':
     # --- 配置参数 ---
-    INPUT_CHUNKS_JSON = "/home/pushihao/RAG/processed_knowledge_base_chunks.json"
-    OUTPUT_REFINED_JSON = "./refined_knowledge_base_chunks_llm.json"
+    INPUT_CHUNKS_JSON = "../processed_knowledge/processed_knowledge_base_chunks.json"
+    OUTPUT_REFINED_JSON = "../processed_knowledge/refined_knowledge_base_chunks_llm.json"
 
     # 确保输入文件存在
     if not os.path.exists(INPUT_CHUNKS_JSON):

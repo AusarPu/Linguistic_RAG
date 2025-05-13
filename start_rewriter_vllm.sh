@@ -42,13 +42,15 @@ echo "    分配 GPU: $GPU_ID"
 echo "    显存限制: ${GPU_MEM_UTILIZATION:-默认}"
 echo "    最大 LoRA Rank: $MAX_LORA_RANK"
 
-CUDA_VISIBLE_DEVICES="0,1" vllm serve \
+#CUDA_VISIBLE_DEVICES="0,1"
+
+vllm serve \
     "$BASE_MODEL_PATH" \
     --port $PORT \
     --trust-remote-code \
     $MEM_ARG \
     --disable-log-requests \
-    --max_model_len 8000 \
+    --max_model_len 10000 \
     --tensor-parallel-size 2 \
     --max_num_seqs 2048 \
     --enable-reasoning --reasoning-parser deepseek_r1

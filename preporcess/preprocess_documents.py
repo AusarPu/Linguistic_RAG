@@ -195,7 +195,8 @@ if __name__ == '__main__':
     KNOWLEDGE_BASE_DIRECTORY = "/home/pushihao/RAG/knowledge_base"  # 请修改为你的实际路径
 
     # 处理后输出的 JSON 文件路径
-    OUTPUT_JSON_FILE = "./processed_knowledge_base_chunks.json"
+    OUTPUT_JSON_FILE = "../processed_knowledge/"
+    os.makedirs(OUTPUT_JSON_FILE, exist_ok=True)
 
     # 文本切分参数 (基于字符)
     # 你之前提到："我之前的设置是200~400字，重叠50字"
@@ -206,13 +207,13 @@ if __name__ == '__main__':
     # Langchain RecursiveCharacterTextSplitter 的分隔符
     # 你可以根据你的 OCR 文本特性调整这个列表及其顺序
     # None 表示使用 generate_document_chunks_langchain 中的默认列表
-    LANGCHAIN_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "，", "、", ". ", "! ", "? ", ", ", " ", ""]
+    LANGCHAIN_SEPARATORS = ["\n\n","。", "！", "？", "，", "、", ". ", "! ", "? ", ", ", " ", ""]
     # LANGCHAIN_SEPARATORS = None # 使用函数内默认值
 
     # --- 执行处理 ---
     process_knowledge_base(
         KNOWLEDGE_BASE_DIRECTORY,
-        OUTPUT_JSON_FILE,
+        OUTPUT_JSON_FILE+"processed_knowledge_base_chunks.json",
         TARGET_CHAR_CHUNK_SIZE,
         TARGET_CHAR_OVERLAP,
         MIN_CHAR_CHUNK_LENGTH,
