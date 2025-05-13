@@ -168,7 +168,7 @@ async def refine_all_chunks_with_llm(
     total_successful_optimizations = 0
 
     timeout = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT)
-    connector = aiohttp.TCPConnector(limit=450)  # 你可以根据需要调整这个数字
+    connector = aiohttp.TCPConnector(limit=400)  # 你可以根据需要调整这个数字
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:  # 创建一个 session 供所有请求复用
         for doc_name, original_doc_chunks in chunks_by_doc.items():
             logger.info(f"\n开始处理文档 '{doc_name}' (共 {len(original_doc_chunks)} 个块)...")
