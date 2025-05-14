@@ -46,6 +46,8 @@ EMBEDDING_MODEL_PATH = "/home/pushihao/RAG/models/BAAI/bge-large-zh-v1.5" #<--- 
 KNOWLEDGE_BASE_DIR = os.path.join(PROJECT_ROOT_DIR, "knowledge_base/") # 使用相对项目根目录的路径
 KNOWLEDGE_FILE_PATTERN = "*.txt"
 PROCESSED_DATA_DIR = os.path.join(PROJECT_ROOT_DIR, "processed_knowledge_base/") # 使用相对项目根目录的路径
+# 用于在线检索时，KnowledgeBase 需要知道关键词稀疏匹配的 TopK
+KEYWORD_SPARSE_RETRIEVAL_TOP_K = 10 # 示例值
 # --------------------------
 
 # --- vLLM 服务配置 ---
