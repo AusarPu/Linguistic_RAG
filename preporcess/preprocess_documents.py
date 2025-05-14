@@ -192,7 +192,7 @@ if __name__ == '__main__':
     # 例如，如果你的脚本在 RAG/script/ 目录下，知识库在 RAG/knowledge_base/
     # 则 KNOWLEDGE_BASE_DIRECTORY = "../knowledge_base"
     # 如果脚本就在 RAG/ 目录下，则 KNOWLEDGE_BASE_DIRECTORY = "./knowledge_base"
-    KNOWLEDGE_BASE_DIRECTORY = "/home/pushihao/RAG/knowledge_base"  # 请修改为你的实际路径
+    KNOWLEDGE_BASE_DIRECTORY = "../knowledge_base"  # 请修改为你的实际路径
 
     # 处理后输出的 JSON 文件路径
     OUTPUT_JSON_FILE = "../processed_knowledge/"
