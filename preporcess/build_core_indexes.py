@@ -103,8 +103,8 @@ def build_all_search_indexes(
                     "doc_name": chunk_data.get("doc_name", "unknown_doc"),
                     "page_number": chunk_data.get("page_number", -1),
                     "keyword_summaries": keyword_summaries,
-                    "generated_questions": generated_questions
-                    # "text": text_content # 决定是否在这里也存一份完整文本，或者 KnowledgeBase 在线加载
+                    "generated_questions": generated_questions,
+                    "text": text_content
                 }
                 chunks_to_index_metadata_list.append(chunk_meta_for_index)
                 texts_for_chunk_dense_embedding.append(text_content)
