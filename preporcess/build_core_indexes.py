@@ -44,6 +44,7 @@ def build_all_search_indexes(
     question_dense_emb_filename: str,
     question_faiss_idx_filename: str,
     question_to_chunk_id_map_filename: str,
+    question_texts_list_filename: str,
     batch_size_embed: int = 32,
     batch_size_sparse_phrases: int = 256,
     batch_size_questions: int = 128 # 为问题编码新增批大小
@@ -195,7 +196,7 @@ def build_all_search_indexes(
     else:
         logger.warning("没有找到唯一关键词短语，未生成稀疏权重映射。")
 
-    # --- 4. (新增) 为所有预生成问题编码稠密向量并构建Faiss索引 (使用IndexFlatIP) ---
+    # --- 4. 为所有预生成问题编码稠密向量并构建Faiss索引 (使用IndexFlatIP) ---
     if all_question_texts_flat:
         logger.info(f"开始为 {len(all_question_texts_flat)} 个预生成问题生成稠密向量...")
         all_question_dense_vecs_list = []
@@ -226,6 +227,18 @@ def build_all_search_indexes(
             with open(output_path / question_to_chunk_id_map_filename, "w", encoding="utf-8") as f_q_map:
                 json.dump(question_to_chunk_id_map, f_q_map, ensure_ascii=False, indent=2)
             logger.info(f"预生成问题索引到 chunk_id 的映射已保存到: {output_path / question_to_chunk_id_map_filename}")
+
+            # --- 新增：保存扁平化的问题文本列表 ---
+            if all_question_texts_flat:  # 确保有数据可保存
+                all_q_texts_save_path = output_path / question_texts_list_filename  # 从函数参数获取文件名
+                try:
+                    with open(all_q_texts_save_path, "w", encoding="utf-8") as f_all_q:
+                        json.dump(all_question_texts_flat, f_all_q, ensure_ascii=False, indent=2)
+                    logger.info(f"所有预生成问题文本列表已保存到: {all_q_texts_save_path}")
+                except Exception as e:
+                    logger.error(f"保存所有预生成问题文本列表时出错: {e}", exc_info=True)
+            else:
+                logger.warning("没有预生成问题文本可保存。")
 
         except Exception as e:
             logger.error(f"预生成问题稠密向量处理或Faiss索引构建过程中出错: {e}", exc_info=True)
@@ -261,6 +274,7 @@ if __name__ == '__main__':
             phrase_sparse_map_filename="phrase_sparse_weights_map.pkl",
             question_dense_emb_filename="dense_embeddings_questions.npy",
             question_faiss_idx_filename="faiss_index_questions_ip.idx",
-            question_to_chunk_id_map_filename="question_index_to_chunk_id_map.json"
+            question_to_chunk_id_map_filename="question_index_to_chunk_id_map.json",
+            question_texts_list_filename=ALL_QUESTION_TEXTS_SAVE_PATH,
         )
     logger.info("=========== 所有核心搜索索引构建完成 ===========")

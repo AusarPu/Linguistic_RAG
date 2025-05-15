@@ -53,23 +53,19 @@ KNOWLEDGE_FILE_PATTERN = "*.txt"
 PROCESSED_DATA_DIR = os.path.join(PROJECT_ROOT_DIR, "processed_knowledge_base/") # 使用相对项目根目录的路径
 # 用于在线检索时，KnowledgeBase 需要知道关键词稀疏匹配的 TopK
 KEYWORD_SPARSE_RETRIEVAL_TOP_K = 10 # 示例值
-
 ENHANCED_CHUNKS_JSON_PATH = os.path.join(PROCESSED_DATA_DIR,"enhanced_knowledge_base_chunks_llm.json")
-
 # 块文本的稠密索引
 DENSE_EMBEDDINGS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "dense_embeddings_chunks.npy")
 FAISS_INDEX_CHUNKS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "faiss_index_chunks_ip.idx") # 改为IP
 INDEXED_CHUNKS_METADATA_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "indexed_chunks_metadata.json")
-
 # 关键词短语的稀疏权重映射
 PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "phrase_sparse_weights_map.pkl")
-
 # 预生成问题的稠密索引
 DENSE_EMBEDDINGS_QUESTIONS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "dense_embeddings_questions.npy")
 FAISS_INDEX_QUESTIONS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "faiss_index_questions_ip.idx") # 改为IP
 # 这个文件将存储一个列表，每个元素是对应于问题Faiss索引中向量的原始chunk_id
 QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "question_index_to_chunk_id_map.json")
-# --------------------------
+ALL_QUESTION_TEXTS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "all_question_texts.json") # 新增，用于存储问题文本
 
 # --- vLLM 服务配置 ---
 # 生成器服务配置
