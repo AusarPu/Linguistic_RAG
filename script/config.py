@@ -15,6 +15,7 @@ LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 # 检索参数
+MAX_HISTORY = 10
 DENSE_CHUNK_RETRIEVAL_TOP_K = 10
 DENSE_QUESTION_RETRIEVAL_TOP_K = 10 # 可以与上面不同
 SPARSE_KEYWORD_RETRIEVAL_TOP_K = 10
@@ -23,39 +24,25 @@ DENSE_QUESTION_THRESHOLD = 0.75
 SPARSE_KEYWORD_THRESHOLD = 0.75
 # -----------------------------
 
-# --- 模型本地路径配置 ---
-# vLLM 使用的基础模型 (Generator 和 Rewriter 都用这个) 的本地路径
-# !! 需要确保这个路径在新设备上是正确的 !!
-VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B-FP8" #<--- 修改为你 base_llm 下载的实际路径
+# --- 模型本地路径配置 (保持不变) ---
+VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B-FP8"
 VLLM_REWRITE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B-FP8"
+VLLM_REWRITER_LORA_LOCAL_PATH = "/home/pushihao/RAG/linguistic_ai"
+EMBEDDING_MODEL_PATH = "/home/pushihao/RAG/models/BAAI/bge-large-zh-v1.5"
+RERANKER_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/BAAI/bge-reranker-v2-m3"
 
-# Rewriter 使用的 LoRA adapter 的本地路径
-# !! 需要确保这个路径在新设备上是正确的 !!
-VLLM_REWRITER_LORA_LOCAL_PATH = "/home/pushihao/RAG/linguistic_ai" #<--- 修改为你 rewriter_lora 下载或存放的实际路径
-
-# 嵌入模型本地路径
-# !! 需要确保这个路径在新设备上是正确的 !!
-EMBEDDING_MODEL_PATH = "/home/pushihao/RAG/models/BAAI/bge-large-zh-v1.5" #<--- 修改为你 embedding 下载的实际路径
-
-# 知识库和处理数据路径
-KNOWLEDGE_BASE_DIR = os.path.join(PROJECT_ROOT_DIR, "knowledge_base/") # 使用相对项目根目录的路径
+# --- 知识库和处理数据路径 (你已有的，确保ALL_QUESTION_TEXTS_SAVE_PATH已添加) ---
+KNOWLEDGE_BASE_DIR = os.path.join(PROJECT_ROOT_DIR, "knowledge_base/")
 KNOWLEDGE_FILE_PATTERN = "*.txt"
-PROCESSED_DATA_DIR = os.path.join(PROJECT_ROOT_DIR, "processed_knowledge_base/") # 使用相对项目根目录的路径
-# 用于在线检索时，KnowledgeBase 需要知道关键词稀疏匹配的 TopK
-KEYWORD_SPARSE_RETRIEVAL_TOP_K = 10 # 示例值
+PROCESSED_DATA_DIR = os.path.join(PROJECT_ROOT_DIR, "processed_knowledge_base/")
+
 ENHANCED_CHUNKS_JSON_PATH = os.path.join(PROCESSED_DATA_DIR,"enhanced_knowledge_base_chunks_llm.json")
-# 块文本的稠密索引
-DENSE_EMBEDDINGS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "dense_embeddings_chunks.npy")
-FAISS_INDEX_CHUNKS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "faiss_index_chunks_ip.idx") # 改为IP
+FAISS_INDEX_CHUNKS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "faiss_index_chunks_ip.idx")
 INDEXED_CHUNKS_METADATA_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "indexed_chunks_metadata.json")
-# 关键词短语的稀疏权重映射
 PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "phrase_sparse_weights_map.pkl")
-# 预生成问题的稠密索引
-DENSE_EMBEDDINGS_QUESTIONS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "dense_embeddings_questions.npy")
-FAISS_INDEX_QUESTIONS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "faiss_index_questions_ip.idx") # 改为IP
-# 这个文件将存储一个列表，每个元素是对应于问题Faiss索引中向量的原始chunk_id
+FAISS_INDEX_QUESTIONS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "faiss_index_questions_ip.idx")
 QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "question_index_to_chunk_id_map.json")
-ALL_QUESTION_TEXTS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "all_question_texts.json") # 新增，用于存储问题文本
+ALL_QUESTION_TEXTS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "all_question_texts.json") # 确保这个已存在
 
 # --- vLLM 服务配置 ---
 # 生成器服务配置
@@ -74,15 +61,21 @@ VLLM_REWRITER_MEM_UTILIZATION = 0.9 # 如果独占 GPU 可设高，共享则需�
 REWRITER_LORA_NAME = "rewriter_lora" # 在 vLLM 中标识 LoRA 的名称
 VLLM_MAX_LORA_RANK = 32           # 支持的最大 LoRA Rank
 
-# API 端点 (根据上面配置自动生成)
-VLLM_GENERATOR_API_BASE_URL = f"http://{VLLM_GENERATOR_HOST}:{VLLM_GENERATOR_PORT}/v1"
-VLLM_REWRITER_API_BASE_URL = f"http://{VLLM_REWRITER_HOST}:{VLLM_REWRITER_PORT}/v1"
+# --- 新增：Reranker VLLM 服务配置 ---
+VLLM_RERANKER_HOST = "localhost"  # 假设 Reranker 服务也部署在本地
+VLLM_RERANKER_PORT = 8002       # 为 Reranker 分配一个新的端口，确保不冲突
+VLLM_RERANKER_GPU_ID = 2      # 分配给 Reranker 的 GPU ID (注意：如果GPU资源紧张，需要合理分配)
+VLLM_RERANKER_MEM_UTILIZATION = 0.1 # 如果与其他模型共享GPU，可能需要较低的显存占用
 
-# vLLM 使用的模型标识符 (通常就是基础模型路径，用于 API 请求中的 'model' 字段)
-# 注意：对于带 LoRA 的请求，实际 model 字段可能需要拼接 Lora 名称，这在 query_rewriter.py 中处理
-VLLM_GENERATOR_MODEL_ID_FOR_API = VLLM_BASE_MODEL_LOCAL_PATH
-VLLM_REWRITER_MODEL_ID_FOR_API = VLLM_REWRITE_MODEL_LOCAL_PATH # API 请求中 model 字段通常仍是基础模型
-# -------------------------
+# --- API 端点 (根据上面配置自动生成) ---
+GENERATOR_API_URL = f"http://{VLLM_GENERATOR_HOST}:{VLLM_GENERATOR_PORT}/v1/chat/completions"
+REWRITER_API_URL = f"http://{VLLM_REWRITER_HOST}:{VLLM_REWRITER_PORT}/v1/chat/completions"
+RERANKER_API_URL = f"http://{VLLM_RERANKER_HOST}:{VLLM_RERANKER_PORT}/v2/rerank"
+
+# --- vLLM 使用的模型标识符 (用于 API 请求中的 'model' 字段) ---
+GENERATOR_MODEL_NAME_FOR_API = VLLM_BASE_MODEL_LOCAL_PATH # 你已有的
+REWRITER_MODEL_NAME_FOR_API = VLLM_REWRITE_MODEL_LOCAL_PATH # 你已有的
+RERANKER_MODEL_NAME_FOR_API = RERANKER_MODEL_LOCAL_PATH # 用于发送给 Reranker API 的模型名
 
 # --- Prompt 文件路径 (使用绝对路径或相对于 config.py 的路径) ---
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -105,7 +98,26 @@ REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "repetition_penalty": 1.1,
     "stop": None,
 }
+
+# 新增：专门为 RAG 流程中答案生成步骤的配置 (可以基于 GENERATION_CONFIG 修改)
+GENERATOR_RAG_CONFIG = {
+    "max_tokens": 4096,       # RAG回答通常不需要像通用聊天那么长
+    "temperature": 0.7,       # 可以略微降低温度，使其更忠实于上下文
+    "top_p": 0.95,
+    "repetition_penalty": 1.1,
+    "stop": None
+    # 其他你认为适合RAG场景的参数
+}
 # -----------------
+
+# --- RAG 流程控制参数 (新增) ---
+RERANKER_TOP_N_INPUT_MAX = 20       # 多路召回后，最多取多少个候选块送给 Reranker
+RERANKER_BATCH_SIZE = 20            # 调用 Reranker API 时的批处理大小 (如果API支持批量输入passage)
+GENERATOR_CONTEXT_TOP_N = 10         # Reranker 精排后，选取多少个最优块作为最终上下文
+
+# --- VLLM 请求超时配置 (新增或统一) ---
+VLLM_REQUEST_TIMEOUT = 60.0                 # 通用请求超时 (例如用于 Rewriter, Reranker)
+VLLM_REQUEST_TIMEOUT_GENERATION = 300.0     # 为生成答案设置更长的超时时间
 
 # --- 日志配置函数 (方便在其他地方统一设置) ---
 def setup_logging():

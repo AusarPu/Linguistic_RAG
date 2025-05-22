@@ -226,7 +226,7 @@ async def respond(
     # 4. Query Rewriting
     rewritten_query_str = message.strip() # Default
     actual_rewritten_query_str_for_display = "(重写未启用或失败)"
-    if VLLM_REWRITER_API_BASE_URL and generator_system_prompt: # Ensure needed components are loaded
+    if REWRITER_API_URL and generator_system_prompt: # Ensure needed components are loaded
         logger.info("Performing query rewriting via API...")
         rewrite_start_time = time.time()
         try:
@@ -325,10 +325,10 @@ async def respond(
     # Add current user message with context
     generation_api_messages.append({"role": "user", "content": f"User: {message.strip()}\n\n知识库：\n{context_text}"})
 
-    api_url = f"{VLLM_GENERATOR_API_BASE_URL}/chat/completions"
+    api_url = f"{GENERATOR_API_URL}/chat/completions"
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
     payload = {
-        "model": VLLM_GENERATOR_MODEL_ID_FOR_API, # From config
+        "model": GENERATOR_MODEL_NAME_FOR_API, # From config
         "messages": generation_api_messages,
         "max_tokens": GENERATION_CONFIG.get("max_tokens", 4096),
         "temperature": GENERATION_CONFIG.get("temperature", 0.6),

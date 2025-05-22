@@ -53,7 +53,7 @@ class KnowledgeBase:
         # --- 模型加载 ---
         try:
             logger.info(f"Loading embedding model from: {EMBEDDING_MODEL_PATH}")
-            self.embedding_model = BGEM3FlagModel(EMBEDDING_MODEL_PATH, use_fp16=True)
+            self.embedding_model = BGEM3FlagModel(EMBEDDING_MODEL_PATH, use_fp16=False)
             logger.info("Embedding model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load embedding model: {e}", exc_info=True)

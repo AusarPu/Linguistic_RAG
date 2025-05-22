@@ -1,11 +1,11 @@
 import logging
 import time
 
-import aiohttp  # <--- 导入 aiohttp
-import asyncio  # <--- 可能需要 asyncio (例如用于超时)
+import aiohttp
+import asyncio
 import json
 from typing import List, Dict, Optional
-from .config import *
+from config import *
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +63,12 @@ async def generate_rewritten_query(
     ]
 
     # 4. 准备 API 调用细节
-    api_url = f"{VLLM_REWRITER_API_BASE_URL}/chat/completions"
+    api_url = REWRITER_API_URL
     headers = {"Content-Type": "application/json", "Accept": "application/json"}  # 非流式，接受 JSON
 
     # --- 构造 Payload (包含 LoRA 指定) ---
-    # !!! 重要: 请根据你的 vLLM 版本确认指定 LoRA 的正确方式 !!!
-    # 这里以方式 B (lora_request 字段) 作为示例，如果你的 vLLM 需要方式 A，请修改此处。
     payload = {
-        "model": VLLM_REWRITER_MODEL_ID_FOR_API,  # 基础模型名称
+        "model": REWRITER_MODEL_NAME_FOR_API,  # 基础模型名称
         "messages": rewrite_api_messages,
         # 使用 REWRITER_GENERATION_CONFIG
         **{k: v for k, v in REWRITER_GENERATION_CONFIG.items() if v is not None},
@@ -95,7 +93,7 @@ async def generate_rewritten_query(
 
                 # 6. ★★★ 修改响应解析逻辑 ★★★
                 if response_data.get("choices") and len(response_data["choices"]) > 0:
-                    content_str = response_data["choices"][0].get("message", {}).get("content")
+                    content_str = response_data["choices"][0].get("message", {}).get("reasoning_content") # 适配vllm指定分词器为r1格式又禁止思考。如果不应指定的话该选content
                     if content_str:
                         logger.debug(f"从 API 获取的原始 content (应为 JSON 字符串): '{content_str}'")
                         try:

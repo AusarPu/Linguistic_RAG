@@ -195,8 +195,8 @@ if __name__ == "__main__":
 
     print("\n重要提示:")
     print("1. 请根据上面打印的路径，仔细检查并更新你的 `script/config.py` 文件中的相关路径配置。")
-    print("   - 例如 `VLLM_GENERATOR_MODEL_ID_FOR_API` 可能对应 'base_llm_generator' 的路径。")
-    print("   - `VLLM_REWRITER_MODEL_ID_FOR_API` 现在应该对应 'quantized_llm_rewriter' 的**基础模型标识符**（API调用时可能仍用基础模型ID，vLLM内部知道加载的是量化版，需测试确认）。")
+    print("   - 例如 `GENERATOR_MODEL_NAME_FOR_API` 可能对应 'base_llm_generator' 的路径。")
+    print("   - `REWRITER_MODEL_NAME_FOR_API` 现在应该对应 'quantized_llm_rewriter' 的**基础模型标识符**（API调用时可能仍用基础模型ID，vLLM内部知道加载的是量化版，需测试确认）。")
     print("   - `EMBEDDING_MODEL_PATH` 应指向 'embedding' 的路径。")
     print("   - `VLLM_REWRITER_LORA_LOCAL_PATH` 应指向 'rewriter_lora' 的路径。")
     print("2. 更新你的 vLLM 启动脚本 (`.sh` 文件):")

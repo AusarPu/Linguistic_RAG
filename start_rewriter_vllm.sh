@@ -50,7 +50,7 @@ vllm serve \
     --trust-remote-code \
     $MEM_ARG \
     --disable-log-requests \
-    --max_model_len 10000 \
+    --max_model_len 40960 \
     --tensor-parallel-size 2 \
     --max_num_seqs 2048 \
     --enable-reasoning --reasoning-parser deepseek_r1
