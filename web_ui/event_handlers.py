@@ -140,32 +140,23 @@ def update_ui_for_event(
             updates[ui_elements["chatbot_display"]] = current_chatbot_history + [(None, ai_message_display)]
 
 
+
     elif event_type == "final_answer_complete":
-        # 确保最终的完整消息（包含思考和回复）被正确设置到chatbot中
-        # 这通常意味着 current_ai_message_parts 已经是最终形态
-        final_reasoning = current_ai_message_parts.get("reasoning", "### 思考过程\n*无*")
-        final_content = current_ai_message_parts.get("content", "*无*")
-        if "### 回复" not in final_reasoning and final_content:  # 确保回复部分有标题
-            final_reasoning += "\n\n### 回复\n"
-
-        final_ai_message_display = f"{final_reasoning}{final_content}"
-
-        if current_chatbot_history and current_chatbot_history[-1][0] is None:
+        # 优先使用事件本身提供的最终文本，这更可靠
+        full_reasoning_from_event = event.get("full_reasoning", "*思考过程无*")
+        full_content_from_event = event.get("full_text", "*回复无*")
+        # 确保 Markdown 标题格式正确 (可选, 但保持一致性较好)
+        if not full_reasoning_from_event.startswith("### 思考过程"):
+            full_reasoning_from_event = "### 思考过程\n" + full_reasoning_from_event
+        final_ai_message_display = f"{full_reasoning_from_event}\n\n### 回复\n{full_content_from_event}"
+        # 更新 current_ai_message_parts，以便 app.py 中的 temp_ai_parts_for_this_turn 也得到最终版本
+        # 这很重要，因为 app.py 中的 pipeline_end 事件处理可能会依赖它
+        current_ai_message_parts["reasoning"] = full_reasoning_from_event
+        current_ai_message_parts["content"] = full_content_from_event
+        # 更新聊天记录的最后一条（AI的回复）
+        if current_chatbot_history and current_chatbot_history[-1][0] is None:  # 确保是AI的回复占位符
             updated_history = current_chatbot_history[:-1] + [(None, final_ai_message_display)]
             updates[ui_elements["chatbot_display"]] = updated_history
-        else:  # 应急处理，理论上此时应有AI消息占位
+        else:  # 备用方案，理论上应该总是有AI消息占位符
             updates[ui_elements["chatbot_display"]] = current_chatbot_history + [(None, final_ai_message_display)]
-
-    elif event_type == "error":
-        error_message = event.get("message", "发生未知错误")
-        # 在chatbot中显示错误，或者使用专门的错误提示区域
-        # 为简化，暂且追加到chatbot
-        error_display_message = f"**错误:** {error_message}"
-        updates[ui_elements["chatbot_display"]] = current_chatbot_history + [(None, error_display_message)]
-        # 也可以考虑重新显示处理视图并指示错误
-        updates[ui_elements["processing_view_column"]] = gr.update(visible=False)  # 确保错误时隐藏处理动画
-        updates[ui_elements["chatting_view_column"]] = gr.update(visible=True)
-        updates[ui_elements["spinner_display"]] = gr.update(visible=False)
-
     return updates
-

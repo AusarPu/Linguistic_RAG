@@ -180,9 +180,9 @@ async def main_chat_callback(
 
             # 如果 event_handler 已经更新了 chatbot_display, full_yield_dict 中会有它
             # 否则，我们在这里设置最终的 chatbot 显示
-            if ui_elements["chatbot_display"] not in ui_updates_from_handler or \
-                    (event.get("type") == "final_answer_complete"):  # 确保final_answer_complete会覆盖
-                full_yield_dict[ui_elements["chatbot_display"]] = final_gradio_chat_display_list
+            # if ui_elements["chatbot_display"] not in ui_updates_from_handler or \
+            #         (event.get("type") == "final_answer_complete"):  # 确保final_answer_complete会覆盖
+            #     full_yield_dict[ui_elements["chatbot_display"]] = final_gradio_chat_display_list
 
             full_yield_dict[openai_chat_history_state] = current_openai_history_list  # 再次确保state是最新的
 
