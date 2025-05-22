@@ -1,78 +1,106 @@
-# app_gradio.py (Complete Code - Using Tuple Chatbot Format & Yielding Lists)
+# app_gradio.py (第一部分：导入、全局变量、辅助函数)
 
 import gradio as gr
 import time
 import logging
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional, AsyncGenerator, Union # Added Union for type hint
+from typing import List, Tuple, Dict, Optional, AsyncGenerator, Union, Any
 import json
 import asyncio
+import os  # 用于路径处理，确保导入
+import sys  # 用于路径处理，确保导入
+
 try:
     import aiohttp
 except ImportError:
     print("Please install aiohttp: pip install aiohttp")
     exit(1)
 
-# --- Imports from project structure ---
+# 获取当前文件的目录，然后获取项目根目录
+_CURRENT_FILE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT_DIR_FOR_APP = _CURRENT_FILE_DIR  # 假设 app_gradio.py 在项目根目录
+
+_SCRIPT_DIR_PATH = PROJECT_ROOT_DIR_FOR_APP / "script"
+_WEB_UI_DIR_PATH = PROJECT_ROOT_DIR_FOR_APP / "web_ui"
+if str(_SCRIPT_DIR_PATH) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR_PATH))
+if str(PROJECT_ROOT_DIR_FOR_APP) not in sys.path:  # 确保根目录也在
+    sys.path.insert(0, str(PROJECT_ROOT_DIR_FOR_APP))
+
 try:
-    # Backend logic imports
+    # 后端逻辑导入
     from script.knowledge_base import KnowledgeBase
-    from script.query_rewriter import generate_rewritten_query
-    from script import config # Import config module itself
-    from script.config import * # Import specific config variables
+    from script import config  # 导入 config 模块本身
+    # from script.config import * # 导入所有配置变量 (按需选择)
+    # 我们会在需要的地方用 config.VARIABLE_NAME
 
-    # UI layout import (which handles event binding internally)
-    from web_ui.layout import create_layout
+    # 核心RAG流程
+    from script.rag_pipeline import execute_rag_flow  # <--- 新增导入
+
+    # UI 布局导入
+    from web_ui.layout import create_layout  # 假设它在 web_ui/layout.py
+
 except ImportError as e:
-    print(f"Error importing modules: {e}")
-    print("Please ensure all necessary files (config.py, knowledge_base.py, etc.) exist and PYTHONPATH is correct.")
-    exit(999)
+    # 尝试另一种导入方式，如果 app_gradio.py 就在 script 目录平级
+    # 或者你直接从 script/ 运行此文件
+    try:
+        from knowledge_base import KnowledgeBase
+        import config
+        from rag_pipeline import execute_rag_flow
+        from web_ui.layout import create_layout  # web_ui 目录需要能被找到
+    except ImportError as e_inner:
+        print(f"Error importing modules: {e} / {e_inner}")
+        print("Please ensure all necessary files (config.py, knowledge_base.py, rag_pipeline.py etc.) "
+              "exist and PYTHONPATH is correct, or adjust import paths.")
+        print(f"Current sys.path: {sys.path}")
+        print(f"Attempted SCRIPT_DIR: {_SCRIPT_DIR_PATH}, WEB_UI_DIR: {_WEB_UI_DIR_PATH}")
+        exit(999)
 
-# --- Logging Setup ---
-log_file = Path("rag_chat_gradio.log")
-# Basic config (consider moving detailed config to a setup function if needed)
+# --- Logging Setup (与你现有逻辑保持一致) ---
+log_file = PROJECT_ROOT_DIR_FOR_APP / "rag_chat_gradio.log"  # 日志文件放在项目根目录
 logging.basicConfig(
-    level=config.LOG_LEVEL, # Use log level from config
-    format=config.LOG_FORMAT, # Use format from config
-    datefmt=config.LOG_DATE_FORMAT, # Use date format from config
+    level=getattr(config, 'LOG_LEVEL', logging.INFO),  # 使用 config 中的 LOG_LEVEL
+    format=getattr(config, 'LOG_FORMAT', '%(asctime)s.%(msecs)03d - %(levelname)s - %(name)s - %(message)s'),
+    datefmt=getattr(config, 'LOG_DATE_FORMAT', '%Y-%m-%d %H:%M:%S'),
     filename=log_file,
-    filemode='w'
+    filemode='a'  # 通常用 'a' (append) 而不是 'w' (overwrite)
 )
-# Console handler for simultaneous terminal output
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter(config.LOG_FORMAT, datefmt=config.LOG_DATE_FORMAT))
-# Add handler to the root logger
-logging.getLogger().addHandler(console_handler)
-# Set root logger level (optional, basicConfig might do this)
-logging.getLogger().setLevel(config.LOG_LEVEL)
-# Get logger for this specific file
-logger = logging.getLogger(__name__)
+console_handler = logging.StreamHandler(sys.stdout)  # 输出到控制台
+console_handler.setFormatter(logging.Formatter(
+    getattr(config, 'LOG_FORMAT', '%(asctime)s.%(msecs)03d - %(levelname)s - %(name)s - %(message)s'),
+    datefmt=getattr(config, 'LOG_DATE_FORMAT', '%Y-%m-%d %H:%M:%S')
+))
+root_logger = logging.getLogger()
+if not root_logger.hasHandlers() or all(
+        isinstance(h, logging.FileHandler) for h in root_logger.handlers):  # 避免重复添加控制台handler
+    root_logger.addHandler(console_handler)
+root_logger.setLevel(getattr(config, 'LOG_LEVEL', logging.INFO))
+logger = logging.getLogger(__name__)  # 获取当前文件的 logger
 # --------------------
 
-# --- Global Variables ---
+# --- Global Variables (与你现有逻辑保持一致) ---
 kb: Optional[KnowledgeBase] = None
 kb_initialized = False
-generator_system_prompt: Optional[str] = None
+generator_system_prompt_content: Optional[str] = None  # 修改变量名以清晰表示是内容
 prompts_loaded = False
 # -----------------------
 
-# --- Path handling ---
-# Resolve paths relative to this file's location might be more robust
-_current_dir = Path(__file__).resolve().parent
-config_dir = _current_dir / "script"
-prompt_dir = _current_dir / "prompts"
-# Use knowledge base path directly from config
-_knowledge_base_dir_path = Path(KNOWLEDGE_BASE_DIR)
-_processed_data_dir_path = Path(PROCESSED_DATA_DIR)
-_gen_prompt_path = Path(GENERATOR_SYSTEM_PROMPT_FILE) # Use path from config
-# --------------------
+# --- Path handling (与你现有逻辑保持一致，确保路径正确) ---
+_prompt_dir = PROJECT_ROOT_DIR_FOR_APP / "prompts"
+_gen_prompt_path = _prompt_dir / \
+                   getattr(config, 'GENERATOR_SYSTEM_PROMPT_FILE', "generator_system_prompt.txt").split('/')[-1]
+# (上面假设GENERATOR_SYSTEM_PROMPT_FILE可能包含相对路径，我们只取文件名部分与_prompt_dir拼接)
+# 更稳健的方式是，如果config.GENERATOR_SYSTEM_PROMPT_FILE是绝对路径就直接用，否则相对PROJECT_ROOT_DIR
+if not os.path.isabs(config.GENERATOR_SYSTEM_PROMPT_FILE):
+    _gen_prompt_path = PROJECT_ROOT_DIR_FOR_APP / config.GENERATOR_SYSTEM_PROMPT_FILE
+else:
+    _gen_prompt_path = Path(config.GENERATOR_SYSTEM_PROMPT_FILE)
 
-# --- Resource Loading Function ---
-# This function is passed to layout.py to be called via demo.load()
+
+# --- Resource Loading Function (load_all_resources) ---
+# 这个函数与你之前的版本基本一致，只是KnowledgeBase的初始化参数变了
 def load_all_resources():
-    """Loads prompts and initializes the Knowledge Base."""
-    global kb, generator_system_prompt
-    global kb_initialized, prompts_loaded
+    global kb, generator_system_prompt_content, kb_initialized, prompts_loaded
 
     if kb_initialized and prompts_loaded:
         logger.debug("Resources already loaded.")
@@ -81,396 +109,302 @@ def load_all_resources():
     logger.info("Loading resources (Prompts, KB)...")
     start_time = time.time()
 
-    # 1. Load Prompts
+    # 1. Load Generator System Prompt
     if not prompts_loaded:
         try:
             logger.info(f"Attempting to load generator prompt from: {_gen_prompt_path}")
             if not _gen_prompt_path.is_file():
-                 raise FileNotFoundError(f"Generator prompt file not found: {_gen_prompt_path}")
+                raise FileNotFoundError(f"Generator prompt file not found: {_gen_prompt_path}")
             with open(_gen_prompt_path, "r", encoding="utf-8") as f:
-                generator_system_prompt = f.read()
-            if not generator_system_prompt:
-                 raise ValueError("Generator prompt file is empty.")
+                generator_system_prompt_content = f.read()  # 赋值给修改后的变量名
+            if not generator_system_prompt_content:  # 检查是否为空
+                logger.warning("Generator prompt file is empty. Using a default.")
+                # generator_system_prompt_content = "你是一个乐于助人的AI助手。" # 可选的默认值
             prompts_loaded = True
-            logger.info("Prompts loaded successfully.")
+            logger.info("Generator system prompt loaded successfully.")
         except Exception as e:
-            logger.critical(f"Failed to load essential prompt files: {e}", exc_info=True)
-            prompts_loaded = False # Ensure flag is reset on failure
+            logger.critical(f"Failed to load generator system prompt: {e}", exc_info=True)
+            prompts_loaded = False
 
-    # 2. Initialize Knowledge Base
+            # 2. Initialize Knowledge Base
     if not kb_initialized:
         try:
             logger.info("Initializing Knowledge Base...")
-            if not _knowledge_base_dir_path.is_dir():
-                 raise FileNotFoundError(f"Knowledge base directory not found: {_knowledge_base_dir_path}")
-            # Ensure embedding model path is valid (optional check here)
-            if not Path(EMBEDDING_MODEL_PATH).exists():
-                 raise FileNotFoundError(f"Embedding model path not found: {EMBEDDING_MODEL_PATH}")
-
-            kb = KnowledgeBase(
-                knowledge_dir=KNOWLEDGE_BASE_DIR, # Use path from config
-                knowledge_file_pattern=KNOWLEDGE_FILE_PATTERN # Use pattern from config
-            )
+            # KnowledgeBase 的 __init__ 现在不接收 KNOWLEDGE_BASE_DIR 和 KNOWLEDGE_FILE_PATTERN
+            # 它内部会从 config.py 读取 PROCESSED_DATA_DIR 等路径来加载索引
+            kb = KnowledgeBase()
             kb_initialized = True
             logger.info("Knowledge Base initialized successfully.")
+        except RuntimeError as e:  # KnowledgeBase 初始化失败时会抛出 RuntimeError
+            logger.critical(f"Knowledge Base initialization failed: {e}", exc_info=True)
+            kb_initialized = False
         except Exception as e:
-            logger.critical(f"Failed to initialize Knowledge Base: {e}", exc_info=True)
-            kb_initialized = False # Ensure flag is reset on failure
+            logger.critical(f"Unexpected error during Knowledge Base initialization: {e}", exc_info=True)
+            kb_initialized = False
 
     load_duration = time.time() - start_time
-    if kb_initialized and prompts_loaded:
+    if kb_initialized and prompts_loaded:  # 确保两个都成功
         logger.info(f"Essential resources loaded in {load_duration:.2f} seconds.")
     else:
-        logger.error(f"One or more essential resources failed to load after {load_duration:.2f} seconds. Check logs.")
-        # Optionally raise an error or prevent app launch here if critical resources failed
-        # raise RuntimeError("Failed to load critical resources.")
+        # 明确指出哪个失败了
+        failed_resources = []
+        if not kb_initialized: failed_resources.append("Knowledge Base")
+        if not prompts_loaded: failed_resources.append("Generator Prompt")
+        logger.error(
+            f"Resource loading failed for: {', '.join(failed_resources)} (Duration: {load_duration:.2f}s). Check logs.")
+        # 应用是否能继续运行取决于这些资源的重要性。KB通常是核心。
+        if not kb_initialized:
+            raise RuntimeError(f"CRITICAL: KnowledgeBase failed to load. Application cannot continue.")
 
-# --- Helper Functions ---
 
-def format_context_for_display(chunks_data: List[Dict[str, str]]) -> str:
-    """Formats retrieved context chunks into a Markdown string for display."""
+# --- Helper Functions (convert_gradio_to_openai, convert_openai_to_gradio_tuples, format_context_for_display) ---
+# 这些与你之前的版本可以保持一致，或者根据需要微调 format_context_for_display
+# format_context_for_display 现在应该能处理包含 rerank_score, retrieved_from_paths 等新元数据的块
+
+def format_context_for_display(chunks_data: List[Dict[str, Any]]) -> str:
+    """Formats retrieved (and reranked) context chunks into a Markdown string for display."""
     if not chunks_data:
-        return "（未引用知识库片段）"
-    md_str = "### 参考知识库片段：\n\n"
-    for i, chunk_data in enumerate(chunks_data):
-        source = chunk_data.get("source", "未知来源")
-        text = chunk_data.get("text", "内容缺失")
-        # Limit displayed text length for brevity in UI
-        display_text = text[:300] + "..." if len(text) > 300 else text
-        # Use blockquote for better visual separation
-        md_str += f"**片段 {i + 1} (来源: {source})**\n> {display_text}\n\n"
-    return md_str.strip() # Remove trailing newline
+        return "（未引用知识库片段或上下文为空）"
 
+    md_str = "### 参考上下文片段 (已重排):\n\n"
+    for i, chunk_data in enumerate(chunks_data):
+        doc_name = chunk_data.get("doc_name", "未知文档")
+        page_num = chunk_data.get("page_number", "N/A")
+        chunk_id = chunk_data.get("chunk_id", "N/A")
+        text = chunk_data.get("text", "内容缺失")
+        rerank_score = chunk_data.get("rerank_score")
+        retrieved_from = list(chunk_data.get("retrieved_from_paths", {}).keys())  # 获取召回路径列表
+
+        display_text = text[:250] + "..." if len(text) > 250 else text  # 调整预览长度
+
+        md_str += f"**片段 {i + 1}** (ID: `{chunk_id}`)\n"
+        md_str += f"*来源*: `{doc_name}`, 页码: `{page_num}`\n"
+        if rerank_score is not None:
+            md_str += f"*Rerank得分*: `{rerank_score:.4f}`\n"
+        if retrieved_from:
+            md_str += f"*召回路径*: `{', '.join(retrieved_from)}`\n"
+        md_str += f"> {display_text.replace(chr(10), ' ')}\n\n"  # 替换换行以便UI显示
+    return md_str.strip()
+
+
+# convert_gradio_to_openai 和 convert_openai_to_gradio_tuples 保持不变
+# (从你提供的 app_gradio.py 复制过来即可)
 def convert_gradio_to_openai(chat_history: Optional[List[Tuple[Optional[str], Optional[str]]]]) -> List[Dict[str, str]]:
-    """
-    Converts Gradio's default tuple history format to OpenAI's message format (list of dicts).
-    Also cleans potential <think> tags from assistant messages.
-    """
     messages = []
     if not chat_history:
         return messages
-    think_end_tag = "</think>"
+    think_end_tag = "</think>"  # 你之前的代码中提到了这个，这里保留
     for user_msg, assistant_msg in chat_history:
         if user_msg is not None and user_msg.strip():
             messages.append({"role": "user", "content": user_msg.strip()})
         if assistant_msg is not None and assistant_msg.strip():
-            # Clean assistant message (remove thinking part for history)
             cleaned_assistant_msg = assistant_msg
+            # 你的代码中有一个移除 <think> 标签的逻辑，我们保留它，
+            # 尽管新的流程中 CoT 可能通过独立的UI组件展示
             first_think_end_index = assistant_msg.find(think_end_tag)
             if first_think_end_index != -1:
-                 # Get content after the tag
-                 cleaned_assistant_msg = assistant_msg[first_think_end_index + len(think_end_tag):].strip()
-
-            # Only add if there's actual content after cleaning
-            if cleaned_assistant_msg:
+                cleaned_assistant_msg = assistant_msg[first_think_end_index + len(think_end_tag):].strip()
+            if cleaned_assistant_msg:  # 只添加清理后非空的内容
                 messages.append({"role": "assistant", "content": cleaned_assistant_msg})
     return messages
 
-def convert_openai_to_gradio_tuples(messages_history: List[Dict[str, str]]) -> List[Tuple[Optional[str], Optional[str]]]:
-    """Converts OpenAI message format back to Gradio's default tuple format."""
+
+def convert_openai_to_gradio_tuples(messages_history: List[Dict[str, str]]) -> List[
+    Tuple[Optional[str], Optional[str]]]:
     gradio_history = []
     user_msg_buffer = None
     for msg in messages_history:
         role = msg.get("role")
         content = msg.get("content")
         if role == "user":
-            # If there was a previous user message waiting for an assistant, yield it first
-            if user_msg_buffer is not None:
-                 gradio_history.append((user_msg_buffer, None))
-            user_msg_buffer = content # Store current user message
+            if user_msg_buffer is not None:  # 前一个user消息没有配对的assistant消息
+                gradio_history.append((user_msg_buffer, None))
+            user_msg_buffer = content
         elif role == "assistant":
-            # Pair with the buffered user message, or yield as assistant-only
             gradio_history.append((user_msg_buffer, content))
-            user_msg_buffer = None # Clear buffer after pairing
-    # If the last message was from the user, yield it
-    if user_msg_buffer is not None:
+            user_msg_buffer = None
+    if user_msg_buffer is not None:  # 处理最后一个是用户消息的情况
         gradio_history.append((user_msg_buffer, None))
     return gradio_history
 
-# --- Core Respond Function ---
+
 async def respond(
-    message: str,
-    chat_history: Optional[List[Tuple[Optional[str], Optional[str]]]],
-    # Type hint for yield: List containing chatbot value (List[Tuple]), context (str), rewritten (str)
-    ) -> AsyncGenerator[List[Union[List[Tuple[Optional[str], Optional[str]]], str, gr.Markdown, gr.Textbox, gr.update]], None]:
-    # !!! 关键：确保每次调用 respond 时，raw_generated_text 都是全新的空字符串 !!!
-    raw_generated_text = ""
-    logger.debug(
-        f"respond 函数开始，raw_generated_text 初始化为空: '{raw_generated_text}' (ID: {id(raw_generated_text)})")
+        message: str,
+        chat_history: Optional[List[Tuple[Optional[str], Optional[str]]]],
+        # 假设你的 Gradio layout outputs 顺序是: chatbot, context_display, rewritten_query_display
+        # 如果你添加了 thinking_process_display, 那么 yield 的列表也需要对应增加
+) -> AsyncGenerator[
+    List[Union[List[Tuple[Optional[str], Optional[str]]], str, gr.Markdown, gr.Textbox, gr.update]], None]:
+    global kb, kb_initialized, generator_system_prompt_content  # 使用全局加载的资源
 
-    # 1. Input Handling and Conversion
+    # --- 1. 初始化和输入处理 ---
     chat_history_tuples = chat_history or []
-    messages_history = convert_gradio_to_openai(chat_history_tuples) # Internal format
+    # 将Gradio的聊天历史转换为OpenAI格式，用于传递给RAG pipeline
+    messages_history_openai = convert_gradio_to_openai(chat_history_tuples)
 
-    # 2. History Truncation (on internal format)
-    logger.debug(f"History length (tuples): {len(chat_history_tuples)}, Internal: {len(messages_history)}")
-    if len(messages_history) > MAX_HISTORY:
-        # Decide which messages to keep (e.g.,system prompt + last MAX_HISTORY exchanges)
-        # Simple truncation for now:
-        messages_history = messages_history[-(MAX_HISTORY * 2):] # Keep last N pairs approx
-        logger.warning(f"Truncated internal history to {len(messages_history)} messages.")
+    # 用于UI更新的变量
+    # 注意：Gradio 的 chatbot 组件期望的是一个 [(user_msg, assistant_msg), ...] 格式的完整列表
+    # 我们需要维护一个内部的 OpenAI 格式历史，并在每次 yield 时转换为 Gradio 格式
+    current_openai_history_for_display = list(messages_history_openai)  # 复制一份用于显示
+    if message and message.strip():
+        current_openai_history_for_display.append({"role": "user", "content": message.strip()})
 
-    # 3. Basic Input Check
+    assistant_response_accumulator = ""  # 用于累积 content_delta
+    thinking_process_accumulator = ""  # 用于累积 reasoning_delta
+
+    # 初始化UI组件的显示内容
+    chatbot_display_list = convert_openai_to_gradio_tuples(current_openai_history_for_display + [{"role": "assistant", "content": "🤔 处理中..."}])
+    context_md_str = "(上下文信息将显示在这里...)"
+    rewritten_query_str = "(重写后的查询将显示在这里...)"
+    # thinking_md_str = "(模型思考过程将显示在这里...)" # 如果有这个UI组件
+
+    # 辅助函数，用于构造并 yield Gradio 更新
+    # 假设你的Gradio输出顺序是: chatbot, context_display, rewritten_query_display, [可选: thinking_display]
+    # 你需要根据你的 web_ui.layout.py 中 create_layout 函数定义的 outputs 顺序来调整 yield 的列表
+    async def yield_gradio_update(
+            current_assistant_reply: str = "🤔 处理中...",
+            context_md: Optional[str] = None,
+            rewritten_query: Optional[str] = None,
+            thinking_md: Optional[str] = None  # 如果有思考过程显示组件
+    ):
+        # 准备 chatbot 的显示列表
+        history_for_chatbot = current_openai_history_for_display + [
+            {"role": "assistant", "content": current_assistant_reply}]
+        chatbot_tuples = convert_openai_to_gradio_tuples(history_for_chatbot)
+
+        outputs_to_yield = [chatbot_tuples]
+        outputs_to_yield.append(gr.Markdown(value=context_md) if context_md is not None else gr.Markdown(update=True))
+        outputs_to_yield.append(
+            gr.Textbox(value=rewritten_query) if rewritten_query is not None else gr.Textbox(update=True))
+
+        # 如果你的UI中有第四个输出组件用于显示思考过程 (例如一个名为 thinking_process_display 的 gr.Markdown)
+        # if thinking_md is not None:
+        #     outputs_to_yield.append(gr.Markdown(value=thinking_md, visible=True))
+        # else:
+        #     outputs_to_yield.append(gr.Markdown(update=True)) # 或者 gr.Markdown(visible=False)
+
+        yield outputs_to_yield
+
+    # --- 检查KB是否初始化 ---
+    if not kb or not kb_initialized:
+        error_msg = "错误：知识库未初始化或加载失败，无法处理您的请求。"
+        logger.error(error_msg)
+        yield_gradio_update(current_assistant_reply=error_msg, context_md="错误", rewritten_query="错误")
+        return
+
+    # --- 对空消息的快速处理 ---
     if not message or not message.strip():
-         # Yield list in correct order for outputs
-         yield [
-             convert_openai_to_gradio_tuples(messages_history), # Chatbot (tuple format)
-             format_context_for_display([]),                    # Context Display
-             "(无输入)"                                          # Rewritten Query Display
-         ]
-         return
+        yield_gradio_update(current_assistant_reply="(请输入您的问题)", context_md="无上下文",
+                                  rewritten_query="无查询")
+        return
 
-    logger.info(f"Received message: '{message[:100]}...'")
-    user_message_internal = {"role": "user", "content": message.strip()}
+    logger.info(f"Respond function called with message: '{message[:100]}...'")
 
-    # 4. Query Rewriting
-    rewritten_query_str = message.strip() # Default
-    actual_rewritten_query_str_for_display = "(重写未启用或失败)"
-    if REWRITER_API_URL and generator_system_prompt: # Ensure needed components are loaded
-        logger.info("Performing query rewriting via API...")
-        rewrite_start_time = time.time()
-        try:
-            # Pass internal message history
-            rewritten_query_result = await generate_rewritten_query(messages_history, message.strip())
-            if rewritten_query_result != message.strip():
-                rewritten_query_str = rewritten_query_result # Use rewritten query for search
-                actual_rewritten_query_str_for_display = rewritten_query_result # Display the rewritten query
-                logger.info(f"Query rewriting successful ({(time.time() - rewrite_start_time):.2f}s).")
-            else:
-                actual_rewritten_query_str_for_display = "(重写结果与原始输入相同)"
-                logger.info(f"Query rewriting result same as original or fallback ({(time.time() - rewrite_start_time):.2f}s).")
-        except Exception as rewrite_err:
-            logger.error(f"Error during query rewriting API call: {rewrite_err}", exc_info=True)
-            rewritten_query_str = message.strip() # Fallback to original
-            actual_rewritten_query_str_for_display = f"(重写出错: {rewrite_err})"
-            # Continue with original query on error
-    else:
-        logger.info("Skipping query rewriting (API URL not configured or system prompt missing).")
-        actual_rewritten_query_str_for_display = "(重写功能未配置或依赖缺失)"
+    # --- 初始UI更新：显示用户消息和“处理中” ---
+    yield_gradio_update()  # 使用默认的 "🤔 处理中..."
 
-    # 5. Parse Search Terms
-    search_terms = [term.strip() for term in rewritten_query_str.strip().split('\n') if term.strip()]
-    if not search_terms:
-        search_terms = [message.strip()] # Use original if rewrite is empty
-    logger.info(f"Planned search terms ({len(search_terms)}): {search_terms}")
-
-    # 6. Retrieval & Aggregation
-    final_chunks_data = []
-    formatted_context_md = format_context_for_display([]) # Default
-    if kb and kb_initialized: # Check if KB is ready
-        retrieval_start_time = time.time()
-        all_retrieved_data: List[Dict[str, str]] = []
-        processed_chunk_texts = set()
-        logger.info("--- Starting Multi-Query Retrieval & Aggregation ---")
-        for i, term in enumerate(search_terms):
-            logger.info(f"Retrieving for sub-query {i+1}/{len(search_terms)}: '{term[:50]}...'")
-            try:
-                # retrieve_chunks should return List[Dict[str, str]]
-                term_chunks_data = kb.retrieve_chunks(term)
-                logger.info(f"  Retrieved {len(term_chunks_data)} chunks for this term.")
-                added_count = 0
-                for chunk_data in term_chunks_data:
-                    chunk_text = chunk_data.get("text")
-                    if chunk_text and chunk_text not in processed_chunk_texts:
-                        all_retrieved_data.append(chunk_data)
-                        processed_chunk_texts.add(chunk_text)
-                        added_count += 1
-                if added_count > 0:
-                    logger.debug(f"  Added {added_count} unique chunks to aggregation pool.")
-            except Exception as retrieval_err:
-                logger.error(f"  Error retrieving chunks for term '{term}': {retrieval_err}", exc_info=True)
-        logger.info("--- Multi-Query Retrieval Finished ---")
-        logger.info(f"Total unique chunks aggregated before final filtering: {len(all_retrieved_data)}")
-
-        # Context Filtering/Ranking (Simple truncation for now)
-        # Consider adding relevance ranking here if needed
-        if len(all_retrieved_data) > MAX_AGGREGATED_RESULTS:
-             logger.warning(
-                 f"Aggregated results ({len(all_retrieved_data)}) exceed limit ({MAX_AGGREGATED_RESULTS}). Truncating..."
-             )
-             final_chunks_data = all_retrieved_data[:MAX_AGGREGATED_RESULTS]
-        else:
-             final_chunks_data = all_retrieved_data
-        logger.info(f"Final number of chunks selected for LLM context: {len(final_chunks_data)}")
-
-        # Format Context for display
-        formatted_context_md = format_context_for_display(final_chunks_data)
-        logger.info(f"Retrieval and aggregation completed in {(time.time() - retrieval_start_time):.2f}s.")
-    else:
-        logger.error("KnowledgeBase not initialized, skipping retrieval.")
-        formatted_context_md = "错误：知识库未初始化或加载失败。"
-
-    # 7. Yield Initial Update with Context and Rewritten Query
-    # Prepare placeholder for chatbot output (internal format first)
-    placeholder_assistant_message = {"role": "assistant", "content": "..."}
-    initial_chatbot_messages = messages_history + [user_message_internal, placeholder_assistant_message]
-    yield [
-        convert_openai_to_gradio_tuples(initial_chatbot_messages), # Chatbot (tuple format)
-        formatted_context_md,                                      # Context Display
-        actual_rewritten_query_str_for_display                     # Rewritten Query Display
-    ]
-
-    logger.debug(f"准备调用 vLLM API，此时 raw_generated_text: '{raw_generated_text}' (ID: {id(raw_generated_text)})")
-
-    # 8. Prepare Generation Payload for vLLM API
-    generation_api_messages = []
-    if generator_system_prompt:
-         generation_api_messages.append({"role": "system", "content": generator_system_prompt})
-    # Add historical messages (internal format)
-    generation_api_messages.extend(messages_history)
-    # Prepare context text
-    context_text = "\n\n".join(
-        [f"【片段 {i + 1} | 来源: {d.get('source','N/A')}】 {d.get('text','')}" for i, d in enumerate(final_chunks_data)]
-    ) if final_chunks_data else "知识库中未找到相关内容。"
-    # Add current user message with context
-    generation_api_messages.append({"role": "user", "content": f"User: {message.strip()}\n\n知识库：\n{context_text}"})
-
-    api_url = f"{GENERATOR_API_URL}/chat/completions"
-    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
-    payload = {
-        "model": GENERATOR_MODEL_NAME_FOR_API, # From config
-        "messages": generation_api_messages,
-        "max_tokens": GENERATION_CONFIG.get("max_tokens", 4096),
-        "temperature": GENERATION_CONFIG.get("temperature", 0.6),
-        "top_p": GENERATION_CONFIG.get("top_p", 0.95),
-        "repetition_penalty": GENERATION_CONFIG.get("repetition_penalty", 1.1),
-        "stop": GENERATION_CONFIG.get("stop"), # Use stop sequences from config if any
-        "stream": True,
-    }
-    # Remove keys with None values as vLLM might not like them
-    payload = {k: v for k, v in payload.items() if v is not None}
-    logger.debug(f"Sending payload to generator API: {json.dumps(payload, ensure_ascii=False, indent=2)}")
-
-    # 9. Call vLLM API and Handle Streaming Response
-    raw_generated_text = ""
-    error_occurred = False
-    error_message = "抱歉，处理您的请求时发生错误。"
-    # History containing only messages up to the current user query (internal format)
-    current_full_history_dicts = messages_history + [user_message_internal]
-    generation_start_time = time.time()
-
-    last_yield_time = time.time()
-    yield_interval = 0.5  # seconds
+    # --- 2. 调用核心 RAG 流程 ---
+    final_rewritten_query = message.strip()  # 默认值
+    final_context_md = "(未能检索到相关上下文)"
 
     try:
-        # Increased timeout for potentially long generation
-        timeout = aiohttp.ClientTimeout(total=300.0, connect=10.0)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(api_url, headers=headers, json=payload) as response:
-                if response.status != 200:
-                    error_body = await response.text()
-                    logger.error(f"vLLM Generator API request failed status {response.status}: {error_body}")
-                    error_message = f"模型生成API请求失败 (状态码: {response.status})。"
-                    error_occurred = True
-                else:
-                    # Process Server-Sent Events (SSE) stream
-                    async for line_bytes in response.content:
-                        line = line_bytes.decode('utf-8').strip()
-                        # Skip empty lines or comments
-                        if not line or not line.startswith("data:"):
-                            continue
+        async for event in execute_rag_flow(
+                user_query=message.strip(),
+                chat_history_openai=messages_history_openai,  # 传递转换后的历史
+                kb_instance=kb
+        ):
+            event_type = event.get("type")
 
-                        data_str = line[len("data:"):].strip()
-                        if data_str == "[DONE]":
-                            logger.info("Received [DONE] marker from stream.")
-                            break # End of stream
+            if event_type == "status":
+                stage = event.get("stage", "unknown_stage")
+                status_message = event.get("message", "处理中...")
+                logger.info(f"[UI_UPDATE] Status: [{stage}] {status_message}")
+                yield_gradio_update(current_assistant_reply=f"⏳ {status_message}",
+                                          context_md=final_context_md,  # 保持之前的上下文或初始值
+                                          rewritten_query=final_rewritten_query)
 
-                        try:
-                            chunk_data = json.loads(data_str)
-                            logger.debug(f"原始SSE数据块: {data_str}")  # 记录原始数据
-                            logger.debug(f"解析后 chunk_data: {chunk_data}")
+            elif event_type == "rewritten_query_result":
+                final_rewritten_query = event.get("rewritten_text", final_rewritten_query)
+                yield_gradio_update(current_assistant_reply="⏳ 检索中...",
+                                          context_md=final_context_md,
+                                          rewritten_query=final_rewritten_query)
 
-                            delta = chunk_data.get("choices", [{}])[0].get("delta", {})
-                            logger.debug(f"提取的 delta 对象: {delta}")
+            elif event_type == "reranked_context_for_display":
+                reranked_chunks_for_ui = event.get("chunks", [])
+                final_context_md = format_context_for_display(reranked_chunks_for_ui)  # 使用你已有的格式化函数
+                yield_gradio_update(current_assistant_reply="⏳ 生成答案中...",
+                                          context_md=final_context_md,
+                                          rewritten_query=final_rewritten_query)
 
-                            delta_content = delta.get("content")  # 保持原样获取
+            elif event_type == "reasoning_delta":
+                thinking_token = event.get("text", "")
+                thinking_process_accumulator += thinking_token
+                # --- 更新思考过程UI组件 ---
+                # 如果你有一个专门的 thinking_process_display: gr.Markdown 组件
+                yield [
+                    gr.Chatbot(update=True), # chatbot主回复区可以显示"正在思考..."
+                    gr.Markdown(update=True), # context_display
+                    gr.Textbox(update=True),  # rewritten_query_display
+                    # gr.Markdown(value=format_thinking_for_display(thinking_process_accumulator)) # 假设你有这个格式化函数
+                ]
+                # 为了简单，我们暂时不在主聊天流中混合思考过程，但你可以记录它
+                logger.debug(f"Reasoning delta: {thinking_token}")
 
-                            # !!! 关键修改：更准确地判断 delta_content !!!
-                            # 即使 delta_content 是空字符串 ""，也应该视为有效内容并尝试追加和 yield
-                            # 只有当 delta_content 是 None (JSON null) 时，才可能需要跳过（取决于模型语义）
-                            if delta_content is not None:  # <--- 修改这里的判断条件
-                                raw_generated_text += delta_content
-                                logger.debug(f"追加后 raw_generated_text (前100字符): '{raw_generated_text[:100]}...'")
 
-                                current_assistant_message = {"role": "assistant", "content": raw_generated_text}
-                                streaming_messages_value = current_full_history_dicts + [current_assistant_message]
-                                converted_tuples_for_yield = convert_openai_to_gradio_tuples(streaming_messages_value)
+            elif event_type == "content_delta":
+                content_token = event.get("text", "")
+                print(content_token,end="")
+                assistant_response_accumulator += content_token
+                yield_gradio_update(current_assistant_reply=assistant_response_accumulator + "▌",  # 打字机效果
+                                          context_md=final_context_md,
+                                          rewritten_query=final_rewritten_query)
 
-                                logger.debug(
-                                    f"准备 Yield 的数据 (部分): {str(converted_tuples_for_yield)[:200]}")  # 记录准备 yield 的数据
+            elif event_type == "final_answer_complete":
+                assistant_response_accumulator = event.get("full_text", assistant_response_accumulator).strip()
+                # full_reasoning = event.get("full_reasoning", thinking_process_accumulator).strip()
+                # final_context_chunk_ids = event.get("final_context_chunk_ids", [])
+                logger.info(f"Final answer generated (length: {len(assistant_response_accumulator)}).")
+                # 最后的UI更新会在pipeline_end时进行，以确保是最终状态
 
-                                yield [
-                                    converted_tuples_for_yield,
-                                    gr.update(),
-                                    gr.update()
-                                ]
-                            else:
-                                logger.debug(f"收到的 delta_content 为 None，本次不追加也不 Yield。原始 delta: {delta}")
+            elif event_type == "error":
+                error_stage = event.get("stage", "unknown")
+                error_message = event.get("message", "未知错误")
+                logger.error(f"Pipeline error at stage '{error_stage}': {error_message}")
+                assistant_response_accumulator = f"❌ 在处理阶段 '{error_stage}' 发生错误: {error_message}"
+                # yield 最终错误状态然后中断
+                yield_gradio_update(current_assistant_reply=assistant_response_accumulator,
+                                          context_md=final_context_md,
+                                          rewritten_query=final_rewritten_query)
+                return  # 提前结束 respond 函数
 
-                        except json.JSONDecodeError:
-                            logger.warning(f"SSE 流 JSON 解析错误: {data_str}")
-                        except Exception as e:
-                            # 明确记录是在处理哪个数据块时出错
-                            logger.error(f"处理 SSE 数据块 '{data_str}' 时发生错误: {e}",
-                                         exc_info=True)  # 改为 exc_info=True 获取完整堆栈
+            elif event_type == "pipeline_end":
+                logger.info(f"Pipeline ended with reason: {event.get('reason')}")
+                # 如果是因为错误结束，assistant_response_accumulator可能已经是错误信息
+                # 如果是正常结束，它应该是累积的答案
+                if not assistant_response_accumulator and event.get('reason') == "no_context_found_after_retrieval":
+                    assistant_response_accumulator = "抱歉，未能找到与您问题直接相关的知识。"
+                elif not assistant_response_accumulator and event.get('reason') == "no_context_found_after_reranking":
+                    assistant_response_accumulator = "抱歉，信息筛选后未能找到足够相关的内容。"
 
-    except asyncio.TimeoutError:
-        error_occurred = True
-        error_message = "模型生成请求超时。"
-        logger.error(f"vLLM Generator API request timed out after {timeout.total} seconds.")
-    except aiohttp.ClientConnectorError as e:
-        error_occurred = True
-        error_message = f"无法连接模型生成服务器: {e}"
-        logger.error(f"vLLM Generator connection error {api_url}: {e}", exc_info=False)
-    except aiohttp.ClientError as e: # Catch other aiohttp client errors
-         error_occurred = True
-         error_message = f"模型生成API通信错误: {e}"
-         logger.error(f"vLLM Generator communication error: {e}", exc_info=True)
+                yield_gradio_update(current_assistant_reply=assistant_response_accumulator.strip(),  # 移除可能的光标
+                                          context_md=final_context_md,
+                                          rewritten_query=final_rewritten_query)
+                return  # 流程正常或处理完毕地结束
+
     except Exception as e:
-        error_occurred = True
-        error_message = f"处理模型响应时发生意外错误: {e}"
-        logger.error(f"Unexpected error during API call/streaming: {e}", exc_info=True)
-
-    generation_duration = time.time() - generation_start_time
-    logger.info(f"Streaming finished. Duration: {generation_duration:.2f}s. Error occurred: {error_occurred}")
-
-    # 10. Final Processing & Yield
-    final_display_text_for_assistant = raw_generated_text # Default to raw text
-    # Apply error message if needed
-    if error_occurred:
-        # Append error to the generated text, or replace it
-        if raw_generated_text:
-             final_display_text_for_assistant = raw_generated_text.strip() + f"\n\n---\n❌ **错误:** {error_message}"
-        else:
-             final_display_text_for_assistant = f"❌ **错误:** {error_message}"
-    else:
-        # Post-process successful response (handle <think> tags for display)
-        think_end_tag = "</think>"
-        first_think_end_index = raw_generated_text.find(think_end_tag)
-        if first_think_end_index != -1:
-            thinking_part = raw_generated_text[:first_think_end_index + len(think_end_tag)].strip()
-            final_answer_part = raw_generated_text[first_think_end_index + len(think_end_tag):].strip()
-            # Format thinking part for display (e.g., using details/summary or code block)
-            # formatted_thinking = f"<details><summary>思考过程</summary>\n\n```text\n{thinking_part}\n```\n\n</details>" # Might not render well in all MD viewers
-            formatted_thinking = f"```text\n{thinking_part}\n```" # Simpler code block
-            if final_answer_part:
-                final_display_text_for_assistant = f"{formatted_thinking}\n\n{final_answer_part}"
-            else:
-                # If only thinking part is returned
-                final_display_text_for_assistant = formatted_thinking
-        # else: final_display_text_for_assistant remains raw_generated_text
-
-    # Prepare final chatbot state (internal format)
-    final_assistant_message = {"role": "assistant", "content": final_display_text_for_assistant}
-    final_messages_value = current_full_history_dicts + [final_assistant_message]
-
-    # Final yield updating all components
-    yield [
-        convert_openai_to_gradio_tuples(final_messages_value), # Chatbot (tuple format)
-        formatted_context_md,                                  # Context Display
-        actual_rewritten_query_str_for_display                 # Rewritten Query Display
-    ]
-
+        logger.error(f"Error in respond's main RAG flow execution: {e}", exc_info=True)
+        error_text = f"抱歉，处理您的请求时发生系统内部错误。"
+        # 确保 chat_history_tuples 和其他UI元素是最新的状态
+        # current_openai_history_for_display 包含了当前的用户输入
+        # 我们需要将错误信息作为助手的最后回复
+        error_chatbot_history = current_openai_history_for_display + [{"role": "assistant", "content": error_text}]
+        yield [
+            convert_openai_to_gradio_tuples(error_chatbot_history),
+            final_context_md if final_context_md else "发生错误，无上下文。",
+            final_rewritten_query if final_rewritten_query else "(查询处理出错)"
+        ]
+    finally:
+        logger.info(f"Respond function finished for query: '{message[:50]}...'")
 
 # --- Clear History Action Function ---
 # This function is passed to layout.py and called by the clear button click event
@@ -489,67 +423,92 @@ def clear_history_action():
 
 # --- Main Application Entry Point ---
 if __name__ == "__main__":
-    # Ensure critical libraries are available
+    # 确保核心依赖已安装 (你之前的代码中已经有这个检查)
     try:
-        import aiohttp
-    except ImportError:
-        print("错误: 核心依赖 aiohttp 未安装。请运行: pip install aiohttp")
+        import gradio  # type: ignore
+        # import aiohttp # aiohttp 已经在 respond 函数中被导入和使用
+    except ImportError as e:
+        missing_lib = str(e).split("'")[-2]  # 尝试提取缺失的库名
+        print(f"错误: 核心依赖 {missing_lib} 未安装。请运行: pip install {missing_lib.lower()}")
         exit(1)
-    try:
-        import gradio
-    except ImportError:
-         print("错误: 核心依赖 gradio 未安装。请运行: pip install gradio")
-         exit(1)
 
     logger.info("Starting RAG Gradio Application...")
 
-    # Perform initial resource loading *before* creating the UI
-    # This prevents UI load delays and ensures KB/prompts are ready
+    # 1. 执行初始资源加载
+    # 这个函数会设置全局的 kb_instance 和 generator_system_prompt_content
     try:
         load_all_resources()
-        # Check if critical resources failed to load
-        if not kb_initialized or not prompts_loaded:
-             logger.critical("Application cannot start due to resource loading failures.")
-             # Exit or display error message in UI (latter requires UI to be partially built first)
-             print("\n" + "="*30)
-             print("错误：应用启动失败！必要的资源（知识库/提示词）加载失败。请检查日志和配置。")
-             print("="*30 + "\n")
-             exit(1) # Exit if critical resources are missing
+        # 在 load_all_resources 内部，我们已经添加了对 kb_initialized 和 prompts_loaded 的检查
+        # 如果关键资源加载失败，它会抛出 RuntimeError 或打印错误并可能导致应用无法正常工作
+        if not kb_initialized:  # 双重检查
+            logger.critical("KnowledgeBase 未能在 load_all_resources 中成功初始化。应用可能无法正常工作。")
+            # 你可以选择在这里强制退出，或者让 Gradio UI 显示错误信息
+            # exit(1)
+        if not prompts_loaded:  # 双重检查
+            logger.warning("Generator system prompt 未能在 load_all_resources 中成功加载。可能会使用默认提示。")
+
+    except RuntimeError as e:  # 捕获 load_all_resources 中可能抛出的关键错误
+        logger.critical(f"应用启动失败，必要的资源加载时发生错误: {e}", exc_info=True)
+        print(f"\nCRITICAL ERROR: Application failed to start due to resource loading issue: {e}\n")
+        exit(1)
     except Exception as initial_load_err:
-         logger.critical(f"Unexpected error during initial resource loading: {initial_load_err}", exc_info=True)
-         print(f"\n错误：应用启动时发生意外错误: {initial_load_err}\n")
-         exit(1)
+        logger.critical(f"应用启动时发生未知错误: {initial_load_err}", exc_info=True)
+        print(f"\nCRITICAL ERROR: Unexpected error during application startup: {initial_load_err}\n")
+        exit(1)
 
-
-    # Create the Gradio layout and bind event handlers
-    # Pass the actual function objects (references) to the layout creator
+    # 2. 创建 Gradio UI 布局
+    # create_layout 函数会从 web_ui.layout 导入
+    # 它接收 respond 函数、clear_history_action 函数和 load_all_resources 函数作为参数
+    # 并返回一个 gr.Blocks 实例 (demo_instance)
     try:
+        # 确保 config 对象和所有需要的常量都能被 create_layout 或其内部逻辑访问
+        # (如果 create_layout 直接从 config 模块读取配置的话)
         demo_instance = create_layout(
-            respond_fn=respond,               # Pass the async respond function
-            clear_fn=clear_history_action,    # Pass the clear action function
-            load_fn=load_all_resources,       # Pass the resource load function
-            theme="soft"                      # Specify desired theme (or load from config)
+            respond_fn=respond,  # 我们重构后的异步 respond 函数
+            clear_fn=clear_history_action,  # 你已有的清空历史函数
+            load_fn=load_all_resources,  # 资源加载函数，用于 "重新加载资源" 按钮
+            # 根据你的 create_layout 函数定义，可能还需要其他参数
         )
+        logger.info("Gradio UI layout created successfully.")
     except Exception as layout_err:
-         logger.critical(f"Failed to create Gradio layout: {layout_err}", exc_info=True)
-         print(f"\n错误：创建界面布局时失败: {layout_err}\n")
-         exit(1)
+        logger.critical(f"创建 Gradio UI 布局时失败: {layout_err}", exc_info=True)
+        print(f"\nCRITICAL ERROR: Failed to create Gradio UI layout: {layout_err}\n")
+        exit(1)
 
-    # Launch the Gradio app
-    logger.info("Launching Gradio interface...")
-    print("Gradio 应用正在启动，请在浏览器中访问提供的 URL...")
-    # Use concurrency limit from config if available, otherwise default
-    concurrency = getattr(config, "GRADIO_CONCURRENCY_LIMIT", 8)
+    # 3. 启动 Gradio 应用
+    # 从 config.py 中读取 Gradio 启动参数
+    server_name = getattr(config, "GRADIO_SERVER_NAME", "0.0.0.0")
+    server_port = getattr(config, "GRADIO_SERVER_PORT", 8848)  # 你之前用的是8848
+    share_gradio = getattr(config, "GRADIO_SHARE", False)
+    gradio_user = getattr(config, "GRADIO_USER", None)
+    gradio_password = getattr(config, "GRADIO_PASSWORD", None)
+    concurrency_limit = getattr(config, "GRADIO_CONCURRENCY_LIMIT", 8)  # 与你之前代码一致
+
+    auth_credentials = None
+    if gradio_user and gradio_password:
+        auth_credentials = (gradio_user, gradio_password)
+        logger.info(f"Gradio认证已启用，用户: {gradio_user}")
+    else:
+        logger.info("Gradio认证未启用。")
+
+    logger.info(f"准备在 {server_name}:{server_port} 启动 Gradio 应用...")
+    print(f"Gradio 应用正在启动，请在浏览器中访问 http://{server_name}:{server_port}")
+    if server_name == "0.0.0.0":
+        print(f"如果在本机运行，也可以通过 http://127.0.0.1:{server_port} 访问")
+
     try:
-        demo_instance.queue(default_concurrency_limit=concurrency).launch(
-            server_name="0.0.0.0",          # Listen on all interfaces
-            server_port=8848, # Use port from config
-            share=False,        # Use share setting from config
-            # Add other launch options as needed from config (e.g., auth)
-            # auth = (config.GRADIO_USER, config.GRADIO_PASSWORD) if config.GRADIO_USER else None
+        demo_instance.queue(default_concurrency_limit=concurrency_limit).launch(
+            server_name=server_name,
+            server_port=server_port,
+            share=share_gradio,
+            auth=auth_credentials,
+            # prevent_thread_lock=True, # 对于异步函数，有时需要这个
+            # allowed_paths=[str(PROJECT_ROOT_DIR_FOR_APP / "your_static_folder")] # 如果需要提供静态文件
         )
-        logger.info(f"Gradio app launched on http://0.0.0.0:8848")
+        # launch() 是一个阻塞调用，程序会在这里等待直到 Gradio 服务停止
+        logger.info(f"Gradio app has been shut down.")
+
     except Exception as launch_err:
-         logger.critical(f"Failed to launch Gradio app: {launch_err}", exc_info=True)
-         print(f"\n错误：启动 Gradio 服务失败: {launch_err}\n")
-         exit(1)
+        logger.critical(f"启动 Gradio 应用时失败: {launch_err}", exc_info=True)
+        print(f"\nCRITICAL ERROR: Failed to launch Gradio app: {launch_err}\n")
+        exit(1)
