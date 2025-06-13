@@ -1,5 +1,6 @@
 # Log files
 logs/
+web_ui/*.log
 
 # Model files and directories
 models/
