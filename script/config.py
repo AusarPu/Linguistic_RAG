@@ -45,13 +45,18 @@ QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "que
 ALL_QUESTION_TEXTS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "all_question_texts.json") # 确保这个已存在
 
 # --- vLLM 服务配置 ---
+# 生成器服务配置
+VLLM_GENERATOR_HOST = "localhost" # vLLM 监听的主机名 (通常 localhost 即可，因为 Gradio 和 vLLM 在同一容器/机器)
+VLLM_GENERATOR_PORT = 8001        # vLLM 生成器监听的端口
+VLLM_GENERATOR_GPU_ID = 0         # 分配给生成器的 GPU ID
+VLLM_GENERATOR_MEM_UTILIZATION = 0.9 # GPU 显存使用率 (例如 0.9 for 90%)
 
 # 重写器服务配置
 VLLM_REWRITER_HOST = "localhost"
 VLLM_REWRITER_PORT = 8001         # vLLM 重写器监听的端口
-VLLM_REWRITER_GPU_ID = 1          # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
+VLLM_REWRITER_GPU_ID = "0,1"         # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
 VLLM_REWRITER_MEM_UTILIZATION = 0.90 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
-VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 1 # 新增：Rewriter的张量并行数
+VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 2 # 新增：Rewriter的张量并行数
 
 # 重写器 LoRA 配置
 REWRITER_LORA_NAME = "rewriter_lora" # 在 vLLM 中标识 LoRA 的名称
@@ -60,7 +65,7 @@ VLLM_MAX_LORA_RANK = 32           # 支持的最大 LoRA Rank
 # --- 新增：Reranker VLLM 服务配置 ---
 VLLM_RERANKER_HOST = "localhost"  # 假设 Reranker 服务也部署在本地
 VLLM_RERANKER_PORT = 8002       # 为 Reranker 分配一个新的端口，确保不冲突
-VLLM_RERANKER_GPU_ID = 2      # 分配给 Reranker 的 GPU ID (注意：如果GPU资源紧张，需要合理分配)
+VLLM_RERANKER_GPU_ID = 1      # 分配给 Reranker 的 GPU ID (注意：如果GPU资源紧张，需要合理分配)
 VLLM_RERANKER_MEM_UTILIZATION = 0.1 # 如果与其他模型共享GPU，可能需要较低的显存占用
 
 # --- API 端点 (根据上面配置自动生成) ---
