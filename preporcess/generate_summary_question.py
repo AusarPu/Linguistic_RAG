@@ -30,11 +30,13 @@ METADATA_GENERATION_PROMPT_TEMPLATE = """你是一位专业的知识分析和信
 
 2.  **关键词摘要提取 (如果文本块有意义)**：
     * 提取或生成若干（例如，1到5个，不必强求数量，质量优先）最能概括该文本块核心内容的“关键词摘要”或“标签”。
-    * 每个关键词摘要应该简短精炼，例如 "主题A+主题B" 格式，或者其他能准确捕捉核心概念的短语组合。
+    * 每个关键词摘要应该简短精炼，方便作为标签查找，或者其他能准确捕捉核心概念的短语组合。
+    * 关键词应该是全局通用的，不应该出现类似``这本书``，``本书作者``这类，而应该明确这本书是什么，作者是什么，便于以后查找
     * 如果文本块评估为无实质意义，则关键词摘要列表应为空。
 
 3.  **预生成相关问题 (如果文本块有意义)**：
     * 根据该文本块的内容，生成若干（例如，1到3个，不必强求数量，质量优先）用户最有可能提出的、并且该文本块能够清晰、直接回答的高质量问题。
+    * 生成的问题应该是全局通用的，不应该出现类似``这本书``，``本书作者``这类，而应该明确这本书是什么，作者是什么，便于以后查找
     * 如果文本块评估为无实质意义，则生成问题列表应为空。
 
 请将你的结果以严格的JSON格式返回，包含以下字段：
@@ -180,7 +182,7 @@ async def enhance_chunks_with_llm_metadata(
     llm_call_failures = 0
 
     timeout_config = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT)
-    connector = aiohttp.TCPConnector(limit=1000)
+    connector = aiohttp.TCPConnector(limit=2048)
     async with aiohttp.ClientSession(timeout=timeout_config, connector=connector) as session:
         tasks = []
         chunks_being_processed_info = []  # 存储与任务对应的原始块信息
@@ -268,8 +270,8 @@ async def enhance_chunks_with_llm_metadata(
 
 if __name__ == '__main__':
     # --- 配置参数 ---
-    INPUT_CHUNKS_JSON = "../processed_knowledge/refined_knowledge_base_chunks_llm.json"  # 你之前生成的包含初级块的JSON
-    OUTPUT_ENHANCED_JSON = "../processed_knowledge/enhanced_knowledge_base_chunks_llm.json"  # LLM增强后输出的新JSON
+    INPUT_CHUNKS_JSON = "../processed_knowledge_base/refined_knowledge_base_chunks_llm.json"  # 你之前生成的包含初级块的JSON
+    OUTPUT_ENHANCED_JSON = "../processed_knowledge_base/enhanced_knowledge_base_chunks_llm.json"  # LLM增强后输出的新JSON
 
     # --- !! 重要：进行小规模测试 !! ---
     # MAX_CHUNKS_TO_PROCESS_LLM = 100  # 例如，先测试处理20个块

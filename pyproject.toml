@@ -1,0 +1,252 @@
+[build-system]
+requires = ["hatchling"]  # 或者 ["setuptools>=61.0"] 等
+build-backend = "hatchling.build"
+backend-path = ["."] # 如果你的构建逻辑在根目录的 hatch_hooks.py 或类似文件中
+
+[project]
+name = "RAG"
+version = "0.1.0"
+description = "A RAG project."
+readme = "README.md" # 可选，如果你有 README.md
+requires-python = ">=3.10" # 根据你的项目和依赖情况调整，torch 2.6 通常需要较新的 Python 版本
+authors = [
+    { name = "Ausar_Pu", email = "ausar_pu@jsnu.edu.cn" },
+]
+
+# 许多列出的包可能是其他包的间接依赖。
+dependencies = [
+    "accelerate==1.5.2",
+    "aiofiles==24.1.0",
+    "aiohappyeyeballs==2.6.1",
+    "aiohttp==3.11.18",
+    "aiosignal==1.3.2",
+    "airportsdata==20250224",
+    "annotated-types==0.7.0",
+    "anyio==4.9.0",
+    "astor==0.8.1",
+    "async-timeout==4.0.3",
+    "attrs==25.3.0",
+    "beautifulsoup4==4.13.3",
+    "blake3==1.0.4",
+    "cachetools==5.5.2",
+    "cbor==1.0.0",
+    "certifi==2025.4.26", # 通常是 requests 等库的依赖，可能不需要直接列出
+    "charset-normalizer==3.4.2", # 通常是 requests 等库的依赖
+    "click==8.1.8",
+    "cloudpickle==3.1.1",
+    "compressed-tensors==0.9.3",
+    "cupy-cuda12x==13.4.1",
+    "datasets==3.5.0",
+    "deprecated==1.2.18",
+    "depyf==0.18.0",
+    "dill==0.4.0",
+    "diskcache==5.6.3",
+    "distro==1.9.0",
+    "dnspython==2.7.0",
+    "einops==0.8.1",
+    "email-validator==2.2.0",
+    "et-xmlfile==2.0.0", # openpyxl 的依赖
+    "exceptiongroup==1.2.2",
+    "faiss-cpu==1.10.0", # 如果你只用 CPU 版 FAISS
+    # "faiss-gpu==1.x.y", # 如果你需要 GPU 版 FAISS，请取消注释并指定版本
+    "fastapi==0.115.12",
+    "fastapi-cli==0.0.7",
+    "fastrlock==0.8.3",
+    "ffmpy==0.5.0",
+    "filelock==3.18.0",
+    "flagembedding==1.3.4",
+    #    "flashinfer-python @ file:///home/pushihao/RAG/flashinfer_python-0.2.2%2Bcu124torch2.6-cp38-abi3-linux_x86_64.whl", # 本地 wheel 文件
+    "frozenlist==1.6.0",
+    "fsspec==2025.3.2",
+    "gguf==0.16.2",
+    "googleapis-common-protos==1.70.0",
+    "gradio==5.29.0",
+    "gradio-client==1.10.0",
+    "greenlet==3.2.2",
+    "groovy==0.1.2",
+    "grpcio==1.71.0",
+    "h11==0.16.0",
+    "hf-xet==1.1.0",
+    "httpcore==1.0.9",
+    "httptools==0.6.4",
+    "httpx==0.28.1",
+    "huggingface-hub==0.30.2",
+    "idna==3.10", # 通常是 requests 等库的依赖
+    "ijson==3.3.0",
+    "importlib-metadata==8.0.0", # Python 3.8+ 自带，除非需要特定较新版本
+    "infinity-embedded-sdk==0.6.0.dev3",
+    "iniconfig==2.1.0", # pytest 的依赖
+    "inscriptis==2.6.0",
+    "interegular==0.3.3",
+    "ir-datasets==0.5.10",
+    "jinja2==3.1.6",
+    "jiter==0.9.0",
+    "joblib==1.4.2",
+    "jsonpatch==1.33",
+    "jsonpointer==3.0.0",
+    "jsonschema==4.23.0",
+    "jsonschema-specifications==2025.4.1",
+    "langchain==0.3.25",
+    "langchain-core==0.3.59",
+    "langchain-text-splitters==0.3.8",
+    "langsmith==0.3.42",
+    "lark==1.2.2",
+    "llguidance==0.7.19",
+    "llvmlite==0.44.0", # numba 的依赖
+    "lm-format-enforcer==0.10.11",
+    "lxml==5.3.1",
+    "lz4==4.4.3",
+    "markdown-it-py==3.0.0",
+    "markupsafe==3.0.2", # Jinja2 的依赖
+    "mdurl==0.1.2",
+    "mistral-common==1.5.4",
+    "modelscope==1.24.1",
+    "mpmath==1.3.0", # sympy 的依赖
+    "msgpack==1.1.0",
+    "msgspec==0.19.0",
+    "multidict==6.4.3",
+    "multiprocess==0.70.16",
+    "nest-asyncio==1.6.0",
+    "networkx==3.4.2",
+    "ninja==1.11.1.4", # 编译 torch 扩展等可能需要
+    "numba==0.61.2",
+    "numpy==2.2.5",
+    "nvidia-cublas-cu12==12.4.5.8",
+    "nvidia-cuda-cupti-cu12==12.4.127",
+    "nvidia-cuda-nvrtc-cu12==12.4.127",
+    "nvidia-cuda-runtime-cu12==12.4.127",
+    "nvidia-cudnn-cu12==9.1.0.70",
+    "nvidia-cufft-cu12==11.2.1.3",
+    "nvidia-curand-cu12==10.3.5.147",
+    "nvidia-cusolver-cu12==11.6.1.9",
+    "nvidia-cusparse-cu12==12.3.1.170",
+    "nvidia-cusparselt-cu12==0.6.2",
+    "nvidia-nccl-cu12==2.21.5",
+    "nvidia-nvjitlink-cu12==12.4.127",
+    "nvidia-nvtx-cu12==12.4.127",
+    "openai==1.77.0",
+    "opencv-python-headless==4.11.0.86",
+    "openpyxl==3.1.5",
+    "opentelemetry-api==1.26.0",
+    "opentelemetry-exporter-otlp==1.26.0",
+    "opentelemetry-exporter-otlp-proto-common==1.26.0",
+    "opentelemetry-exporter-otlp-proto-grpc==1.26.0",
+    "opentelemetry-exporter-otlp-proto-http==1.26.0",
+    "opentelemetry-proto==1.26.0",
+    "opentelemetry-sdk==1.26.0",
+    "opentelemetry-semantic-conventions==0.47b0",
+    "opentelemetry-semantic-conventions-ai==0.4.5",
+    "orjson==3.10.16",
+    "outlines==0.1.11",
+    "outlines-core==0.1.26",
+    "packaging==24.2", # 许多库依赖它进行版本处理等
+    "pandas==2.2.3",
+    "partial-json-parser==0.2.1.1.post5",
+    "peft==0.15.1",
+    "pillow==11.2.1",
+    # "pip==25.1.1", # pip 通常是环境管理工具，不是项目依赖
+    "pluggy==1.5.0", # pytest 的依赖
+    "polars-lts-cpu==1.9.0",
+    "prometheus-client==0.21.1",
+    "prometheus-fastapi-instrumentator==7.1.0",
+    "propcache==0.3.1",
+    "protobuf==4.25.7",
+    "psutil==7.0.0",
+    "py-cpuinfo==9.0.0",
+    "pyarrow==17.0.0",
+    "pycountry==24.6.1",
+    "pydantic==2.11.4",
+    "pydantic-core==2.33.2",
+    "pydantic-settings==2.9.0",
+    "pydub==0.25.1",
+    "pygments==2.19.1",
+    # "pytest==8.3.5", # 建议移至下面的 [project.optional-dependencies.dev]
+    "python-dateutil==2.9.0.post0",
+    "python-dotenv==1.1.0",
+    "python-json-logger==3.3.0",
+    "python-multipart==0.0.20", # FastAPI 可能需要
+    "pytz==2025.2", # pandas 的依赖
+    "pyyaml==6.0.2",
+    "pyzmq==26.4.0",
+    "rank-bm25",
+    "ray==2.45.0",
+    "referencing==0.36.2", # jsonschema 的依赖
+    "regex==2024.11.6",
+    "requests==2.32.3",
+    "requests-toolbelt==1.0.0",
+    "rich==14.0.0",
+    "rich-toolkit==0.14.4",
+    "rpds-py==0.24.0",
+    # "ruff==0.11.5", # 建议移至下面的 [project.optional-dependencies.dev]
+    "safehttpx==0.1.6",
+    "safetensors==0.5.3",
+    "scikit-learn==1.6.1",
+    "scipy==1.15.2",
+    "semantic-version==2.10.0",
+    "sentence-transformers==4.0.1",
+    "sentencepiece==0.2.0",
+    # "setuptools==75.2.0", # 构建工具，通常由 build-system 管理
+    "shellingham==1.5.4",
+    "six==1.17.0",
+    "sniffio==1.3.1", # anyio/httpcore 的依赖
+    "soupsieve==2.6", # beautifulsoup4 的依赖
+    "sqlalchemy==2.0.40",
+    "sqlglot==11.7.1",
+    "starlette==0.46.2", # FastAPI 的依赖
+    "sympy==1.13.1",
+    "tenacity==9.1.2",
+    "threadpoolctl==3.6.0", # scikit-learn, numpy 等的依赖
+    "thrift==0.20.0",
+    "tiktoken==0.9.0",
+    "tokenizers==0.21.1", # huggingface transformers 的依赖
+    "tomli==2.2.1", # 解析 toml，Python 3.11+ 有 tomllib
+    "tomlkit==0.13.2", # Poetry/PDM 等工具使用，或直接用于编辑toml
+    "torch==2.6.0",
+    "torchaudio==2.6.0",
+    "torchvision==0.21.0",
+    "tqdm==4.67.1",
+    "transformers==4.51.3",
+    "trec-car-tools==2.6",
+    "triton==3.2.0", # 通常是 torch 的可选或特定硬件加速依赖
+    "typer==0.15.3", # fastapi-cli 可能用到
+    "typing-extensions==4.13.2", # 许多库依赖它提供类型提示支持
+    "typing-inspection==0.4.0",
+    "tzdata==2025.2", # pandas/python-dateutil 的依赖
+    "unlzw3==0.2.3",
+    "urllib3==2.4.0", # requests 的依赖
+    "uv==0.6.14", # uv 本身，通常不需要作为项目依赖列出
+    "uvicorn==0.34.2",
+    "uvloop==0.21.0",
+    "vllm==0.8.5.post1",
+    "warc3-wet==0.2.5",
+    "warc3-wet-clueweb09==0.2.5",
+    "watchfiles==1.0.5", # uvicorn --reload 可能需要
+    "websockets==15.0.1",
+    # "wheel==0.41.2", # 构建工具，通常不需要作为项目依赖
+    "wrapt==1.17.2",
+    "xformers==0.0.29.post2", # torch 的可选加速库
+    "xgrammar==0.1.18",
+    "xxhash==3.5.0",
+    "yarl==1.20.0", # aiohttp 的依赖
+    "zipp==3.21.0", # importlib-metadata 的依赖
+    "zlib-state==0.1.9",
+    "zstandard==0.23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.5",        # 测试框架
+    "ruff==0.11.5",         # Linter 和 Formatter
+    "black",                # Formatter (可以添加版本号)
+    "mypy",                 # 类型检查 (可以添加版本号)
+    "ipykernel",            # 如果你使用 Jupyter notebooks
+    # 添加其他开发时依赖，例如文档生成工具等
+]
+
+# 如果你的项目是一个可安装的包或应用，可以配置入口点等
+# [project.scripts]
+# my-rag-cli = "my_rag_project.cli:main"
+
+# [project.urls]
+# Homepage = "https://example.com"
+# Repository = "https://github.com/user/my-rag-project"

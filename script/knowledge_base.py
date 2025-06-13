@@ -11,7 +11,8 @@ import logging
 from typing import List, Dict, Optional, Any
 
 from FlagEmbedding import BGEM3FlagModel
-from config import (  # 从你的 config.py 导入所有需要的常量
+from . import config  # 从你的 config.py 导入所有需要的常量
+from .config import (
     EMBEDDING_MODEL_PATH,
     PROCESSED_DATA_DIR,  # 这个可能在内部路径拼接时用到，或者直接用下面的完整路径
 

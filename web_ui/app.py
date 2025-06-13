@@ -178,12 +178,6 @@ async def main_chat_callback(
                 elif msg_dict["role"] == "assistant":
                     final_gradio_chat_display_list.append((None, msg_dict["content"]))
 
-            # 如果 event_handler 已经更新了 chatbot_display, full_yield_dict 中会有它
-            # 否则，我们在这里设置最终的 chatbot 显示
-            # if ui_elements["chatbot_display"] not in ui_updates_from_handler or \
-            #         (event.get("type") == "final_answer_complete"):  # 确保final_answer_complete会覆盖
-            #     full_yield_dict[ui_elements["chatbot_display"]] = final_gradio_chat_display_list
-
             full_yield_dict[openai_chat_history_state] = current_openai_history_list  # 再次确保state是最新的
 
         yield full_yield_dict
@@ -269,7 +263,7 @@ if __name__ == "__main__":
         # 构建并启动Gradio应用
         app_interface = build_gradio_app()
         logger.info("Gradio 应用构建完成，准备启动...")
-        app_interface.queue().launch(server_name="0.0.0.0", server_port=7860, share=False)  # 使用queue()以更好地处理流式输出
+        app_interface.queue().launch(server_name="0.0.0.0", server_port=8848, share=False)  # 使用queue()以更好地处理流式输出
         logger.info("Gradio 应用已启动。")
 
     except RuntimeError as e:

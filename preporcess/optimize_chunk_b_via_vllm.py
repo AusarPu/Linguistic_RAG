@@ -34,7 +34,7 @@ CHUNK_OPTIMIZATION_PROMPT_TEMPLATE = """
 请只进行必要的最小调整，例如，如果一个句子明显在块A的末尾和块B的开头之间被切断，你可以将属于块B的句子片段从块A的末尾移入块B的开头，或者将属于块A的句子片段从块B的开头移回块A的末尾，以确保块B以一个完整的句子开始和结束（如果上下文允许）。
 同样地，处理块B和块C之间的边界。
 不要添加任何新的、源于外部的信息，也不要对块B的内容进行实质性的重写或总结。优化后的块B应忠于原文的意义和风格，并且长度应与原始块B大致相似。
-但是你可以改写你认为的由OCR识别错误的部分，并进行格式优化
+但是注意，你可以改写你认为的由OCR识别错误的部分，并进行格式优化，把格式不清楚的部分，都用markdown格式转写一遍
 
 块A (前文内容，如果块B是文档的第一个块，则此部分内容为 "None" 或非常简短):
 ```
@@ -251,8 +251,8 @@ async def refine_all_chunks_with_llm(
 
 if __name__ == '__main__':
     # --- 配置参数 ---
-    INPUT_CHUNKS_JSON = "../processed_knowledge/processed_knowledge_base_chunks.json"
-    OUTPUT_REFINED_JSON = "../processed_knowledge/refined_knowledge_base_chunks_llm.json"
+    INPUT_CHUNKS_JSON = "../processed_knowledge_base/processed_knowledge_base_chunks.json"
+    OUTPUT_REFINED_JSON = "../processed_knowledge_base/refined_knowledge_base_chunks_llm.json"
 
     # 确保输入文件存在
     if not os.path.exists(INPUT_CHUNKS_JSON):

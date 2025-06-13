@@ -1,82 +1,176 @@
 #!/bin/bash
 
-echo ">>> 启动 RAG 系统所有服务..."
+echo ">>> 启动 RAG 系统核心服务 (Rewriter, Reranker, Web UI)..."
 
-# --- 配置 ---
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-PROJECT_ROOT="$SCRIPT_DIR" # 假设 start_all.sh 也在项目根目录
-LOG_DIR="$PROJECT_ROOT/logs" # 日志文件目录
-PID_DIR="/tmp"             # PID 文件存放目录 (或项目内)
+# --- 配置 --- 
+PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# 设置 PYTHONPATH 以确保 Python 脚本能正确导入模块
+# 将项目根目录添加到PYTHONPATH的最前面，以优先加载项目内的模块
+if [[ -z "$PYTHONPATH" ]]; then
+    export PYTHONPATH="$PROJECT_ROOT"
+else
+    export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+fi
 
-GENERATOR_SCRIPT="$PROJECT_ROOT/start_generator_vllm.sh"
-REWRITER_SCRIPT="$PROJECT_ROOT/start_rewriter_vllm.sh"
-GRADIO_SCRIPT="$PROJECT_ROOT/app_gradio.py"
-PYTHON_CMD="python3" # 确保指向 venv 内的 python (如果需要激活)
-# 如果脚本需要激活 venv:
-# source "$PROJECT_ROOT/.venv/bin/activate"
+LOG_DIR="$PROJECT_ROOT/logs"
+PYTHON_CMD="python3" # 或你的 python 命令
+GRADIO_SCRIPT="$PROJECT_ROOT/web_ui/app.py"
 
-GENERATOR_LOG="$LOG_DIR/vllm_generator.log"
 REWRITER_LOG="$LOG_DIR/vllm_rewriter.log"
-GENERATOR_PID_FILE="$PID_DIR/vllm_generator.pid"
+RERANKER_LOG="$LOG_DIR/vllm_reranker.log"
+PID_DIR="$PROJECT_ROOT/pids" # 定义 PID_DIR
 REWRITER_PID_FILE="$PID_DIR/vllm_rewriter.pid"
+RERANKER_PID_FILE="$PID_DIR/vllm_reranker.pid"
+
+# --- 读取配置函数 ---
+read_config() {
+    local var_name=$1
+    # 确保 PROJECT_ROOT 在 sys.path 中，以便导入 CONFIG_MODULE
+    local value=$($PYTHON_CMD -c "import sys; sys.path.insert(0, '$PROJECT_ROOT'); from $CONFIG_MODULE import $var_name; print($var_name)" 2>/dev/null)
+    if [ -z "$value" ]; then
+        echo "错误: 无法从 $CONFIG_MODULE 读取 $var_name" >&2
+        # 对于关键配置，可能需要退出或设置一个明确的无效标记
+    fi
+    echo "$value"
+}
+
+# --- 读取服务配置 ---
+CONFIG_MODULE="script.config" # 确保 CONFIG_MODULE 在此处定义
+echo ">>> 读取服务配置从 $CONFIG_MODULE..."
+# Rewriter 配置
+REWRITER_BASE_MODEL_PATH=$(read_config VLLM_REWRITE_MODEL_LOCAL_PATH)
+REWRITER_LORA_PATH=$(read_config VLLM_REWRITER_LORA_LOCAL_PATH)
+REWRITER_LORA_NAME=$(read_config REWRITER_LORA_NAME)
+REWRITER_PORT=$(read_config VLLM_REWRITER_PORT)
+REWRITER_GPU_ID=$(read_config VLLM_REWRITER_GPU_ID)
+REWRITER_GPU_MEM_UTILIZATION=$(read_config VLLM_REWRITER_MEM_UTILIZATION)
+REWRITER_MAX_LORA_RANK=$(read_config VLLM_MAX_LORA_RANK)
+REWRITER_TENSOR_PARALLEL_SIZE=$(read_config VLLM_REWRITER_TENSOR_PARALLEL_SIZE)
+if [ -z "$REWRITER_TENSOR_PARALLEL_SIZE" ]; then REWRITER_TENSOR_PARALLEL_SIZE=2; fi # 默认值
+
+# 读取 Reranker 配置
+# 确保我们从 script.config 中读取正确的变量名
+CONFIG_MODULE="script.config" # 确保 CONFIG_MODULE 已定义
+RERANKER_MODEL_PATH=$(read_config VLLM_RERANKER_MODEL_PATH)
+if [ -z "$RERANKER_MODEL_PATH" ]; then 
+    echo "错误: VLLM_RERANKER_MODEL_PATH 未在 $CONFIG_MODULE 中配置。" >&2;
+fi
+
+RERANKER_PORT=$(read_config VLLM_RERANKER_PORT)
+if [ -z "$RERANKER_PORT" ]; then 
+    echo "错误: VLLM_RERANKER_PORT 未在 $CONFIG_MODULE 中配置。" >&2;
+fi
+
+RERANKER_GPU_ID=$(read_config VLLM_RERANKER_GPU_ID)
+if [ -z "$RERANKER_GPU_ID" ]; then 
+    echo "警告: VLLM_RERANKER_GPU_ID 未在 $CONFIG_MODULE 中配置，将使用默认值: 0" >&2;
+    RERANKER_GPU_ID="0"; 
+fi
+
+# RERANKER_MEM_UTILIZATION (如果需要，从config.py添加并在这里读取)
+# 假设 VLLM_RERANKER_MEM_UTILIZATION 存在于 config.py
+RERANKER_MEM_UTILIZATION=$(read_config VLLM_RERANKER_MEM_UTILIZATION)
+if [ -z "$RERANKER_MEM_UTILIZATION" ]; then 
+    echo "警告: VLLM_RERANKER_MEM_UTILIZATION 未在 $CONFIG_MODULE 中配置，将使用默认值: 0.9" >&2;
+    RERANKER_MEM_UTILIZATION="0.9"; 
+fi
+echo "    配置读取完成。"
 
 # --- 清理函数 ---
 cleanup() {
     echo ">>> 收到退出信号，正在清理后台进程..."
-    if [ -f "$GENERATOR_PID_FILE" ]; then
-        GENERATOR_PID=$(cat "$GENERATOR_PID_FILE")
-        echo "    停止 Generator (PID: $GENERATOR_PID)..."
-        kill "$GENERATOR_PID" || echo "    Generator 进程 $GENERATOR_PID 可能已停止。"
-        rm -f "$GENERATOR_PID_FILE"
-    fi
     if [ -f "$REWRITER_PID_FILE" ]; then
         REWRITER_PID=$(cat "$REWRITER_PID_FILE")
         echo "    停止 Rewriter (PID: $REWRITER_PID)..."
-        kill "$REWRITER_PID" || echo "    Rewriter 进程 $REWRITER_PID 可能已停止。"
+        kill "$REWRITER_PID" &> /dev/null || echo "    Rewriter 进程 $REWRITER_PID 可能已停止。"
         rm -f "$REWRITER_PID_FILE"
+    fi
+    if [ -f "$RERANKER_PID_FILE" ]; then
+        RERANKER_PID=$(cat "$RERANKER_PID_FILE")
+        echo "    停止 Reranker (PID: $RERANKER_PID)..."
+        kill "$RERANKER_PID" &> /dev/null || echo "    Reranker 进程 $RERANKER_PID 可能已停止。"
+        rm -f "$RERANKER_PID_FILE"
     fi
     echo ">>> 清理完成。"
     exit 0
 }
 
 # --- 注册信号处理 ---
-# 捕获 SIGINT (Ctrl+C), SIGTERM (kill), EXIT (脚本正常退出)
 trap cleanup INT TERM EXIT
 
-# --- 创建日志目录 ---
+# --- 创建日志和PID目录 ---
 mkdir -p "$LOG_DIR"
+mkdir -p "$PID_DIR"
 
-# --- 启动 Generator vLLM ---
-echo ">>> 正在后台启动 Generator vLLM 服务..."
-# 将脚本输出重定向到日志文件，& 表示后台运行
-nohup "$GENERATOR_SCRIPT" > "$GENERATOR_LOG" 2>&1 &
-# 获取后台进程的 PID 并保存
-echo $! > "$GENERATOR_PID_FILE"
-echo "    Generator 服务 PID: $(cat "$GENERATOR_PID_FILE")，日志: $GENERATOR_LOG"
+# --- 启动 Rewriter vLLM 服务 ---
+if [ -z "$REWRITER_BASE_MODEL_PATH" ] || [ -z "$REWRITER_PORT" ]; then
+    echo "错误: Rewriter 服务配置不完整 (模型路径或端口缺失)，跳过启动。" >&2
+else
+    echo ">>> 正在后台启动 Rewriter vLLM 服务..."
+    echo "    基础模型: $REWRITER_BASE_MODEL_PATH"
+    echo "    端口: $REWRITER_PORT"
+    echo "    分配 GPU: ${REWRITER_GPU_ID:-默认所有可见GPU}"
+    echo "    显存限制: ${REWRITER_GPU_MEM_UTILIZATION:-默认}"
+    echo "    张量并行数: ${REWRITER_TENSOR_PARALLEL_SIZE}"
 
-# --- 等待 Generator 启动 (简单 sleep 或检查端口) ---
-echo "    等待 Generator 服务启动..." # 根据实际启动时间调整
+    REWRITER_MEM_ARG=""
+    if [ ! -z "$REWRITER_GPU_MEM_UTILIZATION" ] && [ "$REWRITER_GPU_MEM_UTILIZATION" != "None" ]; then
+      REWRITER_MEM_ARG="--gpu-memory-utilization $REWRITER_GPU_MEM_UTILIZATION"
+    fi
 
+    # 构建 vLLM 命令
+    REWRITER_CMD="vllm serve \"$REWRITER_BASE_MODEL_PATH\""
+    REWRITER_CMD="$REWRITER_CMD --port $REWRITER_PORT"
+    REWRITER_CMD="$REWRITER_CMD --trust-remote-code"
+    REWRITER_CMD="$REWRITER_CMD $REWRITER_MEM_ARG"
+    REWRITER_CMD="$REWRITER_CMD --disable-log-requests"
+    REWRITER_CMD="$REWRITER_CMD --max_model_len 40960"
+    REWRITER_CMD="$REWRITER_CMD --tensor-parallel-size $REWRITER_TENSOR_PARALLEL_SIZE"
+    REWRITER_CMD="$REWRITER_CMD --max_num_seqs 2048"
+    REWRITER_CMD="$REWRITER_CMD --enable-reasoning --reasoning-parser deepseek_r1"
+    # 如果需要 LoRA，取消以下行的注释并确保配置正确
+    # REWRITER_CMD="$REWRITER_CMD --enable-lora --lora-modules ${REWRITER_LORA_NAME}=${REWRITER_LORA_PATH} --max-loras 1 --max-lora-rank ${REWRITER_MAX_LORA_RANK}"
 
-# --- 启动 Rewriter vLLM ---
-echo ">>> 正在后台启动 Rewriter vLLM 服务..."
-nohup "$REWRITER_SCRIPT" > "$REWRITER_LOG" 2>&1 &
-echo $! > "$REWRITER_PID_FILE"
-echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_LOG"
+    # 使用 nohup 和 bash -c 来正确处理后台和 CUDA_VISIBLE_DEVICES
+    (nohup bash -c "export CUDA_VISIBLE_DEVICES='${REWRITER_GPU_ID}'; exec $REWRITER_CMD" > "$REWRITER_LOG" 2>&1 & echo $! > "$REWRITER_PID_FILE")
+    echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_LOG"
+    echo "    等待 Rewriter 服务启动 (约30-60秒)..."
+    sleep 5 # 简短等待，实际启动时间可能更长
+fi
 
-# --- 等待 Rewriter 启动 ---
-echo "    等待 Rewriter 服务启动..."
+# --- 启动 Reranker vLLM 服务 ---
+if [ -z "$RERANKER_MODEL_PATH" ] || [ -z "$RERANKER_PORT" ]; then
+    echo "错误: Reranker 服务配置不完整 (模型路径或端口缺失)，跳过启动。" >&2
+else
+    echo ">>> 正在后台启动 Reranker vLLM 服务..."
+    echo "    模型: $RERANKER_MODEL_PATH"
+    echo "    端口: $RERANKER_PORT"
+    echo "    分配 GPU: ${RERANKER_GPU_ID:-默认所有可见GPU}"
 
-# --- 启动 Gradio 应用 (前台运行) ---
-echo ">>> 启动 Gradio 应用 (前台运行)..."
-echo "切换到项目根目录: $PROJECT_ROOT" # 假设 $PROJECT_ROOT 已正确设置
-cd "$PROJECT_ROOT" || exit 1 # 如果切换失败则退出
+    # 构建 vLLM 命令
+    RERANKER_CMD="vllm serve \"$RERANKER_MODEL_PATH\""
+    RERANKER_CMD="$RERANKER_CMD --port $RERANKER_PORT"
+    RERANKER_CMD="$RERANKER_CMD --trust-remote-code"
+    RERANKER_CMD="$RERANKER_CMD --disable-log-requests"
+    RERANKER_CMD="$RERANKER_CMD --dtype auto"
 
-echo "从 $(pwd) 启动 Gradio 应用..."
-# 确保使用 venv 中的 python
-"$PROJECT_ROOT/.venv/bin/python" "$GRADIO_SCRIPT" # 使用绝对路径或相对路径
+    (nohup bash -c "export CUDA_VISIBLE_DEVICES='${RERANKER_GPU_ID}'; exec $RERANKER_CMD" > "$RERANKER_LOG" 2>&1 & echo $! > "$RERANKER_PID_FILE")
+    echo "    Reranker 服务 PID: $(cat "$RERANKER_PID_FILE")，日志: $RERANKER_LOG"
+    echo "    等待 Reranker 服务启动 (约15-30秒)..."
+    sleep 5 # 简短等待
+fi
+
+# --- 启动 Gradio Web UI (前台运行) ---
+if [ ! -f "$GRADIO_SCRIPT" ]; then
+    echo "错误: Gradio 应用脚本未找到: $GRADIO_SCRIPT" >&2
+    exit 1
+fi
+
+echo ">>> 启动 Gradio Web UI (前台运行)..."
+cd "$PROJECT_ROOT" || { echo "错误: 无法切换到项目根目录 $PROJECT_ROOT"; exit 1; }
+
+echo "    从 $(pwd) 启动 Gradio 应用: $GRADIO_SCRIPT"
 $PYTHON_CMD "$GRADIO_SCRIPT"
 
-# --- Gradio 退出后 ---
-# 由于设置了 trap EXIT，Gradio 正常退出或被中断时，cleanup 函数会被调用
-echo ">>> Gradio 应用已退出。"
+# Gradio 退出后，trap EXIT 会调用 cleanup 函数
+echo ">>> Gradio Web UI 已退出。"

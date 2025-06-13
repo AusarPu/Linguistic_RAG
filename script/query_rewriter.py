@@ -5,7 +5,7 @@ import aiohttp
 import asyncio
 import json
 from typing import List, Dict, Optional
-from config import *
+from .config import *
 
 logger = logging.getLogger(__name__)
 

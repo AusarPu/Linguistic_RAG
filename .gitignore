@@ -1,0 +1,33 @@
+# Log files
+logs/
+
+# Model files and directories
+models/
+
+# Processed knowledge base
+processed_knowledge_base/
+
+# Linguistic AI fine-tuning artifacts
+linguistic_ai/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE specific files
+.idea/
+.vscode/
+
+# Pytest cache
+.pytest_cache/
+
+# Gradio cache
+.gradio/
+
+# Other temporary or swap files
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db

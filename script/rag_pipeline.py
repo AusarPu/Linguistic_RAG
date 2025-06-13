@@ -11,12 +11,12 @@ from typing import List, Dict, Any, Tuple, AsyncGenerator, Optional
 import aiohttp  # 仅当 VLLM 客户端函数也在此文件时直接需要
 
 # --- 从项目中导入 ---
-from knowledge_base import KnowledgeBase
-from query_rewriter import generate_rewritten_query  # 假设它在 query_rewriter.py 中且是异步的
-from vllm_clients import call_reranker_vllm, call_generator_vllm_stream
+from .knowledge_base import KnowledgeBase
+from .query_rewriter import generate_rewritten_query  # 假设它在 query_rewriter.py 中且是异步的
+from .vllm_clients import call_reranker_vllm, call_generator_vllm_stream
 
 
-from config import (
+from .config import (
     # 检索参数
     DENSE_CHUNK_RETRIEVAL_TOP_K, DENSE_QUESTION_RETRIEVAL_TOP_K, SPARSE_KEYWORD_RETRIEVAL_TOP_K,
     DENSE_CHUNK_THRESHOLD, DENSE_QUESTION_THRESHOLD, SPARSE_KEYWORD_THRESHOLD,
@@ -84,7 +84,7 @@ async def execute_rag_flow(
         # 如果已经是 async def，则直接 await kb_instance.search_...(...)
         task_dense_chunks = asyncio.to_thread(kb_instance.search_dense_chunks, rewritten_query,
                                               DENSE_CHUNK_RETRIEVAL_TOP_K, DENSE_CHUNK_THRESHOLD)
-        task_dense_questions = asyncio.to_thread(kb_instance.search_dense_questions, rewritten_query,
+        task_dense_questions = asyncio.to_thread(kb_instance.search_dense_questions, user_query,
                                                  DENSE_QUESTION_RETRIEVAL_TOP_K, DENSE_QUESTION_THRESHOLD)
         task_sparse_keywords = asyncio.to_thread(kb_instance.search_sparse_keywords, rewritten_query,
                                                  SPARSE_KEYWORD_RETRIEVAL_TOP_K, SPARSE_KEYWORD_THRESHOLD)
