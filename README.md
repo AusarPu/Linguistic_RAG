@@ -34,7 +34,7 @@ RAG/
 │   ├── rag_pipeline.py     # RAG流程
 │   ├── query_rewriter.py   # 查询重写
 │   └── vllm_clients.py     # vLLM客户端
-├── preporcess/             # 数据预处理
+├── preprocess/             # 数据预处理
 │   ├── preprocess_documents.py    # 文档预处理和分块
 │   ├── build_core_indexes.py      # 构建FAISS索引
 │   ├── generate_summary_question.py # 生成问题摘要
@@ -110,16 +110,16 @@ REWRITER_API_URL = "https://api.openai.com/v1/chat/completions"
 2. **运行预处理**
    ```bash
    # 文档预处理和分块
-   python preporcess/preprocess_documents.py
+   python preprocess/preprocess_documents.py
    
    # 基于上下文优化文本块（可选，提升文本连贯性）
-   python preporcess/optimize_chunk_b_via_vllm.py
+   python preprocess/optimize_chunk_b_via_vllm.py
    
    # 构建FAISS向量索引
-   python preporcess/build_core_indexes.py
+   python preprocess/build_core_indexes.py
    
    # 生成问题摘要（可选，用于问题匹配检索）
-   python preporcess/generate_summary_question.py
+   python preprocess/generate_summary_question.py
    ```
 
 ### 启动服务
@@ -183,7 +183,7 @@ VLLM_RERANKER_GPU_ID = 1                 # 重排序器GPU
 - **智能重排序**: BGE重排序模型提升结果质量
 - **上下文感知生成**: 基于检索结果的智能回答生成
 
-### 4. 数据预处理 (`preporcess/`)
+### 4. 数据预处理 (`preprocess/`)
 
 - **文档解析**: 支持带页码标记的OCR文档
 - **智能分块**: RecursiveCharacterTextSplitter分块策略
