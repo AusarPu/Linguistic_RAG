@@ -1,4 +1,4 @@
-# script/config.py (集中配置版)
+# script/config_rag.py (集中配置版)
 
 import logging
 import os
@@ -11,7 +11,7 @@ LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 # --------------------------
 
 # --- 基础路径 ---
-# 获取项目根目录 (假设 config.py 在 script/ 子目录下)
+# 获取项目根目录 (假设 config_rag.py 在 script/ 子目录下)
 PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 # 检索参数
@@ -78,7 +78,7 @@ GENERATOR_MODEL_NAME_FOR_API = VLLM_BASE_MODEL_LOCAL_PATH # 你已有的
 REWRITER_MODEL_NAME_FOR_API = VLLM_REWRITE_MODEL_LOCAL_PATH # 你已有的
 RERANKER_MODEL_NAME_FOR_API = VLLM_RERANKER_MODEL_PATH # 用于发送给 Reranker API 的模型名
 
-# --- Prompt 文件路径 (使用绝对路径或相对于 config.py 的路径) ---
+# --- Prompt 文件路径 (使用绝对路径或相对于 config_rag.py 的路径) ---
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATOR_SYSTEM_PROMPT_FILE = os.path.join(_CONFIG_DIR, "../prompts/generator_system_prompt.txt")
 REWRITER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/rewriter_instruction.txt")

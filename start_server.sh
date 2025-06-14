@@ -35,7 +35,7 @@ read_config() {
 }
 
 # --- 读取服务配置 ---
-CONFIG_MODULE="script.config" # 确保 CONFIG_MODULE 在此处定义
+CONFIG_MODULE="script.config_rag" # 确保 CONFIG_MODULE 在此处定义
 echo ">>> 读取服务配置从 $CONFIG_MODULE..."
 # Rewriter 配置
 REWRITER_BASE_MODEL_PATH=$(read_config VLLM_REWRITE_MODEL_LOCAL_PATH)
@@ -49,8 +49,8 @@ REWRITER_TENSOR_PARALLEL_SIZE=$(read_config VLLM_REWRITER_TENSOR_PARALLEL_SIZE)
 if [ -z "$REWRITER_TENSOR_PARALLEL_SIZE" ]; then REWRITER_TENSOR_PARALLEL_SIZE=2; fi # 默认值
 
 # 读取 Reranker 配置
-# 确保我们从 script.config 中读取正确的变量名
-CONFIG_MODULE="script.config" # 确保 CONFIG_MODULE 已定义
+# 确保我们从 script.config_rag 中读取正确的变量名
+CONFIG_MODULE="script.config_rag" # 确保 CONFIG_MODULE 已定义
 RERANKER_MODEL_PATH=$(read_config VLLM_RERANKER_MODEL_PATH)
 if [ -z "$RERANKER_MODEL_PATH" ]; then 
     echo "错误: VLLM_RERANKER_MODEL_PATH 未在 $CONFIG_MODULE 中配置。" >&2;

@@ -9,7 +9,7 @@ import os
 import time
 import logging
 from typing import List, Dict, Optional, Set, Any
-from script.config import *
+from script.config_rag import *
 
 
 from FlagEmbedding import BGEM3FlagModel

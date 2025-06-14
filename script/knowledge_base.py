@@ -11,8 +11,8 @@ import logging
 from typing import List, Dict, Optional, Any
 
 from FlagEmbedding import BGEM3FlagModel
-from . import config  # 从你的 config.py 导入所有需要的常量
-from .config import (
+from . import config_rag as config  # 从你的 config_rag.py 导入所有需要的常量
+from .config_rag import (
     EMBEDDING_MODEL_PATH,
     PROCESSED_DATA_DIR,  # 这个可能在内部路径拼接时用到，或者直接用下面的完整路径
 
@@ -75,7 +75,7 @@ class KnowledgeBase:
             logger.critical("KnowledgeBase initialization failed: Could not load all necessary search indexes.")
             logger.critical(f"Please ensure all pre-processing scripts "
                             f"(e.g., 'preprocess/build_all_search_indexes.py') "
-                            f"have run successfully and all index files exist as per config.py.")
+                            f"have run successfully and all index files exist as per config_rag.py.")
             raise RuntimeError("KnowledgeBase failed to load essential search indexes.")
 
         logger.info(f"KnowledgeBase initialized successfully with {len(self.indexed_chunks_metadata)} indexed chunks "

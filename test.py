@@ -18,16 +18,16 @@ try:
     # 假设 call_generator_vllm_stream 在 script.vllm_clients 或 script.rag_pipeline 中
     # 我们假设你把它放在了 vllm_clients.py
     from script.vllm_clients import call_generator_vllm_stream
-    from script.config import (
+    from script.config_rag import (
         GENERATOR_API_URL,
-        GENERATOR_MODEL_NAME_FOR_API,  # 你在config.py中是这个名字
+        GENERATOR_MODEL_NAME_FOR_API,  # 你在config_rag.py中是这个名字
         GENERATOR_SYSTEM_PROMPT_FILE,
         GENERATOR_RAG_CONFIG,
         VLLM_REQUEST_TIMEOUT_GENERATION
     )
 except ImportError as e:
     logger = logging.getLogger(__name__)  # 在导入失败前获取logger
-    logger.critical(f"测试脚本导入错误: {e}。请确保路径正确，并且 vllm_clients.py 和 config.py 可访问。")
+    logger.critical(f"测试脚本导入错误: {e}。请确保路径正确，并且 vllm_clients.py 和 config_rag.py 可访问。")
     raise  # 抛出异常以停止执行
 
 # --- 配置日志 ---
@@ -73,7 +73,7 @@ async def main_test_generator_stream():
 
     # 确保配置有效
     if not GENERATOR_API_URL or not GENERATOR_MODEL_NAME_FOR_API:
-        logger.error("Generator API URL 或 Model ID 未在 config.py 中正确配置。测试中止。")
+        logger.error("Generator API URL 或 Model ID 未在 config_rag.py 中正确配置。测试中止。")
         return
 
     try:
@@ -126,5 +126,5 @@ async def main_test_generator_stream():
 
 if __name__ == "__main__":
     # 确保 Generator VLLM 服务已启动
-    # 确保所有相关的配置 (API URL, 模型名等) 在 config.py 中正确
+    # 确保所有相关的配置 (API URL, 模型名等) 在 config_rag.py 中正确
     asyncio.run(main_test_generator_stream())

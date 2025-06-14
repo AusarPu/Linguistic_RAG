@@ -70,9 +70,9 @@ models_to_download = {
 
 def download_hf_model(model_name, config):
     """使用 huggingface_hub 从 Hugging Face Hub 下载模型"""
-    repo_id = config.get("model_id")
-    target_dir = config.get("target_dir") # 使用指定的本地目录
-    revision = config.get("revision")
+    repo_id = config_rag.get("model_id")
+    target_dir = config_rag.get("target_dir") # 使用指定的本地目录
+    revision = config_rag.get("revision")
 
     if not repo_id or not target_dir:
         logging.error(f"跳过 Hugging Face 模型 '{model_name}': 缺少 repo_id 或 target_dir 配置。")
@@ -116,8 +116,8 @@ def download_ms_model(model_name, config):
         logging.error(f"跳过 ModelScope 模型 '{model_name}': modelscope 库未安装。")
         return None
 
-    model_id = config.get("model_id")
-    revision = config.get("revision")
+    model_id = config_rag.get("model_id")
+    revision = config_rag.get("revision")
     # ModelScope 下载时，文件会放在 cache_dir 下以 model_id 命名的目录结构中
     cache_dir = MODEL_ROOT_DIR # 使用统一的根目录作为缓存目录
 
@@ -153,7 +153,7 @@ if __name__ == "__main__":
 
     print("开始处理模型下载任务...")
     for name, config in models_to_download.items():
-        source = config.get("source", "").lower()
+        source = config_rag.get("source", "").lower()
         actual_path = None
 
         if source == "huggingface":
@@ -162,7 +162,7 @@ if __name__ == "__main__":
             actual_path = download_ms_model(name, config)
         elif source == "manual":
              logging.info(f"跳过 '{name}': 标记为手动处理。请确保文件已放置在预期路径。")
-             actual_path = config.get("target_dir", os.path.join(MODEL_ROOT_DIR, name))
+             actual_path = config_rag.get("target_dir", os.path.join(MODEL_ROOT_DIR, name))
              if not os.path.exists(actual_path):
                   logging.warning(f"手动指定的路径 '{actual_path}' (用于 '{name}') 不存在!")
                   # 可以选择在这里标记错误
@@ -194,7 +194,7 @@ if __name__ == "__main__":
         print(f"  [{name}]: {path}")
 
     print("\n重要提示:")
-    print("1. 请根据上面打印的路径，仔细检查并更新你的 `script/config.py` 文件中的相关路径配置。")
+    print("1. 请根据上面打印的路径，仔细检查并更新你的 `script/config_rag.py` 文件中的相关路径配置。")
     print("   - 例如 `GENERATOR_MODEL_NAME_FOR_API` 可能对应 'base_llm_generator' 的路径。")
     print("   - `REWRITER_MODEL_NAME_FOR_API` 现在应该对应 'quantized_llm_rewriter' 的**基础模型标识符**（API调用时可能仍用基础模型ID，vLLM内部知道加载的是量化版，需测试确认）。")
     print("   - `EMBEDDING_MODEL_PATH` 应指向 'embedding' 的路径。")

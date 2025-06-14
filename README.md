@@ -29,7 +29,7 @@ RAG/
 ├── knowledge_base/          # 原始知识库文档
 ├── processed_knowledge_base/ # 处理后的知识库数据
 ├── script/                  # 核心脚本
-│   ├── config.py           # 配置文件
+│   ├── config_rag.py           # 配置文件
 │   ├── knowledge_base.py   # 知识库管理
 │   ├── rag_pipeline.py     # RAG流程
 │   ├── query_rewriter.py   # 查询重写
@@ -77,7 +77,7 @@ pip install -r requirements.txt
 
 #### 本地部署模式 (需要32GB+ GPU显存)
 
-在 `script/config.py` 中配置本地模型路径：
+在 `script/config_rag.py` 中配置本地模型路径：
 
 ```python
 # 基础模型路径
@@ -134,7 +134,7 @@ python web_ui/app.py
 
 ## 🔧 配置说明
 
-### 核心配置 (`script/config.py`)
+### 核心配置 (`script/config_rag.py`)
 
 ```python
 # 检索参数
@@ -292,7 +292,7 @@ async for event in execute_rag_flow(
 ## 🐛 常见问题
 
 ### Q: 启动时提示模型路径不存在
-A: 检查 `config.py` 中的模型路径配置，确保模型文件已下载到指定位置。
+A: 检查 `config_rag.py` 中的模型路径配置，确保模型文件已下载到指定位置。
 
 ### Q: GPU显存不足
 A: 降低 `MEM_UTILIZATION` 参数值，或使用更小的模型。

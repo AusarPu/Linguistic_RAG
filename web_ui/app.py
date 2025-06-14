@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional, Tuple
 # 从项目中导入
 from script.knowledge_base import KnowledgeBase  #
 from script.rag_pipeline import execute_rag_flow  #
-from script import config  #
+from script import config_rag as config  #
 
 # 从web_ui模块导入
 from web_ui.ui_components import create_ui
@@ -19,9 +19,9 @@ from web_ui.event_handlers import update_ui_for_event, format_references_for_dis
 logger = logging.getLogger(__name__)
 kb_instance: Optional[KnowledgeBase] = None
 # 从config加载系统提示，如果rag_pipeline.py中已经加载，确保这里获取的是同一个
-# GENERATOR_SYSTEM_PROMPT_CONTENT = config.GENERATOR_SYSTEM_PROMPT_CONTENT (假设config中直接定义或加载)
+# GENERATOR_SYSTEM_PROMPT_CONTENT = config_rag.GENERATOR_SYSTEM_PROMPT_CONTENT (假设config_rag中直接定义或加载)
 # 在rag_pipeline.py中，GENERATOR_SYSTEM_PROMPT_CONTENT 是在模块级别加载的
-# 我们可以在这里直接引用它，或者确保config.py中的setup_logging()被调用
+# 我们可以在这里直接引用它，或者确保config_rag.py中的setup_logging()被调用
 try:
     if config.GENERATOR_SYSTEM_PROMPT_FILE and \
             config.os.path.exists(config.GENERATOR_SYSTEM_PROMPT_FILE):  #
@@ -252,7 +252,7 @@ def build_gradio_app():
 
 
 if __name__ == "__main__":
-    # 配置日志 (从config.py)
+    # 配置日志 (从config_rag.py)
     config.setup_logging()
 
     # 加载资源
