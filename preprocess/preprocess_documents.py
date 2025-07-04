@@ -3,6 +3,10 @@ import re
 import json
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from script.config import KNOWLEDGE_BASE_DIR,PROCESSED_DATA_DIR
+
 
 # -----------------------------------------------------------------------------
 # 函数一：解析包含页码标记的 TXT 文档为结构化页面列表
@@ -14,8 +18,8 @@ def parse_txt_to_structured_pages(full_document_text: str, doc_name: str) -> lis
     每个对象代表一页及其文本内容。
     """
     pages_data = []
-    page_marker_pattern_for_split = r"(≦\s*\d+\s*≧)"
-    page_number_extract_pattern = re.compile(r"≦\s*(\d+)\s*≧")
+    page_marker_pattern_for_split = r"(≦\s*[^≧]+\s*≧)"
+    page_number_extract_pattern = re.compile(r"≦\s*([^≧]+?)\s*≧")
     parts = re.split(page_marker_pattern_for_split, full_document_text)
 
     if not parts:
@@ -33,13 +37,13 @@ def parse_txt_to_structured_pages(full_document_text: str, doc_name: str) -> lis
 
     current_part_index = 0
     # 处理第一个标记之前的部分 (如果有文本)
-    if parts[current_part_index] and \
+    if current_part_index < len(parts) and \
             not page_number_extract_pattern.fullmatch(parts[current_part_index].strip()):
         text_before_first_marker = parts[current_part_index].strip()
         if text_before_first_marker:
             pages_data.append({
                 "doc_name": doc_name,
-                "page_number": 0,  # 将第一个标记前的文本视为第0页或“前言”
+                "page_number": 0,  # 将第一个标记前的文本视为第0页或"前言"
                 "text": text_before_first_marker
             })
         current_part_index += 1
@@ -51,7 +55,19 @@ def parse_txt_to_structured_pages(full_document_text: str, doc_name: str) -> lis
         marker_match = page_number_extract_pattern.fullmatch(marker_candidate)
 
         if marker_match:
-            page_num = int(marker_match.group(1))
+            page_identifier = marker_match.group(1).strip()
+            
+            # 处理空页码的情况
+            if not page_identifier:
+                page_identifier = "未命名页面"
+            
+            # 尝试将页码转换为整数，如果失败则保持原始字符串
+            try:
+                page_num = int(page_identifier)
+            except ValueError:
+                # 如果不是数字，则保持原始字符串作为页码标识
+                page_num = page_identifier
+            
             if page_text_candidate:  # 确保页面文本不为空
                 pages_data.append({
                     "doc_name": doc_name,
@@ -107,10 +123,12 @@ def generate_document_chunks_langchain(
 
         for i, chunk_text_content in enumerate(chunks_from_this_page_texts):
             if len(chunk_text_content.strip()) >= char_min_chunk_length:  # 确保块在去除首尾空格后仍满足最小长度
+                # 处理页码标识符，确保chunk_id的有效性
+                page_id_safe = str(page_num).replace(" ", "_").replace("/", "_").replace("\\", "_")
                 all_final_chunks_with_metadata.append({
                     "doc_name": doc_name,
                     "page_number": page_num,
-                    "chunk_id": f"{doc_name}_p{page_num}_c{i + 1}",  # 创建一个唯一的块 ID
+                    "chunk_id": f"{doc_name}_p{page_id_safe}_c{i + 1}",  # 创建一个唯一的块 ID
                     "text": chunk_text_content.strip()  # 存储去除首尾空格的文本
                 })
 
@@ -184,25 +202,18 @@ def process_knowledge_base(
 
 
 if __name__ == '__main__':
-    # --- 配置参数 ---
-    # 请根据你的实际情况修改这些路径和参数
 
-    # 你的知识库 TXT 文件所在的目录
-    # 假设脚本与 knowledge_base 目录在同一级或你能正确指定路径
-    # 例如，如果你的脚本在 RAG/script/ 目录下，知识库在 RAG/knowledge_base/
-    # 则 KNOWLEDGE_BASE_DIRECTORY = "../knowledge_base"
-    # 如果脚本就在 RAG/ 目录下，则 KNOWLEDGE_BASE_DIRECTORY = "./knowledge_base"
-    KNOWLEDGE_BASE_DIRECTORY = "../knowledge_base"  # 请修改为你的实际路径
+    KNOWLEDGE_BASE_DIRECTORY = KNOWLEDGE_BASE_DIR
 
     # 处理后输出的 JSON 文件路径
-    OUTPUT_JSON_FILE = "../processed_knowledge_base/"
+    OUTPUT_JSON_FILE = PROCESSED_DATA_DIR
     os.makedirs(OUTPUT_JSON_FILE, exist_ok=True)
 
     # 文本切分参数 (基于字符)
     # 你之前提到："我之前的设置是200~400字，重叠50字"
-    TARGET_CHAR_CHUNK_SIZE = 1000  # 你可以调整在 200-400 之间
-    TARGET_CHAR_OVERLAP = 50
-    MIN_CHAR_CHUNK_LENGTH = 100  # 设定一个合适的最小块长度，避免过小的碎块
+    TARGET_CHAR_CHUNK_SIZE = 2000  # 你可以调整在 200-400 之间
+    TARGET_CHAR_OVERLAP = 0
+    MIN_CHAR_CHUNK_LENGTH = 10  # 设定一个合适的最小块长度，避免过小的碎块
 
     # Langchain RecursiveCharacterTextSplitter 的分隔符
     # 你可以根据你的 OCR 文本特性调整这个列表及其顺序
