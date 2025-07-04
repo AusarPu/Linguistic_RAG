@@ -17,6 +17,7 @@ __pycache__/
 *.pyc
 
 # IDE specific files
+.idea/
 .vscode/
 
 # Pytest cache
