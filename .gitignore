@@ -1,5 +1,6 @@
 # Log files
 logs/
+pids/
 
 # Model files and directories
 models/
@@ -16,7 +17,6 @@ __pycache__/
 *.pyc
 
 # IDE specific files
-.idea/
 .vscode/
 
 # Pytest cache
