@@ -4,6 +4,7 @@ logs/
 # Model files and directories
 models/
 
+knowledge_base/
 # Processed knowledge base
 processed_knowledge_base/
 
