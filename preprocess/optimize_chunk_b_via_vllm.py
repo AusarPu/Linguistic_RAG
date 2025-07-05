@@ -134,7 +134,8 @@ async def optimize_chunk_b_via_vllm(
 # -----------------------------------------------------------------------------
 async def refine_all_chunks_with_llm(
         input_chunks_json_path: str,
-        output_refined_chunks_json_path: str
+        output_refined_chunks_json_path: str,
+        limit: Optional[int] = None  # 新增 limit 参数
 ) -> None:
     """
     加载由前一阶段生成的文本块JSON文件，
@@ -145,6 +146,10 @@ async def refine_all_chunks_with_llm(
         with open(input_chunks_json_path, 'r', encoding='utf-8') as f:
             all_initial_chunks = json.load(f)
         logger.info(f"成功从 '{input_chunks_json_path}' 加载 {len(all_initial_chunks)} 个初始文本块。")
+
+        if limit is not None and limit > 0:
+            logger.warning(f"--- 测试模式：仅处理前 {limit} 个文本块。 ---")
+            all_initial_chunks = all_initial_chunks[:limit]
     except Exception as e:
         logger.error(f"错误：无法加载初始文本块文件 '{input_chunks_json_path}': {e}", exc_info=True)
         return
@@ -246,9 +251,27 @@ async def refine_all_chunks_with_llm(
 
 
 if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description="使用LLM优化文本块")
+    parser.add_argument(
+        '--test-limit', 
+        type=int, 
+        default=0, 
+        help='指定一个正整数N，将只处理输入文件中的前N个块用于测试。默认为0，表示处理所有块。'
+    )
+    args = parser.parse_args()
+
     # 使用 config.py 中定义的路径
     INITIAL_CHUNKS_JSON = os.path.join(config.PROCESSED_DATA_DIR, "processed_knowledge_base_chunks.json")
-    OUTPUT_REFINED_JSON = config.ENHANCED_CHUNKS_JSON_PATH # 输出路径保持不变
+    
+    # 根据是否为测试模式，决定输出文件名
+    if args.test_limit > 0:
+        output_filename = "enhanced_knowledge_base_chunks_llm_TEST.json"
+    else:
+        output_filename = "enhanced_knowledge_base_chunks_llm.json"
+        
+    OUTPUT_REFINED_JSON = os.path.join(config.PROCESSED_DATA_DIR, output_filename)
 
     # 确保输入文件存在
     if not os.path.exists(INITIAL_CHUNKS_JSON):
@@ -256,8 +279,9 @@ if __name__ == '__main__':
     else:
         logger.info(f"输入文件: {INITIAL_CHUNKS_JSON}")
         logger.info(f"输出文件: {OUTPUT_REFINED_JSON}")
-        # 运行主异步函数
-        asyncio.run(refine_all_chunks_with_llm(INITIAL_CHUNKS_JSON, OUTPUT_REFINED_JSON))
-        asyncio.run(refine_all_chunks_with_llm(INPUT_CHUNKS_JSON, OUTPUT_REFINED_JSON))
+        
+        # 运行主异步函数，并传入 limit 参数
+        limit_value = args.test_limit if args.test_limit > 0 else None
+        asyncio.run(refine_all_chunks_with_llm(INITIAL_CHUNKS_JSON, OUTPUT_REFINED_JSON, limit=limit_value))
 
-        logger.info("\n--- LLM 批量块优化流程运行完毕 ---")
+        logger.info(f"\n--- LLM 批量块优化流程运行完毕 --- (测试限制: {args.test_limit if args.test_limit > 0 else '无'})")
