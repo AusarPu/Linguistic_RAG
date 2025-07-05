@@ -211,7 +211,7 @@ if __name__ == '__main__':
 
     # 文本切分参数 (基于字符)
     # 你之前提到："我之前的设置是200~400字，重叠50字"
-    TARGET_CHAR_CHUNK_SIZE = 2000  # 你可以调整在 200-400 之间
+    TARGET_CHAR_CHUNK_SIZE = 1000  # 你可以调整在 200-400 之间
     TARGET_CHAR_OVERLAP = 0
     MIN_CHAR_CHUNK_LENGTH = 10  # 设定一个合适的最小块长度，避免过小的碎块
 
