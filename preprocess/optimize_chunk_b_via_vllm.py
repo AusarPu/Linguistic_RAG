@@ -1,30 +1,26 @@
 import logging
 import os
+import sys
 import time
 import asyncio
 import aiohttp  # 用于异步HTTP请求
 import json
 from typing import Optional, Dict, Any
 
+# 将项目根目录添加到 sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from script import config
+
 # --- 配置日志 ---
-# 你可以根据你的项目调整日志级别和格式
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+config.setup_logging()
 logger = logging.getLogger(__name__)
 
-# --- VLLM 服务和模型配置 (请根据你的实际部署修改这些值) ---
-# 你的 VLLM 服务 API 端点 (通常是 chat/completions)
-VLLM_OPTIMIZER_API_URL = "http://localhost:8001/v1/chat/completions"  # 示例URL，请修改
-# 你在 VLLM 中部署的用于此优化任务的模型名称
-OPTIMIZER_MODEL_NAME = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B-FP8"  # 例如 "Qwen/Qwen1.5-7B-Chat"
-# LLM 生成参数配置
-OPTIMIZER_GENERATION_CONFIG = {
-    "temperature": 0.6,  # 对于编辑和遵循指令的任务，较低的温度通常更好
-    "max_tokens": 5000,  # 需要足够大以容纳优化后的块B，可以基于你块的平均/最大长度设置
-    "top_p": 0.95,      # 其他你可能想控制的参数
-    # "stop": ["\n\n\n"] # 如果需要特定的停止符
-}
-# API 请求超时时间 (秒)
-VLLM_REQUEST_TIMEOUT = 60*30
+# --- VLLM 服务和模型配置 (从 config.py 导入) ---
+VLLM_OPTIMIZER_API_URL = config.GENERATOR_API_URL
+OPTIMIZER_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
+OPTIMIZER_GENERATION_CONFIG = config.GENERATION_CONFIG
+VLLM_REQUEST_TIMEOUT = config.VLLM_REQUEST_TIMEOUT_GENERATION
 
 # --- 优化中心块B的提示词模板 ---
 # 这个提示词要求LLM只返回包含优化后块B文本的JSON对象
@@ -250,18 +246,18 @@ async def refine_all_chunks_with_llm(
 
 
 if __name__ == '__main__':
-    # --- 配置参数 ---
-    INPUT_CHUNKS_JSON = "../processed_knowledge_base/processed_knowledge_base_chunks.json"
-    OUTPUT_REFINED_JSON = "../processed_knowledge_base/refined_knowledge_base_chunks_llm.json"
+    # 使用 config.py 中定义的路径
+    INITIAL_CHUNKS_JSON = os.path.join(config.PROCESSED_DATA_DIR, "processed_knowledge_base_chunks.json")
+    OUTPUT_REFINED_JSON = config.ENHANCED_CHUNKS_JSON_PATH # 输出路径保持不变
 
     # 确保输入文件存在
-    if not os.path.exists(INPUT_CHUNKS_JSON):
-        logger.error(f"错误: 输入文件 '{INPUT_CHUNKS_JSON}' 未找到。请先运行之前的脚本生成初级文本块。")
+    if not os.path.exists(INITIAL_CHUNKS_JSON):
+        logger.error(f"错误: 输入文件 '{INITIAL_CHUNKS_JSON}' 未找到。请确保已运行生成初始块的脚本。")
     else:
+        logger.info(f"输入文件: {INITIAL_CHUNKS_JSON}")
+        logger.info(f"输出文件: {OUTPUT_REFINED_JSON}")
         # 运行主异步函数
-        # 在某些Windows环境下，如果遇到 aiohttp 的 DNS 解析问题，可能需要下面的策略
-        # if os.name == 'nt':
-        # asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        asyncio.run(refine_all_chunks_with_llm(INITIAL_CHUNKS_JSON, OUTPUT_REFINED_JSON))
         asyncio.run(refine_all_chunks_with_llm(INPUT_CHUNKS_JSON, OUTPUT_REFINED_JSON))
 
         logger.info("\n--- LLM 批量块优化流程运行完毕 ---")
