@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 import sys
 import time
 import asyncio
@@ -19,8 +20,11 @@ logger = logging.getLogger(__name__)
 # --- VLLM 服务和模型配置 (从 config.py 导入) ---
 VLLM_OPTIMIZER_API_URL = config.GENERATOR_API_URL
 OPTIMIZER_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
-OPTIMIZER_GENERATION_CONFIG = config.GENERATION_CONFIG
-VLLM_REQUEST_TIMEOUT = config.VLLM_REQUEST_TIMEOUT_GENERATION
+OPTIMIZER_GENERATION_CONFIG = config.GENERATOR_RAG_CONFIG
+# 使用config.py中的新超时配置
+VLLM_REQUEST_TIMEOUT_SINGLE = config.VLLM_REQUEST_TIMEOUT_SINGLE
+VLLM_REQUEST_TIMEOUT_TOTAL = config.VLLM_REQUEST_TIMEOUT_TOTAL
+OPTIMIZATION_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
 
 # --- 优化中心块B的提示词模板 ---
 # 这个提示词要求LLM只返回包含优化后块B文本的JSON对象
@@ -141,7 +145,7 @@ async def refine_all_chunks_with_llm(
     try:
         with open(input_chunks_json_path, 'r', encoding='utf-8') as f:
             all_initial_chunks = json.load(f)
-        logger.info(f"成功从 '{input_chunks_json_path}' 加载 {len(all_initial_chunks)} 个初始文本块。")
+        logger.warning(f"成功从 '{input_chunks_json_path}' 加载 {len(all_initial_chunks)} 个初始文本块。")
 
         if limit is not None and limit > 0:
             logger.warning(f"--- 测试模式：仅处理前 {limit} 个文本块。 ---")
@@ -166,10 +170,21 @@ async def refine_all_chunks_with_llm(
 
     # --- 核心数据结构：用于存储所有优化结果，键为 chunk_id ---
     optimized_chunks_map = {}
+    
+    # 记录整体流程开始时间
+    overall_start_time = time.time()
+    logger.warning(f"开始整体优化流程，总体超时限制: {VLLM_REQUEST_TIMEOUT_TOTAL}秒 ({VLLM_REQUEST_TIMEOUT_TOTAL/3600:.1f}小时)")
+    logger.warning(f"单个块优化超时限制: {VLLM_REQUEST_TIMEOUT_SINGLE}秒 ({VLLM_REQUEST_TIMEOUT_SINGLE/60:.1f}分钟)")
+    logger.warning(f"分批处理大小: {OPTIMIZATION_BATCH_SIZE}")
+    
+    # 增量写入：创建临时输出文件
+    temp_output_path = output_refined_chunks_json_path + ".tmp"
+    processed_chunks_count = 0
 
-    timeout = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT)
-    connector = aiohttp.TCPConnector(limit=400)
-    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+    # 为单个请求创建超时配置
+    single_timeout = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT_SINGLE)
+    connector = aiohttp.TCPConnector(limit=1000)
+    async with aiohttp.ClientSession(timeout=single_timeout, connector=connector) as session:
         all_tasks_info = []
         # --- 阶段1: 创建所有需要处理的任务 --- 
         for doc_name, original_doc_chunks in chunks_by_doc.items():
@@ -185,16 +200,33 @@ async def refine_all_chunks_with_llm(
                     'retry_count': 0
                 })
 
-        # --- 阶段2: 带重试逻辑的并发处理 ---
+        # --- 阶段2: 带重试逻辑的分批并发处理 ---
         tasks_to_process = all_tasks_info
         while tasks_to_process:
-            current_batch_info = tasks_to_process
-            tasks_to_process = [] # 为下一轮重试准备
+            # 检查总体超时
+            elapsed_time = time.time() - overall_start_time
+            if elapsed_time > VLLM_REQUEST_TIMEOUT_TOTAL:
+                logger.warning(f"达到总体超时限制 {VLLM_REQUEST_TIMEOUT_TOTAL}秒，已处理时间: {elapsed_time:.2f}秒")
+                logger.warning(f"剩余 {len(tasks_to_process)} 个任务将被跳过")
+                break
+            
+            # 分批处理
+            current_batch_info = tasks_to_process[:OPTIMIZATION_BATCH_SIZE]
+            tasks_to_process = tasks_to_process[OPTIMIZATION_BATCH_SIZE:] # 剩余任务
+            retry_tasks = [] # 当前批次的重试任务
 
+            logger.warning(f"处理批次: {len(current_batch_info)} 个任务，剩余: {len(tasks_to_process)} 个任务")
+            logger.warning(f"已用时间: {elapsed_time:.2f}秒，剩余时间: {VLLM_REQUEST_TIMEOUT_TOTAL - elapsed_time:.2f}秒")
+            
             tasks = []
             for task_info in current_batch_info:
                 request_id = f"{task_info['doc_name']}_{task_info['chunk_b']['chunk_id']}_retry{task_info['retry_count']}"
-                logger.info(f"  准备LLM优化任务 for chunk_id: {task_info['chunk_b']['chunk_id']} (尝试: {task_info['retry_count'] + 1})")
+                logger.debug(f"  准备LLM优化任务 for chunk_id: {task_info['chunk_b']['chunk_id']} (尝试: {task_info['retry_count'] + 1})")
+                
+                # 记录单个任务开始时间
+                task_start_time = time.time()
+                task_info['start_time'] = task_start_time
+                
                 tasks.append(optimize_chunk_b_via_vllm(
                     task_info['chunk_a']['text'],
                     task_info['chunk_b']['text'],
@@ -213,9 +245,12 @@ async def refine_all_chunks_with_llm(
                 task_info = current_batch_info[i]
                 original_chunk_b = task_info['chunk_b']
                 chunk_id = original_chunk_b['chunk_id']
-
+                
+                # 计算单个任务耗时
+                task_duration = time.time() - task_info.get('start_time', time.time())
+                
                 if isinstance(result_or_exc, Exception):
-                    logger.error(f"  LLM优化块 '{chunk_id}' 时发生异常: {result_or_exc}")
+                    logger.critical(f"  LLM优化块 '{chunk_id}' 时发生异常 (耗时: {task_duration:.2f}秒): {result_or_exc}")
                     continue # 异常情况不重试，直接跳过
 
                 status = result_or_exc.get("status")
@@ -224,16 +259,39 @@ async def refine_all_chunks_with_llm(
                     refined_chunk['text'] = result_or_exc["text"]
                     optimized_chunks_map[chunk_id] = refined_chunk
                     total_successful_optimizations += 1
-                    logger.info(f"  块 '{chunk_id}' 文本已由LLM更新。")
+                    processed_chunks_count += 1
+                    logger.info(f"  块 '{chunk_id}' 文本已由LLM更新 (耗时: {task_duration:.2f}秒)")
                 elif status == "json_decode_error" and task_info['retry_count'] < MAX_RETRIES:
-                    logger.warning(f"  块 '{chunk_id}' 解析失败，将重试。内容: '{result_or_exc.get('content', '')[:100]}...'")
+                    logger.error(f"  块 '{chunk_id}' 解析失败，将重试 (耗时: {task_duration:.2f}秒)。内容: '{result_or_exc.get('content', '')[:100]}...'")
                     task_info['retry_count'] += 1
-                    tasks_to_process.append(task_info)
+                    retry_tasks.append(task_info)
                 else:
                     if status == "json_decode_error":
-                        logger.error(f"  块 '{chunk_id}' 达到最大重试次数，放弃优化。")
+                        logger.critical(f"  块 '{chunk_id}' 达到最大重试次数，放弃优化 (耗时: {task_duration:.2f}秒)")
                     else:
-                        logger.warning(f"  LLM优化块 '{chunk_id}' 未返回有效文本 (status: {status}), 保留原始文本。")
+                        logger.error(f"  LLM优化块 '{chunk_id}' 未返回有效文本 (status: {status}, 耗时: {task_duration:.2f}秒), 保留原始文本")
+            
+            # 将重试任务添加到待处理队列的开头（优先处理重试）
+            tasks_to_process = retry_tasks + tasks_to_process
+            
+            # 增量写入：每个批次完成后保存当前进度
+            if processed_chunks_count > 0:
+                try:
+                    # 按原始顺序重建当前已处理的结果
+                    current_refined_chunks_list = []
+                    for chunk in all_initial_chunks:
+                        chunk_id = chunk['chunk_id']
+                        if chunk_id in optimized_chunks_map:
+                            current_refined_chunks_list.append(optimized_chunks_map[chunk_id])
+                        else:
+                            current_refined_chunks_list.append(chunk)
+                    
+                    # 写入临时文件
+                    with open(temp_output_path, 'w', encoding='utf-8') as temp_file:
+                        json.dump(current_refined_chunks_list, temp_file, ensure_ascii=False, indent=2)
+                    logger.debug(f"增量保存进度：已处理 {processed_chunks_count} 个块到临时文件")
+                except Exception as e:
+                    logger.error(f"增量写入临时文件失败: {e}")
 
     # --- 阶段3: 按原始顺序重建最终列表 --- 
     final_refined_chunks_list = []
@@ -244,16 +302,34 @@ async def refine_all_chunks_with_llm(
         else:
             final_refined_chunks_list.append(chunk)
 
-    logger.info(
+    # 计算总体处理时间
+    total_elapsed_time = time.time() - overall_start_time
+    
+    logger.warning(
         f"\n所有文档LLM块优化处理完成。总共尝试优化 {total_llm_calls} 个块，成功优化 {total_successful_optimizations} 个。")
-    logger.info(f"最终总块数为: {len(final_refined_chunks_list)}")
+    logger.warning(f"最终总块数为: {len(final_refined_chunks_list)}")
+    logger.warning(f"总体处理时间: {total_elapsed_time:.2f}秒 ({total_elapsed_time/60:.1f}分钟)")
+    logger.warning(f"平均每个块处理时间: {total_elapsed_time/max(total_llm_calls, 1):.2f}秒")
+    logger.warning(f"成功率: {total_successful_optimizations/max(total_llm_calls, 1)*100:.1f}%")
 
     try:
-        with open(output_refined_chunks_json_path, 'w', encoding='utf-8') as outfile:
-            json.dump(final_refined_chunks_list, outfile, ensure_ascii=False, indent=2)
-        logger.info(f"所有优化后的文本块已保存到: '{output_refined_chunks_json_path}'")
+        # 最终写入：从临时文件移动到正式文件
+        if os.path.exists(temp_output_path):
+            shutil.move(temp_output_path, output_refined_chunks_json_path)
+            logger.info(f"所有优化后的文本块已从临时文件移动到: '{output_refined_chunks_json_path}'")
+        else:
+            # 如果临时文件不存在，使用传统方式写入
+            with open(output_refined_chunks_json_path, 'w', encoding='utf-8') as outfile:
+                json.dump(final_refined_chunks_list, outfile, ensure_ascii=False, indent=2)
+            logger.info(f"所有优化后的文本块已保存到: '{output_refined_chunks_json_path}'")
     except Exception as e:
-        logger.error(f"保存优化后的块到 JSON 文件 '{output_refined_chunks_json_path}' 时发生错误: {e}", exc_info=True)
+        logger.critical(f"保存优化后的块到 JSON 文件 '{output_refined_chunks_json_path}' 时发生错误: {e}", exc_info=True)
+        # 尝试清理临时文件
+        try:
+            if os.path.exists(temp_output_path):
+                os.remove(temp_output_path)
+        except:
+            pass
 
 
 if __name__ == '__main__':
@@ -263,7 +339,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--test-limit', 
         type=int, 
-        default=0, 
+        default=2000, 
         help='指定一个正整数N，将只处理输入文件中的前N个块用于测试。默认为0，表示处理所有块。'
     )
     args = parser.parse_args()
@@ -281,13 +357,13 @@ if __name__ == '__main__':
 
     # 确保输入文件存在
     if not os.path.exists(INITIAL_CHUNKS_JSON):
-        logger.error(f"错误: 输入文件 '{INITIAL_CHUNKS_JSON}' 未找到。请确保已运行生成初始块的脚本。")
+        logger.critical(f"错误: 输入文件 '{INITIAL_CHUNKS_JSON}' 未找到。请确保已运行生成初始块的脚本。")
     else:
-        logger.info(f"输入文件: {INITIAL_CHUNKS_JSON}")
-        logger.info(f"输出文件: {OUTPUT_REFINED_JSON}")
+        logger.warning(f"输入文件: {INITIAL_CHUNKS_JSON}")
+        logger.warning(f"输出文件: {OUTPUT_REFINED_JSON}")
         
         # 运行主异步函数，并传入 limit 参数
         limit_value = args.test_limit if args.test_limit > 0 else None
         asyncio.run(refine_all_chunks_with_llm(INITIAL_CHUNKS_JSON, OUTPUT_REFINED_JSON, limit=limit_value))
 
-        logger.info(f"\n--- LLM 批量块优化流程运行完毕 --- (测试限制: {args.test_limit if args.test_limit > 0 else '无'})")
+        logger.warning(f"\n--- LLM 批量块优化流程运行完毕 --- (测试限制: {args.test_limit if args.test_limit > 0 else '无'})")

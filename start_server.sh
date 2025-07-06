@@ -113,29 +113,30 @@ else
     echo "    显存限制: ${REWRITER_GPU_MEM_UTILIZATION:-默认}"
     echo "    张量并行数: ${REWRITER_TENSOR_PARALLEL_SIZE}"
 
-    REWRITER_MEM_ARG=""
+    # 使用 bash 数组来安全地构建命令
+    REWRITER_CMD_ARRAY=(
+        vllm serve "$REWRITER_BASE_MODEL_PATH"
+        --port "$REWRITER_PORT"
+        --trust-remote-code
+        --disable-log-requests
+        --max-model-len 40960
+        --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
+        --max_num_seqs 2048
+        --quantization fp8
+        --enable-reasoning --reasoning-parser deepseek_r1
+        # --rope-scaling '{"rope_type": "yarn", "factor": 2.0, "original_max_position_embeddings": 32768}' \
+    )
+
+    # 有条件地添加内存参数
     if [ ! -z "$REWRITER_GPU_MEM_UTILIZATION" ] && [ "$REWRITER_GPU_MEM_UTILIZATION" != "None" ]; then
-      REWRITER_MEM_ARG="--gpu-memory-utilization $REWRITER_GPU_MEM_UTILIZATION"
+      REWRITER_CMD_ARRAY+=(--gpu-memory-utilization "$REWRITER_GPU_MEM_UTILIZATION")
     fi
-
-    # 构建 vLLM 命令
-    REWRITER_CMD="vllm serve \"$REWRITER_BASE_MODEL_PATH\""
-    REWRITER_CMD="$REWRITER_CMD --port $REWRITER_PORT"
-    REWRITER_CMD="$REWRITER_CMD --trust-remote-code"
-    REWRITER_CMD="$REWRITER_CMD $REWRITER_MEM_ARG"
-    REWRITER_CMD="$REWRITER_CMD --disable-log-requests"
-    REWRITER_CMD="$REWRITER_CMD --max_model_len 40960"
-    REWRITER_CMD="$REWRITER_CMD --tensor-parallel-size $REWRITER_TENSOR_PARALLEL_SIZE"
-    REWRITER_CMD="$REWRITER_CMD --max_num_seqs 2048"
-    REWRITER_CMD="$REWRITER_CMD --enable-reasoning --reasoning-parser deepseek_r1"
-    # 如果需要 LoRA，取消以下行的注释并确保配置正确
-    # REWRITER_CMD="$REWRITER_CMD --enable-lora --lora-modules ${REWRITER_LORA_NAME}=${REWRITER_LORA_PATH} --max-loras 1 --max-lora-rank ${REWRITER_MAX_LORA_RANK}"
-
-    # 使用 nohup 和 bash -c 来正确处理后台和 CUDA_VISIBLE_DEVICES
-    (nohup bash -c "export CUDA_VISIBLE_DEVICES='${REWRITER_GPU_ID}'; exec $REWRITER_CMD" > "$REWRITER_LOG" 2>&1 & echo $! > "$REWRITER_PID_FILE")
+    
+    # 使用 nohup 和正确的变量展开来启动服务
+    (export CUDA_VISIBLE_DEVICES=${REWRITER_GPU_ID}; nohup "${REWRITER_CMD_ARRAY[@]}" > "$REWRITER_LOG" 2>&1 & echo $! > "$REWRITER_PID_FILE")
     echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_LOG"
     echo "    等待 Rewriter 服务启动 (约30-60秒)..."
-    sleep 5 # 简短等待，实际启动时间可能更长
+    sleep 5
 fi
 
 # --- 启动 Reranker vLLM 服务 ---
@@ -143,21 +144,31 @@ if [ -z "$RERANKER_MODEL_PATH" ] || [ -z "$RERANKER_PORT" ]; then
     echo "错误: Reranker 服务配置不完整 (模型路径或端口缺失)，跳过启动。" >&2
 else
     echo ">>> 正在后台启动 Reranker vLLM 服务..."
-    echo "    模型: $RERANKER_MODEL_PATH"
+    echo "    模型路径: $RERANKER_MODEL_PATH"
     echo "    端口: $RERANKER_PORT"
     echo "    分配 GPU: ${RERANKER_GPU_ID:-默认所有可见GPU}"
+    echo "    显存限制: ${RERANKER_MEM_UTILIZATION:-默认}"
 
-    # 构建 vLLM 命令
-    RERANKER_CMD="vllm serve \"$RERANKER_MODEL_PATH\""
-    RERANKER_CMD="$RERANKER_CMD --port $RERANKER_PORT"
-    RERANKER_CMD="$RERANKER_CMD --trust-remote-code"
-    RERANKER_CMD="$RERANKER_CMD --disable-log-requests"
-    RERANKER_CMD="$RERANKER_CMD --dtype auto"
+    # 使用 bash 数组来安全地构建命令
+    RERANKER_CMD_ARRAY=(
+        vllm serve "$RERANKER_MODEL_PATH"
+        --port "$RERANKER_PORT"
+        --trust-remote-code
+        --disable-log-requests
+        --max-model-len 8192
+        --max_num_seqs 1024
+    )
 
-    (nohup bash -c "export CUDA_VISIBLE_DEVICES='${RERANKER_GPU_ID}'; exec $RERANKER_CMD" > "$RERANKER_LOG" 2>&1 & echo $! > "$RERANKER_PID_FILE")
+    # 有条件地添加内存参数
+    if [ ! -z "$RERANKER_MEM_UTILIZATION" ] && [ "$RERANKER_MEM_UTILIZATION" != "None" ]; then
+      RERANKER_CMD_ARRAY+=(--gpu-memory-utilization "$RERANKER_MEM_UTILIZATION")
+    fi
+    
+    # 使用 nohup 和正确的变量展开来启动服务
+    (export CUDA_VISIBLE_DEVICES=${RERANKER_GPU_ID}; nohup "${RERANKER_CMD_ARRAY[@]}" > "$RERANKER_LOG" 2>&1 & echo $! > "$RERANKER_PID_FILE")
     echo "    Reranker 服务 PID: $(cat "$RERANKER_PID_FILE")，日志: $RERANKER_LOG"
-    echo "    等待 Reranker 服务启动 (约15-30秒)..."
-    sleep 5 # 简短等待
+    echo "    等待 Reranker 服务启动 (约30-60秒)..."
+    sleep 5
 fi
 
 # --- 启动 Gradio Web UI (前台运行) ---
