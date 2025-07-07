@@ -5,7 +5,7 @@ import os
 import sys
 
 # --- 日志配置 (保持不变) ---
-LOG_LEVEL = logging.DEBUG
+LOG_LEVEL = logging.WARNING
 LOG_FORMAT = '%(asctime)s.%(msecs)03d - %(levelname)s - %(name)s - %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 # --------------------------
@@ -121,9 +121,9 @@ VLLM_REQUEST_TIMEOUT = 60.0                 # 通用请求超时 (例如用于 R
 VLLM_REQUEST_TIMEOUT_GENERATION = 300.0     # 为生成答案设置更长的超时时间
 
 # --- 块优化专用超时配置 ---
-VLLM_REQUEST_TIMEOUT_SINGLE = 120          # 超时B：单个块优化超时
+VLLM_REQUEST_TIMEOUT_SINGLE = 60*3          # 超时B：单个块优化超时
 VLLM_REQUEST_TIMEOUT_TOTAL = 3600*8         # 超时A：整体流程超时(8小时)
-OPTIMIZATION_BATCH_SIZE = 50                # 分批处理大小
+OPTIMIZATION_BATCH_SIZE = 250                # 分批处理大小
 
 # --- 日志配置函数 (方便在其他地方统一设置) ---
 def setup_logging():

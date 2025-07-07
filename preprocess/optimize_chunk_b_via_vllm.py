@@ -7,6 +7,7 @@ import asyncio
 import aiohttp  # 用于异步HTTP请求
 import json
 from typing import Optional, Dict, Any
+from collections import defaultdict
 
 # 将项目根目录添加到 sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,6 +26,49 @@ OPTIMIZER_GENERATION_CONFIG = config.GENERATOR_RAG_CONFIG
 VLLM_REQUEST_TIMEOUT_SINGLE = config.VLLM_REQUEST_TIMEOUT_SINGLE
 VLLM_REQUEST_TIMEOUT_TOTAL = config.VLLM_REQUEST_TIMEOUT_TOTAL
 OPTIMIZATION_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
+
+# --- 元数据生成配置 ---
+VLLM_METADATA_API_URL = config.GENERATOR_API_URL
+METADATA_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
+METADATA_GENERATION_CONFIG = {
+    "temperature": 0.4,  # 对于信息提取和遵循指令，较低的温度可能更好
+    "max_tokens": 4096,  # 需要足够容纳关键词、问题和JSON结构
+    # "response_format": {"type": "json_object"} # 如果VLLM和模型支持，强烈建议使用
+}
+METADATA_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
+
+# --- LLM提示词模板：为单个块生成元数据并判断意义 ---
+METADATA_GENERATION_PROMPT_TEMPLATE = """你是一位专业的知识分析和信息提取专家。
+我将提供一段文本（一个文本块）。请你基于这段文本内容完成以下任务：
+
+1.  **评估内容意义**：
+    * 首先，请判断该文本块是否包含实质性的、有意义的、适合用于构建问答知识库的信息。
+    * 如果文本块内容非常稀疏、几乎没有信息量（例如，可能只是页眉、页脚、孤立的图表编号、空白内容，或非常零碎以至于无法理解的片段），请在返回结果中指明。
+
+2.  **关键词摘要提取 (如果文本块有意义)**：
+    * 提取或生成若干（例如，1到5个，不必强求数量，质量优先）最能概括该文本块核心内容的"关键词摘要"或"标签"。
+    * 每个关键词摘要应该简短精炼，方便作为标签查找，或者其他能准确捕捉核心概念的短语组合。
+    * 关键词应该是全局通用的，不应该出现类似``这本书``，``本书作者``这类，而应该明确这本书是什么，作者是什么，便于以后查找
+    * 如果文本块评估为无实质意义，则关键词摘要列表应为空。
+
+3.  **预生成相关问题 (如果文本块有意义)**：
+    * 根据该文本块的内容，生成若干（例如，1到3个，不必强求数量，质量优先）用户最有可能提出的、并且该文本块能够清晰、直接回答的高质量问题。
+    * 生成的问题应该是全局通用的，不应该出现类似``这本书``，``本书作者``这类，而应该明确这本书是什么，作者是什么，便于以后查找
+    * 如果文本块评估为无实质意义，则生成问题列表应为空。
+
+请将你的结果以严格的JSON格式返回，包含以下字段：
+- "is_meaningful": 布尔值 (true 表示有意义，false 表示无实质意义应考虑丢弃)。
+- "reason_if_not_meaningful": 字符串，如果 "is_meaningful" 为 false，请简要说明原因 (例如："仅包含页眉", "内容过短且无信息")。如果 "is_meaningful" 为 true，此字段可为空字符串。
+- "keyword_summaries": 一个包含所提取/生成的关键词摘要字符串的列表。如果 "is_meaningful" 为 false，此列表必须为空。
+- "generated_questions": 一个包含所生成的问句字符串的列表。如果 "is_meaningful" 为 false，此列表必须为空。
+
+确保JSON格式正确，所有字符串值内部的特殊字符（如换行符、双引号）都已正确转义。不要包含任何其他解释或对话。
+
+提供的文本块如下：
+```
+{text_chunk_content}
+```
+"""
 
 # --- 优化中心块B的提示词模板 ---
 # 这个提示词要求LLM只返回包含优化后块B文本的JSON对象
@@ -57,6 +101,107 @@ CHUNK_OPTIMIZATION_PROMPT_TEMPLATE = """
   "optimized_chunk_B_text": "这里是优化后的块B的文本内容..."
 }}
 """
+
+
+async def generate_metadata_for_chunk_via_vllm(text_chunk_content, max_retries=3):
+    """
+    异步调用VLLM API为单个文本块生成元数据（关键词摘要和相关问题）。
+    
+    Args:
+        text_chunk_content (str): 文本块内容
+        max_retries (int): 最大重试次数，默认为3
+    
+    Returns:
+        dict: 包含状态和数据的字典
+            成功时: {'status': 'success', 'data': {...}}
+            失败时: {'status': 'failed', 'reason': '...', 'content': '...'}
+    """
+    if not text_chunk_content or not text_chunk_content.strip():
+        return {
+            'status': 'success',
+            'data': {
+                'is_meaningful': False,
+                'reason_if_not_meaningful': '文本块为空或仅包含空白字符',
+                'keyword_summaries': [],
+                'generated_questions': []
+            }
+        }
+    
+    # 构建请求数据
+    prompt = METADATA_GENERATION_PROMPT_TEMPLATE.format(text_chunk_content=text_chunk_content)
+    request_data = {
+        "model": METADATA_MODEL_NAME,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        **METADATA_GENERATION_CONFIG
+    }
+    
+    last_exception = None
+    
+    for attempt in range(max_retries):
+        try:
+            # 使用单次请求超时
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT_SINGLE)) as session:
+                async with session.post(VLLM_METADATA_API_URL, json=request_data) as response:
+                    if response.status == 200:
+                        response_data = await response.json()
+                        
+                        # 提取LLM生成的内容
+                        if 'choices' in response_data and len(response_data['choices']) > 0:
+                            content = response_data['choices'][0]['message']['content'].strip()
+                            
+                            try:
+                                # 尝试解析JSON
+                                metadata = json.loads(content)
+                                
+                                # 验证必需字段
+                                required_fields = ['is_meaningful', 'reason_if_not_meaningful', 'keyword_summaries', 'generated_questions']
+                                if all(field in metadata for field in required_fields):
+                                    return {'status': 'success', 'data': metadata}
+                                else:
+                                    missing_fields = [field for field in required_fields if field not in metadata]
+                                    raise ValueError(f"响应缺少必需字段: {missing_fields}")
+                                    
+                            except json.JSONDecodeError as e:
+                                raise ValueError(f"无法解析JSON响应: {e}, 内容: {content[:200]}...")
+                        else:
+                            raise ValueError("API响应格式异常：缺少choices字段")
+                    else:
+                        error_text = await response.text()
+                        raise aiohttp.ClientResponseError(
+                            request_info=response.request_info,
+                            history=response.history,
+                            status=response.status,
+                            message=f"HTTP {response.status}: {error_text[:200]}"
+                        )
+                        
+        except asyncio.TimeoutError as e:
+            last_exception = f"请求超时 (尝试 {attempt + 1}/{max_retries}): {str(e)}"
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # 指数退避
+                await asyncio.sleep(wait_time)
+                continue
+        except aiohttp.ClientResponseError as e:
+            last_exception = f"HTTP错误 (尝试 {attempt + 1}/{max_retries}): {str(e)}"
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                await asyncio.sleep(wait_time)
+                continue
+        except Exception as e:
+            last_exception = f"其他错误 (尝试 {attempt + 1}/{max_retries}): {str(e)}"
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                await asyncio.sleep(wait_time)
+                continue
+    
+    # 所有重试都失败了
+    logging.error(f"元数据生成失败，已重试{max_retries}次: {last_exception}")
+    return {
+        'status': 'failed',
+        'reason': last_exception,
+        'content': text_chunk_content[:200] + '...' if len(text_chunk_content) > 200 else text_chunk_content
+    }
 
 
 async def optimize_chunk_b_via_vllm(
@@ -131,6 +276,86 @@ async def optimize_chunk_b_via_vllm(
 # -----------------------------------------------------------------------------
 # 主编排函数：加载初级块，异步使用LLM通过滑动窗口优化中心块
 # -----------------------------------------------------------------------------
+async def process_metadata_batch(chunks_batch):
+    """
+    批量处理文本块的元数据生成。
+    
+    Args:
+        chunks_batch (list): 文本块列表
+    
+    Returns:
+        tuple: (成功数量, 有意义数量, 无意义数量, 失败数量, 处理结果列表)
+    """
+    tasks = []
+    for chunk in chunks_batch:
+        text_content = chunk.get('text', '').strip()
+        if not text_content:
+            # 空文本块直接标记为无意义
+            async def empty_result():
+                return {
+                    'status': 'success',
+                    'data': {
+                        'is_meaningful': False,
+                        'reason_if_not_meaningful': '文本块为空',
+                        'keyword_summaries': [],
+                        'generated_questions': []
+                    }
+                }
+            tasks.append(empty_result())
+        else:
+            tasks.append(generate_metadata_for_chunk_via_vllm(text_content))
+    
+    # 并发执行所有任务
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=VLLM_REQUEST_TIMEOUT_TOTAL)
+    except asyncio.TimeoutError:
+        logging.error(f"批次处理超时 ({VLLM_REQUEST_TIMEOUT_TOTAL}秒)")
+        results = [{'status': 'failed', 'reason': '批次处理超时', 'content': ''} for _ in tasks]
+    
+    # 统计和处理结果
+    success_count = 0
+    meaningful_count = 0
+    not_meaningful_count = 0
+    failed_count = 0
+    processed_chunks = []
+    
+    for i, (chunk, result) in enumerate(zip(chunks_batch, results)):
+        try:
+            if isinstance(result, Exception):
+                # 处理异常情况
+                logging.error(f"块 {chunk.get('chunk_id', i)} 处理异常: {result}")
+                failed_count += 1
+                continue
+            
+            if result['status'] == 'success':
+                success_count += 1
+                metadata = result['data']
+                
+                if metadata['is_meaningful']:
+                    meaningful_count += 1
+                    # 为有意义的块添加元数据
+                    enhanced_chunk = chunk.copy()
+                    enhanced_chunk.update({
+                        'keyword_summaries': metadata['keyword_summaries'],
+                        'generated_questions': metadata['generated_questions'],
+                        'is_meaningful': True
+                    })
+                    processed_chunks.append(enhanced_chunk)
+                else:
+                    not_meaningful_count += 1
+                    # 记录无意义的块但不添加到最终结果
+                    logging.info(f"块 {chunk.get('chunk_id', i)} 被判定为无意义: {metadata.get('reason_if_not_meaningful', '未知原因')}")
+            else:
+                failed_count += 1
+                logging.error(f"块 {chunk.get('chunk_id', i)} 元数据生成失败: {result.get('reason', '未知错误')}")
+                
+        except Exception as e:
+            logging.error(f"处理块 {chunk.get('chunk_id', i)} 结果时发生异常: {e}")
+            failed_count += 1
+    
+    return success_count, meaningful_count, not_meaningful_count, failed_count, processed_chunks
+
+
 async def refine_all_chunks_with_llm(
         input_chunks_json_path: str,
         output_refined_chunks_json_path: str,
@@ -332,38 +557,161 @@ async def refine_all_chunks_with_llm(
             pass
 
 
+async def enhance_chunks_with_llm_metadata(input_chunks_json_path, output_chunks_json_path, test_limit=None):
+    """
+    主编排函数：为文本块生成元数据（关键词摘要和相关问题），并筛选有意义的块。
+    
+    Args:
+        input_chunks_json_path (str): 输入的文本块JSON文件路径
+        output_chunks_json_path (str): 输出的增强文本块JSON文件路径
+        test_limit (int, optional): 测试模式下限制处理的块数量
+    """
+    import time
+    import os
+    
+    # 加载初始文本块
+    logging.warning(f"正在加载初始文本块: {input_chunks_json_path}")
+    with open(input_chunks_json_path, 'r', encoding='utf-8') as f:
+        initial_chunks = json.load(f)
+    
+    total_chunks = len(initial_chunks)
+    logging.warning(f"加载了 {total_chunks} 个初始文本块")
+    
+    # 应用测试限制
+    if test_limit and test_limit < total_chunks:
+        initial_chunks = initial_chunks[:test_limit]
+        logging.warning(f"测试模式：限制处理 {test_limit} 个文本块")
+    
+    # 设置增量写入的临时文件
+    temp_output_path = output_chunks_json_path + '.tmp'
+    
+    # 初始化统计信息
+    total_success = 0
+    total_meaningful = 0
+    total_not_meaningful = 0
+    total_failed = 0
+    all_enhanced_chunks = []
+    
+    start_time = time.time()
+    
+    # 分批处理
+    for batch_start in range(0, len(initial_chunks), METADATA_BATCH_SIZE):
+        batch_end = min(batch_start + METADATA_BATCH_SIZE, len(initial_chunks))
+        current_batch = initial_chunks[batch_start:batch_end]
+        
+        logging.warning(f"处理批次 {batch_start//METADATA_BATCH_SIZE + 1}: 块 {batch_start+1}-{batch_end} (共 {len(current_batch)} 个)")
+        
+        # 处理当前批次
+        batch_success, batch_meaningful, batch_not_meaningful, batch_failed, batch_enhanced = await process_metadata_batch(current_batch)
+        
+        # 更新统计信息
+        total_success += batch_success
+        total_meaningful += batch_meaningful
+        total_not_meaningful += batch_not_meaningful
+        total_failed += batch_failed
+        
+        # 将处理结果添加到总列表
+        all_enhanced_chunks.extend(batch_enhanced)
+        
+        # 增量写入临时文件
+        with open(temp_output_path, 'w', encoding='utf-8') as f:
+            json.dump(all_enhanced_chunks, f, ensure_ascii=False, indent=2)
+        
+        logging.warning(f"批次完成 - 成功: {batch_success}, 有意义: {batch_meaningful}, 无意义: {batch_not_meaningful}, 失败: {batch_failed}")
+        
+        # 检查是否达到处理上限
+        if test_limit and len(all_enhanced_chunks) >= test_limit:
+            logging.warning(f"已达到测试限制 {test_limit}，停止处理")
+            break
+    
+    # 最终统计和保存
+    end_time = time.time()
+    processing_time = end_time - start_time
+    
+    logging.critical(f"元数据生成完成！")
+    logging.critical(f"总处理时间: {processing_time:.2f} 秒")
+    logging.critical(f"总块数: {len(initial_chunks)}, 成功: {total_success}, 有意义: {total_meaningful}, 无意义: {total_not_meaningful}, 失败: {total_failed}")
+    logging.critical(f"最终保留的有意义块数: {len(all_enhanced_chunks)}")
+    
+    # 将临时文件移动到最终位置
+    if os.path.exists(temp_output_path):
+        os.rename(temp_output_path, output_chunks_json_path)
+        logging.critical(f"结果已保存到: {output_chunks_json_path}")
+    else:
+        logging.error(f"临时文件不存在: {temp_output_path}")
+
+
 if __name__ == '__main__':
     import argparse
-
-    parser = argparse.ArgumentParser(description="使用LLM优化文本块")
-    parser.add_argument(
-        '--test-limit', 
-        type=int, 
-        default=2000, 
-        help='指定一个正整数N，将只处理输入文件中的前N个块用于测试。默认为0，表示处理所有块。'
-    )
-    args = parser.parse_args()
-
-    # 使用 config.py 中定义的路径
-    INITIAL_CHUNKS_JSON = os.path.join(config.PROCESSED_DATA_DIR, "processed_knowledge_base_chunks.json")
     
-    # 根据是否为测试模式，决定输出文件名
-    if args.test_limit > 0:
-        output_filename = "enhanced_knowledge_base_chunks_llm_TEST.json"
-    else:
-        output_filename = "enhanced_knowledge_base_chunks_llm.json"
+    parser = argparse.ArgumentParser(description="使用VLLM优化文本块或生成元数据")
+    parser.add_argument("mode", nargs='?', choices=["optimize", "metadata", "pipeline"], default="pipeline", help="运行模式：optimize=优化文本块，metadata=生成元数据，pipeline=完整流水线（默认）")
+    parser.add_argument("input_file", nargs='?', help="输入的JSON文件路径")
+    parser.add_argument("output_file", nargs='?', help="输出的JSON文件路径")
+    parser.add_argument("--test-limit", type=int, default=50, help="测试模式：限制处理的文档/块数量（默认：50）")
+    
+    args = parser.parse_args()
+    
+    # 设置日志级别
+    logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    # 默认流水线模式：从processed_knowledge_base_chunks.json开始完整处理
+    if args.mode == "pipeline":
+        # 使用默认路径
+        input_chunks_path = os.path.join(config.PROCESSED_DATA_DIR, "processed_knowledge_base_chunks.json")
+        optimized_chunks_path = os.path.join(config.PROCESSED_DATA_DIR, "optimized_knowledge_base_chunks.json")
+        enhanced_chunks_path = os.path.join(config.PROCESSED_DATA_DIR, "enhanced_knowledge_base_chunks_llm.json")
         
-    OUTPUT_REFINED_JSON = os.path.join(config.PROCESSED_DATA_DIR, output_filename)
-
-    # 确保输入文件存在
-    if not os.path.exists(INITIAL_CHUNKS_JSON):
-        logger.critical(f"错误: 输入文件 '{INITIAL_CHUNKS_JSON}' 未找到。请确保已运行生成初始块的脚本。")
-    else:
-        logger.warning(f"输入文件: {INITIAL_CHUNKS_JSON}")
-        logger.warning(f"输出文件: {OUTPUT_REFINED_JSON}")
+        # 检查输入文件是否存在
+        if not os.path.exists(input_chunks_path):
+            logging.critical(f"错误: 输入文件 '{input_chunks_path}' 未找到。请确保已运行生成初始块的脚本。")
+            exit(1)
         
-        # 运行主异步函数，并传入 limit 参数
-        limit_value = args.test_limit if args.test_limit > 0 else None
-        asyncio.run(refine_all_chunks_with_llm(INITIAL_CHUNKS_JSON, OUTPUT_REFINED_JSON, limit=limit_value))
+        logging.warning(f"=== 开始完整的LLM处理流水线 ===")
+        logging.warning(f"输入文件: {input_chunks_path}")
+        logging.warning(f"中间文件: {optimized_chunks_path}")
+        logging.warning(f"最终文件: {enhanced_chunks_path}")
+        
+        # 第一步：优化文本块
+        logging.warning(f"\n步骤1: 开始优化文本块，配置: 单次超时={VLLM_REQUEST_TIMEOUT_SINGLE}s, 总超时={VLLM_REQUEST_TIMEOUT_TOTAL}s, 批次大小={OPTIMIZATION_BATCH_SIZE}")
+        asyncio.run(refine_all_chunks_with_llm(
+            input_chunks_path, 
+            optimized_chunks_path, 
+            limit=args.test_limit
+        ))
+        
+        # 第二步：生成元数据
+        logging.warning(f"\n步骤2: 开始生成元数据，配置: 单次超时={VLLM_REQUEST_TIMEOUT_SINGLE}s, 总超时={VLLM_REQUEST_TIMEOUT_TOTAL}s, 批次大小={METADATA_BATCH_SIZE}")
+        asyncio.run(enhance_chunks_with_llm_metadata(
+            optimized_chunks_path, 
+            enhanced_chunks_path, 
+            test_limit=args.test_limit
+        ))
+        
+        logging.warning(f"\n=== 完整流水线处理完成 ===")
+        logging.warning(f"最终增强文件已保存到: {enhanced_chunks_path}")
+        
+    elif args.mode == "optimize":
+        if not args.input_file or not args.output_file:
+            logging.critical("错误: optimize模式需要指定input_file和output_file参数")
+            exit(1)
+        logging.warning(f"开始优化文本块，配置: 单次超时={VLLM_REQUEST_TIMEOUT_SINGLE}s, 总超时={VLLM_REQUEST_TIMEOUT_TOTAL}s, 批次大小={OPTIMIZATION_BATCH_SIZE}")
+        # 运行优化函数
+        asyncio.run(refine_all_chunks_with_llm(
+            args.input_file, 
+            args.output_file, 
+            limit=args.test_limit
+        ))
+    elif args.mode == "metadata":
+        if not args.input_file or not args.output_file:
+            logging.critical("错误: metadata模式需要指定input_file和output_file参数")
+            exit(1)
+        logging.warning(f"开始生成元数据，配置: 单次超时={VLLM_REQUEST_TIMEOUT_SINGLE}s, 总超时={VLLM_REQUEST_TIMEOUT_TOTAL}s, 批次大小={METADATA_BATCH_SIZE}")
+        # 运行元数据生成函数
+        asyncio.run(enhance_chunks_with_llm_metadata(
+            args.input_file, 
+            args.output_file, 
+            test_limit=args.test_limit
+        ))
 
-        logger.warning(f"\n--- LLM 批量块优化流程运行完毕 --- (测试限制: {args.test_limit if args.test_limit > 0 else '无'})")
+    logging.warning(f"\n--- LLM 处理流程运行完毕 ---")
