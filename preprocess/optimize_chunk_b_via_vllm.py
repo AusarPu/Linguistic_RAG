@@ -39,7 +39,7 @@ METADATA_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
 
 # --- LLM提示词模板：为单个块生成元数据并判断意义 ---
 METADATA_GENERATION_PROMPT_TEMPLATE = """你是一位专业的知识分析和信息提取专家。
-我将提供一段文本（一个文本块）。请你基于这段文本内容完成以下任务：
+我将提供一段文本（一个文本块）及其标识符。请你基于这段文本内容完成以下任务：
 
 1.  **评估内容意义**：
     * 首先，请判断该文本块是否包含实质性的、有意义的、适合用于构建问答知识库的信息。
@@ -49,11 +49,13 @@ METADATA_GENERATION_PROMPT_TEMPLATE = """你是一位专业的知识分析和信
     * 提取或生成若干（例如，1到5个，不必强求数量，质量优先）最能概括该文本块核心内容的"关键词摘要"或"标签"。
     * 每个关键词摘要应该简短精炼，方便作为标签查找，或者其他能准确捕捉核心概念的短语组合。
     * 关键词应该是全局通用的，不应该出现类似``这本书``，``本书作者``这类，而应该明确这本书是什么，作者是什么，便于以后查找
+    * 可以参考文本块标识符中的信息来生成更准确的关键词
     * 如果文本块评估为无实质意义，则关键词摘要列表应为空。
 
 3.  **预生成相关问题 (如果文本块有意义)**：
     * 根据该文本块的内容，生成若干（例如，1到3个，不必强求数量，质量优先）用户最有可能提出的、并且该文本块能够清晰、直接回答的高质量问题。
     * 生成的问题应该是全局通用的，不应该出现类似``这本书``，``本书作者``这类，而应该明确这本书是什么，作者是什么，便于以后查找
+    * 可以参考文本块标识符中的信息来生成更准确的问题
     * 如果文本块评估为无实质意义，则生成问题列表应为空。
 
 请将你的结果以严格的JSON格式返回，包含以下字段：
@@ -63,6 +65,8 @@ METADATA_GENERATION_PROMPT_TEMPLATE = """你是一位专业的知识分析和信
 - "generated_questions": 一个包含所生成的问句字符串的列表。如果 "is_meaningful" 为 false，此列表必须为空。
 
 确保JSON格式正确，所有字符串值内部的特殊字符（如换行符、双引号）都已正确转义。不要包含任何其他解释或对话。
+
+文本块标识符：{chunk_id}
 
 提供的文本块如下：
 ```
@@ -103,7 +107,7 @@ CHUNK_OPTIMIZATION_PROMPT_TEMPLATE = """
 """
 
 
-async def generate_metadata_for_chunk_via_vllm(text_chunk_content, max_retries=3):
+async def generate_metadata_for_chunk_via_vllm(text_chunk_content, chunk_id=None, max_retries=3):
     """
     异步调用VLLM API为单个文本块生成元数据（关键词摘要和相关问题）。
     
@@ -128,7 +132,10 @@ async def generate_metadata_for_chunk_via_vllm(text_chunk_content, max_retries=3
         }
     
     # 构建请求数据
-    prompt = METADATA_GENERATION_PROMPT_TEMPLATE.format(text_chunk_content=text_chunk_content)
+    prompt = METADATA_GENERATION_PROMPT_TEMPLATE.format(
+        chunk_id=chunk_id or "未知",
+        text_chunk_content=text_chunk_content
+    )
     request_data = {
         "model": METADATA_MODEL_NAME,
         "messages": [
@@ -303,7 +310,8 @@ async def process_metadata_batch(chunks_batch):
                 }
             tasks.append(empty_result())
         else:
-            tasks.append(generate_metadata_for_chunk_via_vllm(text_content))
+            chunk_id = chunk.get('chunk_id', '未知')
+            tasks.append(generate_metadata_for_chunk_via_vllm(text_content, chunk_id))
     
     # 并发执行所有任务
     try:
