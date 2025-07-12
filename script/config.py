@@ -30,7 +30,7 @@ VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-30B-A3B-FP8"
 EMBEDDING_MODEL_PATH = "./models/BAAI/bge-large-zh-v1.5"
 VLLM_RERANKER_MODEL_PATH = "./models/BAAI/bge-reranker-v2-m3"
 EMBEDDING_MODEL_PATH = "./models/Qwen/Qwen3-Embedding-8B"
-VLLM_REWRITER_LORA_LOCAL_PATH = ""
+VLLM_REWRITER_LORA_LOCAL_PATH = ""              
 
 # --- 知识库和处理数据路径 (你已有的，确保ALL_QUESTION_TEXTS_SAVE_PATH已添加) ---
 KNOWLEDGE_BASE_DIR = os.path.join(PROJECT_ROOT_DIR, "knowledge_base/")
