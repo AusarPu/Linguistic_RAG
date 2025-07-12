@@ -6,15 +6,19 @@ import json
 import pickle
 from pathlib import Path
 import os
+import sys
 import time
 import logging
 from typing import List, Dict, Optional, Set, Any
+from tqdm import tqdm
+# 添加项目根目录到路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from script.config import *
 
 
-from FlagEmbedding import BGEM3FlagModel
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 
@@ -30,6 +34,64 @@ def normalize_embeddings(embeddings: np.ndarray) -> np.ndarray:
     norms[norms == 0] = 1e-9  # 防止除以零
     return embeddings / norms
 
+def call_embedding_api(texts: List[str], api_url: str, model_name: str, max_retries: int = 3) -> np.ndarray:
+    """
+    调用嵌入API获取向量
+    
+    Args:
+        texts: 待编码的文本列表
+        api_url: API地址
+        model_name: 模型名称
+        max_retries: 最大重试次数
+    
+    Returns:
+        np.ndarray: 嵌入向量数组
+    """
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=max_retries,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "OPTIONS", "POST"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    payload = {
+        "model": model_name,
+        "input": texts
+    }
+    
+    try:
+        response = session.post(
+            api_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=60
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        if "data" not in result:
+            raise ValueError(f"API响应格式错误: {result}")
+        
+        # 提取嵌入向量
+        embeddings = []
+        for item in result["data"]:
+            if "embedding" in item:
+                embeddings.append(item["embedding"])
+            else:
+                raise ValueError(f"API响应中缺少embedding字段: {item}")
+        
+        return np.array(embeddings, dtype=np.float32)
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API调用失败: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"处理API响应时出错: {e}")
+        raise
+
 def build_all_search_indexes(
     enhanced_chunks_path: str,
     embedding_model_name_or_path: str,
@@ -39,15 +101,15 @@ def build_all_search_indexes(
     chunk_faiss_idx_filename: str,
     indexed_chunks_meta_filename: str,
     # 关键词短语相关文件名
-    phrase_sparse_map_filename: str,
+    phrase_dense_map_filename: str,
     # 预生成问题相关文件名
     question_dense_emb_filename: str,
     question_faiss_idx_filename: str,
     question_to_chunk_id_map_filename: str,
     question_texts_list_filename: str,
-    batch_size_embed: int = 32,
-    batch_size_sparse_phrases: int = 256,
-    batch_size_questions: int = 128 # 为问题编码新增批大小
+    batch_size_embed: int = 128,
+    batch_size_phrases: int = 2048,
+    batch_size_questions: int = 1024 # 为问题编码新增批大小
 ):
     """
     构建核心的搜索索引：
@@ -59,14 +121,15 @@ def build_all_search_indexes(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # 1. 加载嵌入模型
+    # 1. 准备API调用参数
     try:
-        logger.info(f"正在加载嵌入模型: {embedding_model_name_or_path}")
-        model = BGEM3FlagModel(embedding_model_name_or_path, use_fp16=True)
-        logger.info("嵌入模型加载成功。")
+        logger.info(f"准备使用嵌入API: {EMBEDDING_API_URL}")
+        logger.info(f"使用模型: {EMBEDDING_MODEL_NAME_FOR_API}")
+        # 测试API连接
+        test_response = requests.get(EMBEDDING_API_URL.replace('/v1/embeddings', '/health'), timeout=10)
+        logger.info("嵌入API连接测试成功。")
     except Exception as e:
-        logger.error(f"加载嵌入模型失败: {e}", exc_info=True)
-        return
+        logger.warning(f"嵌入API连接测试失败，但将继续尝试: {e}")
 
     # 2. 加载LLM增强后的块数据
     try:
@@ -137,10 +200,19 @@ def build_all_search_indexes(
         logger.info(f"开始为 {len(texts_for_chunk_dense_embedding)} 个文本块生成稠密向量...")
         all_dense_vecs_list = []
         try:
-            for i in range(0, len(texts_for_chunk_dense_embedding), batch_size_embed):
-                batch_texts = texts_for_chunk_dense_embedding[i:i+batch_size_embed]
-                output = model.encode(batch_texts, return_dense=True, return_sparse=False, return_colbert_vecs=False)
-                all_dense_vecs_list.append(output['dense_vecs'])
+            # 计算总批次数
+            total_batches = (len(texts_for_chunk_dense_embedding) + batch_size_embed - 1) // batch_size_embed
+            
+            # 使用tqdm显示进度条
+            with tqdm(total=total_batches, desc="块文本编码", unit="batch") as pbar:
+                for i in range(0, len(texts_for_chunk_dense_embedding), batch_size_embed):
+                    batch_texts = texts_for_chunk_dense_embedding[i:i+batch_size_embed]
+                    batch_num = i // batch_size_embed + 1
+                    pbar.set_postfix({"批次": f"{batch_num}/{total_batches}", "文本数": len(batch_texts)})
+                    
+                    batch_embeddings = call_embedding_api(batch_texts, EMBEDDING_API_URL, EMBEDDING_MODEL_NAME_FOR_API)
+                    all_dense_vecs_list.append(batch_embeddings)
+                    pbar.update(1)
 
             chunk_dense_embeddings_np = np.vstack(all_dense_vecs_list).astype(np.float32)
             logger.info("对块文本稠密向量进行L2归一化...")
@@ -165,47 +237,65 @@ def build_all_search_indexes(
         logger.warning("没有文本块可用于稠密索引，跳过此步骤。")
 
 
-    # --- 3. 为唯一关键词短语编码稀疏权重并保存映射 ---
-    phrase_to_sparse_weights_map: Dict[str, Dict[int, float]] = {}
+    # --- 3. 为唯一关键词短语编码稠密向量 ---
+    phrase_to_dense_embeddings_map: Dict[str, np.ndarray] = {}
     if all_unique_keyword_phrases:
-        logger.info(f"开始为 {len(all_unique_keyword_phrases)} 个唯一关键词短语生成稀疏权重...")
+        logger.info(f"开始为 {len(all_unique_keyword_phrases)} 个唯一关键词短语生成稠密向量...")
         unique_phrases_list_for_encoding = list(all_unique_keyword_phrases)
-        all_phrase_sparse_weights_list = []
         try:
-            for i in range(0, len(unique_phrases_list_for_encoding), batch_size_sparse_phrases):
-                batch_phrases = unique_phrases_list_for_encoding[i:i+batch_size_sparse_phrases]
-                outputs = model.encode(batch_phrases, return_dense=False, return_sparse=True, return_colbert_vecs=False)
-                phrase_sparse_weights_batch = outputs.get("lexical_weights")
-                if phrase_sparse_weights_batch and len(phrase_sparse_weights_batch) == len(batch_phrases):
-                    all_phrase_sparse_weights_list.extend(phrase_sparse_weights_batch)
-                else:
-                    logger.error(f"关键词短语稀疏编码批次 {i//batch_size_sparse_phrases + 1} 输出不匹配或为空。")
-
-            if len(all_phrase_sparse_weights_list) == len(unique_phrases_list_for_encoding):
+            all_phrase_dense_embeddings = []
+            # 计算总批次数
+            total_phrase_batches = (len(unique_phrases_list_for_encoding) + batch_size_phrases - 1) // batch_size_phrases
+            
+            # 使用tqdm显示进度条
+            with tqdm(total=total_phrase_batches, desc="关键词编码", unit="batch") as pbar:
+                for i in range(0, len(unique_phrases_list_for_encoding), batch_size_phrases):
+                    batch_phrases = unique_phrases_list_for_encoding[i:i+batch_size_phrases]
+                    batch_num = i // batch_size_phrases + 1
+                    pbar.set_postfix({"批次": f"{batch_num}/{total_phrase_batches}", "短语数": len(batch_phrases)})
+                    
+                    batch_embeddings = call_embedding_api(batch_phrases, EMBEDDING_API_URL, EMBEDDING_MODEL_NAME_FOR_API)
+                    all_phrase_dense_embeddings.append(batch_embeddings)
+                    pbar.update(1)
+            
+            # 保存稠密向量映射
+            phrase_dense_embeddings_np = np.vstack(all_phrase_dense_embeddings).astype(np.float32)
+            
+            logger.info("创建关键词短语到稠密向量的映射...")
+            with tqdm(total=len(unique_phrases_list_for_encoding), desc="向量映射", unit="短语") as pbar:
                 for i, phrase_str in enumerate(unique_phrases_list_for_encoding):
-                    phrase_to_sparse_weights_map[phrase_str] = all_phrase_sparse_weights_list[i]
-                logger.info("唯一关键词短语的稀疏权重映射生成完成。")
-            else:
-                logger.error("最终编码的短语稀疏权重数量与唯一短语数量不匹配。映射可能不完整。")
+                    dense_vec = phrase_dense_embeddings_np[i]
+                    phrase_to_dense_embeddings_map[phrase_str] = dense_vec
+                    pbar.update(1)
+            
+            logger.info("唯一关键词短语的稠密向量映射生成完成。")
 
-            with open(output_path / phrase_sparse_map_filename, "wb") as f:
-                pickle.dump(phrase_to_sparse_weights_map, f)
-            logger.info(f"关键词短语稀疏权重映射已保存到: {output_path / phrase_sparse_map_filename}")
+            with open(output_path / phrase_dense_map_filename, "wb") as f:
+                pickle.dump(phrase_to_dense_embeddings_map, f)
+            logger.info(f"关键词短语稠密向量映射已保存到: {output_path / phrase_dense_map_filename}")
         except Exception as e:
-            logger.error(f"为关键词短语编码稀疏权重或保存映射时出错: {e}", exc_info=True)
+            logger.error(f"为关键词短语编码向量或保存映射时出错: {e}", exc_info=True)
     else:
-        logger.warning("没有找到唯一关键词短语，未生成稀疏权重映射。")
+        logger.warning("没有找到唯一关键词短语，未生成向量映射。")
 
     # --- 4. 为所有预生成问题编码稠密向量并构建Faiss索引 (使用IndexFlatIP) ---
     if all_question_texts_flat:
         logger.info(f"开始为 {len(all_question_texts_flat)} 个预生成问题生成稠密向量...")
         all_question_dense_vecs_list = []
         try:
-            for i in range(0, len(all_question_texts_flat), batch_size_questions):
-                batch_q_texts = all_question_texts_flat[i:i+batch_size_questions]
-                logger.debug(f"  问题稠密编码批次 {i//batch_size_questions + 1} / { (len(all_question_texts_flat) + batch_size_questions - 1)//batch_size_questions }...")
-                output = model.encode(batch_q_texts, return_dense=True, return_sparse=False, return_colbert_vecs=False)
-                all_question_dense_vecs_list.append(output['dense_vecs'])
+            # 计算总批次数
+            total_question_batches = (len(all_question_texts_flat) + batch_size_questions - 1) // batch_size_questions
+            
+            # 使用tqdm显示进度条
+            with tqdm(total=total_question_batches, desc="问题编码", unit="batch") as pbar:
+                for i in range(0, len(all_question_texts_flat), batch_size_questions):
+                    batch_q_texts = all_question_texts_flat[i:i+batch_size_questions]
+                    batch_num = i // batch_size_questions + 1
+                    pbar.set_postfix({"批次": f"{batch_num}/{total_question_batches}", "问题数": len(batch_q_texts)})
+                    
+                    batch_embeddings = call_embedding_api(batch_q_texts, EMBEDDING_API_URL, EMBEDDING_MODEL_NAME_FOR_API)
+                    all_question_dense_vecs_list.append(batch_embeddings)
+                    pbar.update(1)
 
             question_dense_embeddings_np = np.vstack(all_question_dense_vecs_list).astype(np.float32)
             logger.info("对预生成问题稠密向量进行L2归一化...")
@@ -256,25 +346,130 @@ def build_all_search_indexes(
 
     logger.info("所有核心搜索索引构建流程结束。")
 
-if __name__ == '__main__':
-    logger.info("=========== 开始构建所有核心搜索索引 ===========")
-
-    Path(PROCESSED_DATA_DIR).mkdir(parents=True, exist_ok=True)
-
-    if not Path(ENHANCED_CHUNKS_JSON_PATH).is_file():
-        logger.error(f"错误：输入文件 '{ENHANCED_CHUNKS_JSON_PATH}' 未找到。")
-    else:
+def build_test_indexes_with_limit(enhanced_chunks_path, test_limit=None):
+    """
+    测试模式：构建小批量索引用于测试API连接和功能验证
+    
+    Args:
+        enhanced_chunks_path (str): 输入的增强文本块JSON文件路径
+        test_limit (int, optional): 测试模式下限制处理的块数量
+    """
+    import json
+    import tempfile
+    import os
+    
+    logger.info(f"=========== 开始测试模式索引构建 (限制: {test_limit or '无限制'}) ===========")
+    
+    # 创建临时输出目录
+    temp_output_dir = tempfile.mkdtemp(prefix="test_indexes_")
+    logger.info(f"测试输出目录: {temp_output_dir}")
+    
+    try:
+        # 如果指定了测试限制，创建临时的小批量数据文件
+        if test_limit:
+            logger.info(f"加载原始数据并限制为前 {test_limit} 个块...")
+            with open(enhanced_chunks_path, 'r', encoding='utf-8') as f:
+                all_chunks = json.load(f)
+            
+            # 限制数据量
+            limited_chunks = all_chunks[:test_limit]
+            logger.info(f"原始块数: {len(all_chunks)}, 测试块数: {len(limited_chunks)}")
+            
+            # 创建临时输入文件
+            temp_input_file = os.path.join(temp_output_dir, "test_chunks.json")
+            with open(temp_input_file, 'w', encoding='utf-8') as f:
+                json.dump(limited_chunks, f, ensure_ascii=False, indent=2)
+            
+            input_file_path = temp_input_file
+        else:
+            input_file_path = enhanced_chunks_path
+        
+        # 构建索引
         build_all_search_indexes(
-            enhanced_chunks_path=ENHANCED_CHUNKS_JSON_PATH,
+            enhanced_chunks_path=input_file_path,
+            embedding_model_name_or_path=EMBEDDING_MODEL_PATH,
+            output_dir=temp_output_dir,
+            chunk_dense_emb_filename="test_dense_embeddings_chunks.npy",
+            chunk_faiss_idx_filename="test_faiss_index_chunks_ip.idx",
+            indexed_chunks_meta_filename="test_indexed_chunks_metadata.json",
+            phrase_dense_map_filename="test_phrase_dense_embeddings_map.pkl",
+            question_dense_emb_filename="test_dense_embeddings_questions.npy",
+            question_faiss_idx_filename="test_faiss_index_questions_ip.idx",
+            question_to_chunk_id_map_filename="test_question_index_to_chunk_id_map.json",
+            question_texts_list_filename="test_all_question_texts.json",
+        )
+        
+        # 验证生成的文件
+        logger.info("\n=== 测试结果验证 ===")
+        output_files = [
+            "test_dense_embeddings_chunks.npy",
+            "test_faiss_index_chunks_ip.idx", 
+            "test_indexed_chunks_metadata.json",
+            "test_phrase_dense_embeddings_map.pkl",
+            "test_dense_embeddings_questions.npy",
+            "test_faiss_index_questions_ip.idx",
+            "test_question_index_to_chunk_id_map.json",
+            "test_all_question_texts.json"
+        ]
+        
+        for filename in output_files:
+            filepath = os.path.join(temp_output_dir, filename)
+            if os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                logger.info(f"✓ {filename}: {file_size} bytes")
+            else:
+                logger.warning(f"✗ {filename}: 文件未生成")
+        
+        logger.info(f"\n测试完成！临时文件保存在: {temp_output_dir}")
+        logger.info("如需清理测试文件，请手动删除上述目录")
+        
+    except Exception as e:
+        logger.error(f"测试过程中发生错误: {e}", exc_info=True)
+        raise
+
+
+if __name__ == '__main__':
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="构建核心搜索索引")
+    parser.add_argument("--test", action="store_true", help="启用测试模式")
+    parser.add_argument("--test-limit", type=int, default=10, help="测试模式下限制处理的块数量（默认：10）")
+    parser.add_argument("--input-file", type=str, help="自定义输入文件路径（可选）")
+    
+    args = parser.parse_args()
+    
+    # 设置日志级别
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    # 确定输入文件路径
+    input_file = args.input_file or ENHANCED_CHUNKS_JSON_PATH
+    
+    # 检查输入文件是否存在
+    if not Path(input_file).is_file():
+        logger.error(f"错误：输入文件 '{input_file}' 未找到。")
+        exit(1)
+    
+    if args.test:
+        # 测试模式
+        logger.info(f"启动测试模式，限制处理 {args.test_limit} 个块")
+        build_test_indexes_with_limit(input_file, test_limit=args.test_limit)
+    else:
+        # 正常模式
+        logger.info("=========== 开始构建所有核心搜索索引 ===========")
+        Path(PROCESSED_DATA_DIR).mkdir(parents=True, exist_ok=True)
+        
+        build_all_search_indexes(
+            enhanced_chunks_path=input_file,
             embedding_model_name_or_path=EMBEDDING_MODEL_PATH,
             output_dir=PROCESSED_DATA_DIR,
             chunk_dense_emb_filename="dense_embeddings_chunks.npy",
             chunk_faiss_idx_filename="faiss_index_chunks_ip.idx",
             indexed_chunks_meta_filename="indexed_chunks_metadata.json",
-            phrase_sparse_map_filename="phrase_sparse_weights_map.pkl",
+            phrase_dense_map_filename="phrase_dense_embeddings_map.pkl",
             question_dense_emb_filename="dense_embeddings_questions.npy",
             question_faiss_idx_filename="faiss_index_questions_ip.idx",
             question_to_chunk_id_map_filename="question_index_to_chunk_id_map.json",
             question_texts_list_filename=ALL_QUESTION_TEXTS_SAVE_PATH,
         )
-    logger.info("=========== 所有核心搜索索引构建完成 ===========")
+        logger.info("=========== 所有核心搜索索引构建完成 ===========")
