@@ -25,11 +25,12 @@ SPARSE_KEYWORD_THRESHOLD = 0.6
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
-VLLM_BASE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B-FP8"
-VLLM_REWRITE_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/Qwen/Qwen3-30B-A3B-FP8"
-VLLM_REWRITER_LORA_LOCAL_PATH = "/home/pushihao/RAG/linguistic_ai"
-EMBEDDING_MODEL_PATH = "/home/pushihao/RAG/models/BAAI/bge-large-zh-v1.5"
-VLLM_RERANKER_MODEL_PATH = "/home/pushihao/RAG/models/BAAI/bge-reranker-v2-m3"
+VLLM_BASE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-30B-A3B-FP8"
+VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-30B-A3B-FP8"
+EMBEDDING_MODEL_PATH = "./models/BAAI/bge-large-zh-v1.5"
+VLLM_RERANKER_MODEL_PATH = "./models/BAAI/bge-reranker-v2-m3"
+EMBEDDING_MODEL_PATH = "./models/Qwen/Qwen3-Embedding-8B"
+VLLM_REWRITER_LORA_LOCAL_PATH = ""
 
 # --- 知识库和处理数据路径 (你已有的，确保ALL_QUESTION_TEXTS_SAVE_PATH已添加) ---
 KNOWLEDGE_BASE_DIR = os.path.join(PROJECT_ROOT_DIR, "knowledge_base/")
@@ -68,15 +69,23 @@ VLLM_RERANKER_PORT = 8002       # 为 Reranker 分配一个新的端口，确保
 VLLM_RERANKER_GPU_ID = 1      # 分配给 Reranker 的 GPU ID (注意：如果GPU资源紧张，需要合理分配)
 VLLM_RERANKER_MEM_UTILIZATION = 0.1 # 如果与其他模型共享GPU，可能需要较低的显存占用
 
+# --- 新增：Embedding VLLM 服务配置 ---
+VLLM_EMBEDDING_HOST = "localhost"  # Embedding 服务部署在本地
+VLLM_EMBEDDING_PORT = 8850       # 为 Embedding 分配端口 8850
+VLLM_EMBEDDING_GPU_ID = 2        # 分配给 Embedding 的 GPU ID
+VLLM_EMBEDDING_MEM_UTILIZATION = 0.3 # Embedding 模型通常显存占用较少
+
 # --- API 端点 (根据上面配置自动生成) ---
 GENERATOR_API_URL = f"http://{VLLM_GENERATOR_HOST}:{VLLM_GENERATOR_PORT}/v1/chat/completions"
 REWRITER_API_URL = f"http://{VLLM_REWRITER_HOST}:{VLLM_REWRITER_PORT}/v1/chat/completions"
 RERANKER_API_URL = f"http://{VLLM_RERANKER_HOST}:{VLLM_RERANKER_PORT}/v2/rerank"
+EMBEDDING_API_URL = f"http://{VLLM_EMBEDDING_HOST}:{VLLM_EMBEDDING_PORT}/v1/embeddings"
 
 # --- vLLM 使用的模型标识符 (用于 API 请求中的 'model' 字段) ---
 GENERATOR_MODEL_NAME_FOR_API = VLLM_BASE_MODEL_LOCAL_PATH # 你已有的
 REWRITER_MODEL_NAME_FOR_API = VLLM_REWRITE_MODEL_LOCAL_PATH # 你已有的
 RERANKER_MODEL_NAME_FOR_API = VLLM_RERANKER_MODEL_PATH # 用于发送给 Reranker API 的模型名
+EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH # 用于发送给 Embedding API 的模型名
 
 # --- Prompt 文件路径 (使用绝对路径或相对于 config.py 的路径) ---
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))

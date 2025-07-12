@@ -18,9 +18,11 @@ GRADIO_SCRIPT="$PROJECT_ROOT/web_ui/app.py"
 
 REWRITER_LOG="$LOG_DIR/vllm_rewriter.log"
 RERANKER_LOG="$LOG_DIR/vllm_reranker.log"
+EMBEDDING_LOG="$LOG_DIR/vllm_embedding.log"
 PID_DIR="$PROJECT_ROOT/pids" # 定义 PID_DIR
 REWRITER_PID_FILE="$PID_DIR/vllm_rewriter.pid"
 RERANKER_PID_FILE="$PID_DIR/vllm_reranker.pid"
+EMBEDDING_PID_FILE="$PID_DIR/vllm_embedding.pid"
 
 # --- 读取配置函数 ---
 read_config() {
@@ -74,6 +76,29 @@ if [ -z "$RERANKER_MEM_UTILIZATION" ]; then
     echo "警告: VLLM_RERANKER_MEM_UTILIZATION 未在 $CONFIG_MODULE 中配置，将使用默认值: 0.9" >&2;
     RERANKER_MEM_UTILIZATION="0.9"; 
 fi
+
+# 读取 Embedding 配置
+EMBEDDING_MODEL_PATH=$(read_config EMBEDDING_MODEL_PATH)
+if [ -z "$EMBEDDING_MODEL_PATH" ]; then 
+    echo "错误: EMBEDDING_MODEL_PATH 未在 $CONFIG_MODULE 中配置。" >&2;
+fi
+
+EMBEDDING_PORT=$(read_config VLLM_EMBEDDING_PORT)
+if [ -z "$EMBEDDING_PORT" ]; then 
+    echo "错误: VLLM_EMBEDDING_PORT 未在 $CONFIG_MODULE 中配置。" >&2;
+fi
+
+EMBEDDING_GPU_ID=$(read_config VLLM_EMBEDDING_GPU_ID)
+if [ -z "$EMBEDDING_GPU_ID" ]; then 
+    echo "警告: VLLM_EMBEDDING_GPU_ID 未在 $CONFIG_MODULE 中配置，将使用默认值: 0" >&2;
+    EMBEDDING_GPU_ID="0"; 
+fi
+
+EMBEDDING_MEM_UTILIZATION=$(read_config VLLM_EMBEDDING_MEM_UTILIZATION)
+if [ -z "$EMBEDDING_MEM_UTILIZATION" ]; then 
+    echo "警告: VLLM_EMBEDDING_MEM_UTILIZATION 未在 $CONFIG_MODULE 中配置，将使用默认值: 0.3" >&2;
+    EMBEDDING_MEM_UTILIZATION="0.3"; 
+fi
 echo "    配置读取完成。"
 
 # --- 清理函数 ---
@@ -90,6 +115,12 @@ cleanup() {
         echo "    停止 Reranker (PID: $RERANKER_PID)..."
         kill "$RERANKER_PID" &> /dev/null || echo "    Reranker 进程 $RERANKER_PID 可能已停止。"
         rm -f "$RERANKER_PID_FILE"
+    fi
+    if [ -f "$EMBEDDING_PID_FILE" ]; then
+        EMBEDDING_PID=$(cat "$EMBEDDING_PID_FILE")
+        echo "    停止 Embedding (PID: $EMBEDDING_PID)..."
+        kill "$EMBEDDING_PID" &> /dev/null || echo "    Embedding 进程 $EMBEDDING_PID 可能已停止。"
+        rm -f "$EMBEDDING_PID_FILE"
     fi
     echo ">>> 清理完成。"
     exit 0
@@ -168,6 +199,38 @@ else
     (export CUDA_VISIBLE_DEVICES=${RERANKER_GPU_ID}; nohup "${RERANKER_CMD_ARRAY[@]}" > "$RERANKER_LOG" 2>&1 & echo $! > "$RERANKER_PID_FILE")
     echo "    Reranker 服务 PID: $(cat "$RERANKER_PID_FILE")，日志: $RERANKER_LOG"
     echo "    等待 Reranker 服务启动 (约30-60秒)..."
+    sleep 5
+fi
+
+# --- 启动 Embedding vLLM 服务 ---
+if [ -z "$EMBEDDING_MODEL_PATH" ] || [ -z "$EMBEDDING_PORT" ]; then
+    echo "错误: Embedding 服务配置不完整 (模型路径或端口缺失)，跳过启动。" >&2
+else
+    echo ">>> 正在后台启动 Embedding vLLM 服务..."
+    echo "    模型路径: $EMBEDDING_MODEL_PATH"
+    echo "    端口: $EMBEDDING_PORT"
+    echo "    分配 GPU: ${EMBEDDING_GPU_ID:-默认所有可见GPU}"
+    echo "    显存限制: ${EMBEDDING_MEM_UTILIZATION:-默认}"
+
+    # 使用 bash 数组来安全地构建命令
+    EMBEDDING_CMD_ARRAY=(
+        vllm serve "$EMBEDDING_MODEL_PATH"
+        --port "$EMBEDDING_PORT"
+        --trust-remote-code
+        --disable-log-requests
+        --max-model-len 8192
+        --max_num_seqs 1024
+    )
+
+    # 有条件地添加内存参数
+    if [ ! -z "$EMBEDDING_MEM_UTILIZATION" ] && [ "$EMBEDDING_MEM_UTILIZATION" != "None" ]; then
+      EMBEDDING_CMD_ARRAY+=(--gpu-memory-utilization "$EMBEDDING_MEM_UTILIZATION")
+    fi
+    
+    # 使用 nohup 和正确的变量展开来启动服务
+    (export CUDA_VISIBLE_DEVICES=${EMBEDDING_GPU_ID}; nohup "${EMBEDDING_CMD_ARRAY[@]}" > "$EMBEDDING_LOG" 2>&1 & echo $! > "$EMBEDDING_PID_FILE")
+    echo "    Embedding 服务 PID: $(cat "$EMBEDDING_PID_FILE")，日志: $EMBEDDING_LOG"
+    echo "    等待 Embedding 服务启动 (约30-60秒)..."
     sleep 5
 fi
 
