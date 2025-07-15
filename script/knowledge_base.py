@@ -252,19 +252,30 @@ class KnowledgeBase:
             f"预生成问题稠密检索 for '{query_text[:30]}...' (耗时: {time.time() - start_time:.3f}s) - 返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold})")
         return final_results
 
-    def search_sparse_keywords(self, query_text: str, top_k: int = SPARSE_KEYWORD_RETRIEVAL_TOP_K,
-                               threshold: Optional[float] = None) -> List[Dict[str, Any]]:
+    def search_dense_keywords(self, query_text: str, top_k: int = SPARSE_KEYWORD_RETRIEVAL_TOP_K,
+                     threshold: Optional[float] = None) -> List[Dict[str, Any]]:
         """
-        使用稀疏关键词匹配进行检索。
-        注意：新的嵌入模型只提供稠密向量，不支持稀疏表示，因此该方法返回空列表。
+        使用稠密向量进行检索。
+        现在使用稠密向量替代原来的稀疏关键词匹配。
         
         Args:
             query_text: 查询文本
             top_k: 返回的最大结果数量
-            threshold: 相似度阈值
+            threshold: 相似度阈值，如果为None则使用默认的块检索阈值
             
         Returns:
-            空列表（新模型不支持稀疏向量）
+            检索结果列表
         """
-        logger.info("新的嵌入模型不支持稀疏向量，稀疏关键词检索返回空结果。")
-        return []
+        if threshold is None:
+            threshold = DENSE_CHUNK_THRESHOLD
+            
+        logger.info(f"使用稠密向量进行检索（阈值: {threshold}）")
+        
+        # 直接调用稠密块检索方法
+        results = self.search_dense_chunks(query_text, top_k, threshold)
+        
+        # 修改检索类型标识
+        for result in results:
+            result['retrieval_type'] = 'dense_search'
+            
+        return results

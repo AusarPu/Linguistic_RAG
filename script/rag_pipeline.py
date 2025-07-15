@@ -86,10 +86,10 @@ async def execute_rag_flow(
                                               DENSE_CHUNK_RETRIEVAL_TOP_K, DENSE_CHUNK_THRESHOLD)
         task_dense_questions = asyncio.to_thread(kb_instance.search_dense_questions, user_query,
                                                  DENSE_QUESTION_RETRIEVAL_TOP_K, DENSE_QUESTION_THRESHOLD)
-        task_sparse_keywords = asyncio.to_thread(kb_instance.search_sparse_keywords, rewritten_query,
+        task_dense_keywords = asyncio.to_thread(kb_instance.search_dense_keywords, rewritten_query,
                                                  SPARSE_KEYWORD_RETRIEVAL_TOP_K, SPARSE_KEYWORD_THRESHOLD)
 
-        retrieval_outputs = await asyncio.gather(task_dense_chunks, task_dense_questions, task_sparse_keywords,
+        retrieval_outputs = await asyncio.gather(task_dense_chunks, task_dense_questions, task_dense_keywords,
                                                  return_exceptions=True)
 
         all_retrieved_chunks_map: Dict[str, Dict[str, Any]] = {}
