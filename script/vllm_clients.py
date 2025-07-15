@@ -2,7 +2,9 @@ import asyncio
 import time
 import logging
 import json
-from typing import List, Dict, Any, Optional, AsyncGenerator
+import requests
+import numpy as np
+from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 
 import aiohttp  # 用于异步HTTP请求
 
@@ -15,12 +17,104 @@ from .config import (
     GENERATOR_API_URL,
     GENERATOR_MODEL_NAME_FOR_API,
     GENERATOR_RAG_CONFIG,
-    VLLM_REQUEST_TIMEOUT_GENERATION
+    VLLM_REQUEST_TIMEOUT_GENERATION,
+    EMBEDDING_API_URL,
+    EMBEDDING_MODEL_NAME_FOR_API
 )
 
 logger = logging.getLogger(__name__)
 
 
+# ===== EMBEDDING CLIENT =====
+class EmbeddingAPIClient:
+    """Embedding API 客户端类"""
+    
+    def __init__(self):
+        self.api_url = EMBEDDING_API_URL
+        self.model_name = EMBEDDING_MODEL_NAME_FOR_API
+        logger.info(f"Initialized EmbeddingAPIClient with URL: {self.api_url}")
+    
+    def encode(self, texts: Union[str, List[str]], **kwargs) -> Dict[str, Any]:
+        """
+        编码文本为向量，兼容原BGE-M3的接口
+        
+        Args:
+            texts: 单个文本或文本列表
+            **kwargs: 兼容参数，但在API模式下会被忽略
+            
+        Returns:
+            包含dense_vecs的字典，格式兼容BGE-M3
+        """
+        # 确保输入是列表格式
+        if isinstance(texts, str):
+            input_texts = [texts]
+            is_single = True
+        else:
+            input_texts = texts
+            is_single = False
+        
+        # 构建API请求
+        payload = {
+            "model": self.model_name,
+            "input": input_texts,
+            "encoding_format": "float"
+        }
+        
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        # 发送请求
+        response = requests.post(self.api_url, json=payload, headers=headers, timeout=60)
+        
+        if response.status_code != 200:
+            raise RuntimeError(f"Embedding API request failed with status {response.status_code}: {response.text}")
+        
+        result = response.json()
+        
+        if "data" not in result:
+            raise RuntimeError(f"Invalid API response format: {result}")
+        
+        # 提取向量
+        embeddings = []
+        for item in result["data"]:
+            if "embedding" not in item:
+                raise RuntimeError(f"Missing embedding in API response: {item}")
+            embeddings.append(item["embedding"])
+        
+        # 转换为numpy数组
+        dense_vecs = np.array(embeddings, dtype=np.float32)
+        
+        # 如果输入是单个文本，返回单个向量
+        if is_single:
+            dense_vecs = dense_vecs[0]
+        
+        # 返回兼容BGE-M3格式的结果
+        return {
+            "dense_vecs": dense_vecs
+        }
+    
+    def compute_lexical_matching_score(self, query_weights: Dict, doc_weights: Dict) -> float:
+        """
+        计算词汇匹配分数
+        
+        注意：由于新的embedding模型只提供稠密向量，这个方法现在返回固定值
+        或者可以基于稠密向量计算相似度作为替代
+        
+        Args:
+            query_weights: 查询的稀疏权重
+            doc_weights: 文档的稀疏权重
+            
+        Returns:
+            匹配分数
+        """
+        # 由于新模型只提供稠密向量，稀疏匹配功能暂时不可用
+        # 可以返回0或者实现基于稠密向量的相似度计算
+        logger.warning("lexical_matching_score not available with dense-only embedding model, returning 0")
+        return 0.0
+
+
+# ===== RERANKER CLIENT =====
 async def call_reranker_vllm(
         query: str,
         chunks_to_rerank: List[Dict[str, Any]],  # 每个字典至少包含 'chunk_id' 和 'text'
