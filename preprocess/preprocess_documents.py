@@ -5,7 +5,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from script.config import KNOWLEDGE_BASE_DIR,PROCESSED_DATA_DIR
+from script.config_rag import KNOWLEDGE_BASE_DIR,PROCESSED_DATA_DIR
 
 
 # -----------------------------------------------------------------------------

@@ -12,7 +12,7 @@ from collections import defaultdict
 # 将项目根目录添加到 sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from script import config
+from script import config_rag as config
 
 # --- 配置日志 ---
 config.setup_logging()

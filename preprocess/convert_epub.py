@@ -6,7 +6,7 @@ import sys
 
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from script.config import *
+from script.config_rag import *
 
 def chap2text(chap):
     """从Ebooklib的章节对象中提取纯文本。"""

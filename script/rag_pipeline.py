@@ -16,7 +16,7 @@ from .query_rewriter import generate_rewritten_query  # 假设它在 query_rewri
 from .vllm_clients import call_reranker_vllm, call_generator_vllm_stream
 
 
-from .config import (
+from .config_rag import (
     # 检索参数
     DENSE_CHUNK_RETRIEVAL_TOP_K, DENSE_QUESTION_RETRIEVAL_TOP_K, SPARSE_KEYWORD_RETRIEVAL_TOP_K,
     DENSE_CHUNK_THRESHOLD, DENSE_QUESTION_THRESHOLD, SPARSE_KEYWORD_THRESHOLD,

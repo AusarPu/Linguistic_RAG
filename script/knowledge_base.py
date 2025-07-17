@@ -11,7 +11,7 @@ import logging
 from typing import List, Dict, Optional, Any
 
 from .vllm_clients import EmbeddingAPIClient
-from .config import (
+from .config_rag import (
     EMBEDDING_MODEL_PATH,
     PROCESSED_DATA_DIR,  # 这个可能在内部路径拼接时用到，或者直接用下面的完整路径
 

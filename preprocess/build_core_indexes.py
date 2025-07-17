@@ -13,7 +13,7 @@ from typing import List, Dict, Optional, Set, Any
 from tqdm import tqdm
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from script.config import *
+from script.config_rag import *
 
 
 import requests

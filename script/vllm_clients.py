@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 import aiohttp  # 用于异步HTTP请求
 
 # --- 从项目中导入配置 ---
-from .config import (
+from .config_rag import (
     RERANKER_API_URL,
     RERANKER_MODEL_NAME_FOR_API,
     RERANKER_BATCH_SIZE,

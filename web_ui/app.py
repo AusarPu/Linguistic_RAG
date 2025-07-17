@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional, Tuple
 # 从项目中导入
 from script.knowledge_base import KnowledgeBase  #
 from script.rag_pipeline import execute_rag_flow  #
-from script import config  #
+from script import config_rag as config  #
 
 # 从web_ui模块导入
 from web_ui.ui_components import create_ui

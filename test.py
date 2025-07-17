@@ -18,7 +18,7 @@ try:
     # 假设 call_generator_vllm_stream 在 script.vllm_clients 或 script.rag_pipeline 中
     # 我们假设你把它放在了 vllm_clients.py
     from script.vllm_clients import call_generator_vllm_stream
-    from script.config import (
+    from script.config_rag import (
         GENERATOR_API_URL,
         GENERATOR_MODEL_NAME_FOR_API,  # 你在config.py中是这个名字
         GENERATOR_SYSTEM_PROMPT_FILE,
