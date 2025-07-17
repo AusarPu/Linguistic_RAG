@@ -12,9 +12,6 @@ from typing import List, Dict, Optional, Any
 
 from .vllm_clients import EmbeddingAPIClient
 from .config_rag import (
-    EMBEDDING_MODEL_PATH,
-    PROCESSED_DATA_DIR,  # 这个可能在内部路径拼接时用到，或者直接用下面的完整路径
-
     FAISS_INDEX_CHUNKS_SAVE_PATH,
     INDEXED_CHUNKS_METADATA_SAVE_PATH,
     PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH,
