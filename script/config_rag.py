@@ -95,14 +95,14 @@ REWRITER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/rewriter_instr
 
 # --- 生成参数配置 ---
 GENERATION_CONFIG = { # 用于生成器 vLLM API
-    "max_tokens": 40960,
+    "max_tokens": 30960,
     "temperature": 0.9,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
     "stop": None,
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
-    "max_tokens": 40960,
+    "max_tokens": 30960,
     "temperature": 0.2,
     "top_p": 0.95,
     "repetition_penalty": 1.1,

@@ -156,7 +156,7 @@ class KnowledgeBase:
 
         start_time = time.time()
         
-        query_output = self.embedding_model.encode(query_text)
+        query_output = self.embedding_model.encode(instruct="Given a question, retrieve relevant text passages that contain information to answer the question.", texts=query_text)
         query_vector = query_output.get("dense_vecs")
         if query_vector is None or query_vector.size == 0:
             raise RuntimeError("未能为查询生成稠密向量。")
@@ -205,7 +205,7 @@ class KnowledgeBase:
 
         start_time = time.time()
         
-        query_output = self.embedding_model.encode(query_text)
+        query_output = self.embedding_model.encode(instruct="Given a question, retrieve similar or related questions that address the same topic or domain.", texts=query_text)
         query_vector = query_output.get("dense_vecs")
         if query_vector is None or query_vector.size == 0:
             raise RuntimeError("未能为查询生成稠密向量。")
@@ -263,16 +263,49 @@ class KnowledgeBase:
         Returns:
             检索结果列表
         """
-        if threshold is None:
-            threshold = DENSE_CHUNK_THRESHOLD
-            
-        logger.info(f"使用稠密向量进行检索（阈值: {threshold}）")
+
+        start_time = time.time()
         
-        # 直接调用稠密块检索方法
-        results = self.search_dense_chunks(query_text, top_k, threshold)
-        
-        # 修改检索类型标识
-        for result in results:
-            result['retrieval_type'] = 'dense_search'
-            
-        return results
+        query_output = self.embedding_model.encode(instruct="Given a question, retrieve relevant keywords and key concepts that are related to the question topic.", texts=query_text)
+        query_vector = query_output.get("dense_vecs")
+        if query_vector is None or query_vector.size == 0:
+            raise RuntimeError("未能为查询生成稠密向量。")
+
+        query_vector_normalized = _normalize_embeddings(query_vector.astype(np.float32))
+
+        num_candidates_to_fetch = min(top_k * 5, self.faiss_questions_index.ntotal)
+        if num_candidates_to_fetch == 0: return []
+
+        scores, q_indices = self.faiss_questions_index.search(query_vector_normalized, num_candidates_to_fetch)
+
+        # 使用字典来确保每个 chunk_id 只被添加一次（基于最高分的问题匹配）
+        chunk_id_to_best_q_match_info: Dict[str, Dict[str, Any]] = {}
+
+        for i in range(len(q_indices[0])):
+            q_idx = q_indices[0][i]  # 这是匹配上的问题在扁平化列表中的索引
+            score = float(scores[0][i])
+
+            if q_idx != -1 and score >= threshold and 0 <= q_idx < len(self.question_idx_to_chunk_id_map):
+                original_chunk_id = self.question_idx_to_chunk_id_map[q_idx]
+                matched_q_text = self.question_idx_to_text_map[q_idx] if 0 <= q_idx < len(
+                    self.question_idx_to_text_map) else "未知问题文本"
+
+                # 如果这个chunk_id已经因为另一个问题被添加了，只在分数更高时更新
+                if original_chunk_id not in chunk_id_to_best_q_match_info or \
+                        score > chunk_id_to_best_q_match_info[original_chunk_id]['retrieval_score']:
+
+                    chunk_meta_original = self.chunk_id_to_metadata_map.get(original_chunk_id)
+                    if chunk_meta_original:
+                        chunk_meta_copy = dict(chunk_meta_original)  # 获取原始块的完整元数据
+                        chunk_meta_copy['retrieval_score'] = score
+                        chunk_meta_copy['retrieval_type'] = 'dense_generated_question'
+                        chunk_meta_copy['matched_question'] = matched_q_text  # 记录匹配上的问题
+                        chunk_id_to_best_q_match_info[original_chunk_id] = chunk_meta_copy
+
+        results = list(chunk_id_to_best_q_match_info.values())
+        results.sort(key=lambda x: x['retrieval_score'], reverse=True)
+        final_results = results[:top_k]
+
+        logger.info(
+            f"关键词稠密检索 for '{query_text[:30]}...' (耗时: {time.time() - start_time:.3f}s) - 返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold})")
+        return final_results

@@ -33,14 +33,20 @@ class EmbeddingAPIClient:
         self.api_url = EMBEDDING_API_URL
         self.model_name = EMBEDDING_MODEL_NAME_FOR_API
         logger.info(f"Initialized EmbeddingAPIClient with URL: {self.api_url}")
+
+    def get_detailed_instruct(self, task_description: str, query: str) -> str:
+        """构造带指令的查询文本"""
+        if not task_description:
+            return query
+        return f'Instruct: {task_description}\nQuery:{query}'
     
-    def encode(self, texts: Union[str, List[str]], **kwargs) -> Dict[str, Any]:
+    def encode(self, texts: Union[str, List[str]], instruct: str = "") -> Dict[str, Any]:
         """
         编码文本为向量，兼容原BGE-M3的接口
         
         Args:
             texts: 单个文本或文本列表
-            **kwargs: 兼容参数，但在API模式下会被忽略
+            instruct: 指令文本
             
         Returns:
             包含dense_vecs的字典，格式兼容BGE-M3
@@ -56,7 +62,7 @@ class EmbeddingAPIClient:
         # 构建API请求
         payload = {
             "model": self.model_name,
-            "input": input_texts,
+            "input": self.get_detailed_instruct(instruct, input_texts),
             "encoding_format": "float"
         }
         
@@ -94,24 +100,6 @@ class EmbeddingAPIClient:
             "dense_vecs": dense_vecs
         }
     
-    def compute_lexical_matching_score(self, query_weights: Dict, doc_weights: Dict) -> float:
-        """
-        计算词汇匹配分数
-        
-        注意：由于新的embedding模型只提供稠密向量，这个方法现在返回固定值
-        或者可以基于稠密向量计算相似度作为替代
-        
-        Args:
-            query_weights: 查询的稀疏权重
-            doc_weights: 文档的稀疏权重
-            
-        Returns:
-            匹配分数
-        """
-        # 由于新模型只提供稠密向量，稀疏匹配功能暂时不可用
-        # 可以返回0或者实现基于稠密向量的相似度计算
-        logger.warning("lexical_matching_score not available with dense-only embedding model, returning 0")
-        return 0.0
 
 
 # ===== RERANKER CLIENT =====
