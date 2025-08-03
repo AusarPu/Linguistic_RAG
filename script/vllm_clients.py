@@ -250,8 +250,9 @@ async def call_reranker_vllm(
 
 
 async def call_generator_vllm_stream(
-        system_prompt: Optional[str],
-        user_content_for_generator: str,
+        system_prompt: Optional[str] = None,
+        user_content_for_generator: Optional[str] = None,
+        messages: Optional[List[Dict[str, str]]] = None,
         api_url: str = GENERATOR_API_URL,  # 使用config中的默认值
         model_name: str = GENERATOR_MODEL_NAME_FOR_API,  # 使用config中的默认值
         generation_config: Dict[str, Any] = None,  # 允许覆盖默认的RAG配置
@@ -260,7 +261,12 @@ async def call_generator_vllm_stream(
     """
     异步调用VLLM Generator服务并流式返回响应。
     能够区分处理 delta 中的 'reasoning_content' 和 'content'。
-
+    
+    Args:
+        system_prompt: 系统提示（兼容旧接口）
+        user_content_for_generator: 用户内容（兼容旧接口）
+        messages: 消息列表（新接口，优先使用）
+        
     Yields dicts:
         {"type": "reasoning_delta", "text": "..."} (CoT内容)
         {"type": "content_delta", "text": "..."} (最终答案内容)
@@ -271,18 +277,25 @@ async def call_generator_vllm_stream(
     if generation_config:  # 如果调用时传入了特定配置，则更新/覆盖
         effective_generation_config.update(generation_config)
 
-    logger.info(
-        f"[VLLM_GENERATOR_CLIENT] 请求生成。系统提示: {'是' if system_prompt else '否'}，用户内容长度: {len(user_content_for_generator)}")
+    # 处理消息格式：优先使用messages参数，否则使用旧的system_prompt + user_content格式
+    if messages:
+        final_messages = messages
+        logger.info(f"[VLLM_GENERATOR_CLIENT] 请求生成。使用消息列表格式，消息数量: {len(messages)}")
+    else:
+        final_messages = []
+        if system_prompt:
+            final_messages.append({"role": "system", "content": system_prompt})
+        if user_content_for_generator:
+            final_messages.append({"role": "user", "content": user_content_for_generator})
+        logger.info(
+            f"[VLLM_GENERATOR_CLIENT] 请求生成。系统提示: {'是' if system_prompt else '否'}，用户内容长度: {len(user_content_for_generator) if user_content_for_generator else 0}")
+    
     logger.debug(f"[VLLM_GENERATOR_CLIENT] 使用生成参数: {effective_generation_config}")
-
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": user_content_for_generator})
+    logger.debug(f"[VLLM_GENERATOR_CLIENT] 最终消息数量: {len(final_messages)}")
 
     payload = {
         "model": model_name,
-        "messages": messages,
+        "messages": final_messages,
         "stream": True,
         **{k: v for k, v in effective_generation_config.items() if v is not None}
     }
@@ -295,9 +308,14 @@ async def call_generator_vllm_stream(
     try:
         timeout_config = aiohttp.ClientTimeout(total=request_timeout, connect=10.0)  # connect timeout可以短一些
         async with aiohttp.ClientSession(timeout=timeout_config) as session:
+            # 构建日志信息
+            if messages:
+                log_content = f"messages数量={len(messages)}"
+            else:
+                log_content = f"user_content长度={len(user_content_for_generator) if user_content_for_generator else 0}"
+            
             logger.debug(f"[{request_id}] [VLLM_GENERATOR_CLIENT] 发送生成请求到 {api_url}. "
-                         f"Payload (部分): model='{payload['model']}', "
-                         f"messages_user (首50字符)='{user_content_for_generator[:50].replace(chr(10), ' ')}...'")
+                         f"Payload (部分): model='{payload['model']}', {log_content}")
 
             async with session.post(api_url, headers=headers, json=payload) as response:
                 if response.status != 200:

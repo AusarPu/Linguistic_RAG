@@ -173,47 +173,70 @@ async def execute_rag_flow(
         return
 
     preview_for_ui_useful = [{"id": c.get("chunk_id"),
-                             "text_preview": c.get("text", ""),
-                             "from_paths": list(c.get("retrieved_from_paths", {}).keys()),
-                             } for c in candidate_chunks_for_reranker]
+                         "text_preview": c.get("text", ""),
+                         "text": c.get("text", ""),  # 保留完整文本
+                         "doc_name": c.get("doc_name", "未知"),  # 保留文档名
+                         "page_number": c.get("page_number", "未知"),  # 保留页码
+                         "author": c.get("author", "未知"),  # 保留作者
+                         "chunk_id": c.get("chunk_id"),  # 保留块ID
+                         "from_paths": list(c.get("retrieved_from_paths", {}).keys()),
+                         } for c in candidate_chunks_for_reranker]
+    
+    # 构建知识库内容作为tool role消息
+    knowledge_content_for_tool = "\n\n---\n\n".join([
+        f"【相关片段 {idx + 1} "
+        f"(文档: {chunk_data.get('doc_name', '未知')}, "
+        f"作者: {chunk_data.get('author', '未知')}, "
+        f"页码: {chunk_data.get('page_number', '未知')}, "
+        f"块ID: {chunk_data.get('chunk_id')})】\n"
+        f"{chunk_data.get('text', '')}"
+        for idx, chunk_data in enumerate(preview_for_ui_useful)
+    ])
+    
+    # 构建基于broadened question的思考过程
+    thinking_process = f"<think>好的，我认为要回答这个问题，应该从这几个方面来回答：{', '.join(_BROADENED_QUESTION)}。"
     yield {"type": "useful_chunks_preview", "count": len(candidate_chunks_for_reranker),
            "preview": preview_for_ui_useful}
 
     # 4. 构建最终上下文并生成答案
     yield _build_status_event("generation_start", "步骤4: 正在构建提示并生成答案...")
     final_context_chunks_for_llm = preview_for_ui_useful
-    context_segments = []
-    for idx, chunk_data in enumerate(final_context_chunks_for_llm):
-        # 确保 chunk_data 包含 'text'， 'doc_name', 'page_number', 'chunk_id'
-        # call_reranker_vllm 返回的块应该已经包含了这些原始元数据
-        segment = (f"【相关片段 {idx + 1} "
-                    f"(文档: {chunk_data.get('doc_name', '未知')}, "
-                    f"页码: {chunk_data.get('page_number', '未知')}, "
-                    f"块ID: {chunk_data.get('chunk_id')})】\n"
-                    f"{chunk_data.get('text', '')}")
-        context_segments.append(segment)
-    context_text_for_llm = "\n\n---\n\n".join(context_segments)
 
-    user_content_for_generator = (
-        f"上下文信息：\n\"\"\"\n{context_text_for_llm}\n\"\"\"\n\n"
-        f"请仔细阅读并理解以上所有上下文信息，然后用中文回答以下用户问题。"
-        f"请确保你的回答完全基于以上提供的上下文信息，不要凭空捏造或使用你自己的外部知识。"
-        f"如果上下文中没有足够信息来回答，请明确指出。\n"
-        f"用户问题：\n{rewritten_query}"
-    )
+    # 构建新的消息格式：system + chat history + tool role + user role + thinking process
+    messages_for_generator = [
+        {"role": "system", "content": GENERATOR_SYSTEM_PROMPT_CONTENT}
+    ]
+    
+    # 添加聊天历史
+    messages_for_generator.extend(chat_history_openai)
+    
+    # 添加当前查询相关的消息
+    messages_for_generator.extend([
+        {
+            "role": "user", 
+            "content": user_query  # 使用原始用户输入
+        },
+        {
+            "role": "tool",
+            "content": f"知识库检索结果：\n{knowledge_content_for_tool}"
+        },
+        {
+            "role": "assistant",
+            "content": thinking_process
+        }
+    ])
 
     logger.info(
-        f"[{flow_request_id}] [GENERATION_INPUT_PREVIEW] System: '{GENERATOR_SYSTEM_PROMPT_CONTENT[:100] if GENERATOR_SYSTEM_PROMPT_CONTENT else 'None'}...', User (context+query): '{user_content_for_generator[:100]}...'")
+        f"[{flow_request_id}] [GENERATION_INPUT_PREVIEW] Messages count: {len(messages_for_generator)}, Knowledge content length: {len(knowledge_content_for_tool)}")
     yield {"type": "llm_input_preview",
             "system_prompt_used": bool(GENERATOR_SYSTEM_PROMPT_CONTENT),
-            "user_content_length": len(user_content_for_generator)}
+            "message_count": len(messages_for_generator)}
 
     full_final_answer_text = ""
     full_reasoning_text = ""  # 用于累积思考过程
 
     async for gen_event in call_generator_vllm_stream(
-            GENERATOR_SYSTEM_PROMPT_CONTENT,  # 使用已加载的系统提示
-            user_content_for_generator
+            messages=messages_for_generator
             # 其他参数如API URL, model_name, generation_config, request_timeout 会用函数默认值 (来自config)
     ):
         yield gen_event  # 直接转发给调用者 (app_gradio.py 会处理 'reasoning_delta' 和 'content_delta')
