@@ -363,8 +363,8 @@ class KnowledgeBase:
     def search_dense_keywords(self, query_text: Union[str, List[str]], top_k: int = SPARSE_KEYWORD_RETRIEVAL_TOP_K,
                      threshold: Optional[float] = None) -> List[Dict[str, Any]]:
         """
-        使用BM25和语义搜索融合的方式进行关键词检索。
-        结合BM25的词频统计和稠密向量的语义匹配。
+        使用RRF（Reciprocal Rank Fusion）融合BM25和语义搜索的方式进行关键词检索。
+        结合文本块BM25检索和稠密向量的语义匹配。
         
         Args:
             query_text: 查询文本，可以是单个字符串或字符串列表
@@ -379,15 +379,15 @@ class KnowledgeBase:
         if threshold is None:
             threshold = DENSE_CHUNK_THRESHOLD
         
-        if not self.bm25_index or not self.embedding_model:
-            logger.warning("BM25索引或嵌入模型未加载，无法进行关键词检索。")
+        if not self.chunk_bm25_index or not self.embedding_model:
+            logger.warning("文本块BM25索引或嵌入模型未加载，无法进行关键词检索。")
             return []
         
         # 将单个字符串转换为列表以统一处理
         queries = [query_text] if isinstance(query_text, str) else query_text
         
-        # 用于存储所有查询的融合结果
-        chunk_id_to_fusion_info: Dict[str, Dict[str, Any]] = {}
+        # 用于存储所有查询的RRF融合结果
+        chunk_id_to_rrf_info: Dict[str, Dict[str, Any]] = {}
         
         for query in queries:
             # 确保query是字符串
@@ -396,86 +396,108 @@ class KnowledgeBase:
             elif not isinstance(query, str):
                 query = str(query)
                 
-            # 1. BM25检索 - 检索最相关的关键词短语
+            # 1. BM25检索 - 直接对文本块进行检索
             query_tokens = _simple_tokenize(query)
             if not query_tokens:
                 logger.warning(f"查询 '{query[:30]}...' 分词后为空，跳过此查询。")
                 continue
                 
-            bm25_scores = self.bm25_index.get_scores(query_tokens)
+            bm25_scores = self.chunk_bm25_index.get_scores(query_tokens)
             
-            # 2. 语义检索 - 为查询生成稠密向量
+            # 获取BM25排序结果（按分数降序）
+            bm25_ranked_indices = np.argsort(bm25_scores)[::-1]
+            bm25_chunk_rankings = {}  # chunk_idx -> rank (从1开始)
+            for rank, chunk_idx in enumerate(bm25_ranked_indices[:top_k * 2]):
+                if bm25_scores[chunk_idx] > 0:  # 只考虑有正分数的结果
+                    bm25_chunk_rankings[chunk_idx] = rank + 1
+            
+            # 2. 语义检索 - 使用稠密向量检索
+            embedding_chunk_rankings = {}
             query_output = self.embedding_model.encode(
-                instruct="Given a question, retrieve relevant keywords and key concepts that are related to the question topic.",
+                instruct="Given a question, retrieve relevant text passages that contain information to answer the question.",
                 texts=query
             )
             query_vector = query_output.get("dense_vecs")
-            if query_vector is None or query_vector.size == 0:
-                logger.warning(f"未能为查询 '{query[:30]}...' 生成稠密向量，仅使用BM25结果。")
-                semantic_scores = [0.0] * len(bm25_scores)
-            else:
-                # 归一化查询向量
-                query_vector = _normalize_embeddings(query_vector.reshape(1, -1))
+            if query_vector is not None and query_vector.size > 0:
+                # 确保query_vector是2D数组
+                if query_vector.ndim == 1:
+                    query_vector = query_vector.reshape(1, -1)
                 
-                # 计算与关键词短语的语义相似度
-                semantic_scores = []
-                for phrase_embedding in self.phrase_to_dense_embeddings_map.values():
-                    # 确保短语向量是2D数组并归一化
-                    if phrase_embedding.ndim == 1:
-                        phrase_embedding = phrase_embedding.reshape(1, -1)
-                    phrase_embedding = _normalize_embeddings(phrase_embedding)
+                # 使用Faiss进行稠密检索
+                num_candidates = min(top_k * 2, self.faiss_chunks_index.ntotal)
+                scores, faiss_indices = self.faiss_chunks_index.search(query_vector, num_candidates)
+                
+                # 获取embedding排序结果
+                for rank, (idx, score) in enumerate(zip(faiss_indices[0], scores[0])):
+                    if idx != -1 and score >= threshold:
+                        embedding_chunk_rankings[idx] = rank + 1
+            else:
+                logger.warning(f"未能为查询 '{query[:30]}...' 生成稠密向量，仅使用BM25结果。")
+            
+            # 3. RRF融合
+            k = 60  # RRF平滑因子
+            chunk_rrf_scores = {}
+            
+            # 收集所有出现在任一排序中的chunk
+            all_chunk_indices = set(bm25_chunk_rankings.keys()) | set(embedding_chunk_rankings.keys())
+            
+            for chunk_idx in all_chunk_indices:
+                rrf_score = 0.0
+                
+                # BM25贡献
+                if chunk_idx in bm25_chunk_rankings:
+                    rrf_score += 1.0 / (k + bm25_chunk_rankings[chunk_idx])
+                
+                # Embedding贡献
+                if chunk_idx in embedding_chunk_rankings:
+                    rrf_score += 1.0 / (k + embedding_chunk_rankings[chunk_idx])
+                
+                chunk_rrf_scores[chunk_idx] = rrf_score
+            
+            # 4. 将结果映射到chunk metadata
+            for chunk_idx, rrf_score in chunk_rrf_scores.items():
+                if 0 <= chunk_idx < len(self.indexed_chunks_metadata):
+                    chunk_meta = self.indexed_chunks_metadata[chunk_idx]
+                    chunk_id = chunk_meta.get('chunk_id')
                     
-                    # 计算余弦相似度
-                    similarity = np.dot(query_vector, phrase_embedding.T)[0, 0]
-                    semantic_scores.append(similarity)
-            
-            # 3. 分数归一化和融合
-            bm25_scores_norm = _normalize_scores(bm25_scores)
-            semantic_scores_norm = _normalize_scores(semantic_scores)
-            
-            # 4. 加权融合并收集相关短语
-            alpha = BM25_SEMANTIC_FUSION_ALPHA
-            phrase_scores = {}
-            
-            for i, phrase in enumerate(self.bm25_phrase_list):
-                if i < len(bm25_scores_norm) and i < len(semantic_scores_norm):
-                    final_score = alpha * bm25_scores_norm[i] + (1 - alpha) * semantic_scores_norm[i]
-                    phrase_scores[phrase] = final_score
-            
-            # 5. 基于融合分数传播到文档
-            for phrase, final_score in phrase_scores.items():
-                if phrase in self.phrase_to_sparse_weights_map:
-                    sparse_weights = self.phrase_to_sparse_weights_map[phrase]
-                    for chunk_idx_str, sparse_weight in sparse_weights.items():
-                        chunk_idx = int(chunk_idx_str)
-                        if 0 <= chunk_idx < len(self.indexed_chunks_metadata):
-                            chunk_meta = self.indexed_chunks_metadata[chunk_idx]
-                            chunk_id = chunk_meta.get('chunk_id')
-                            
-                            if chunk_id:
-                                # 使用稀疏权重加权融合分数
-                                weighted_score = final_score * sparse_weight
-                                
-                                # 只保留超过阈值的结果
-                                if threshold is None or weighted_score >= threshold:
-                                    # 如果这个chunk已经被其他查询检索到，只在得分更高时更新
-                                    if chunk_id not in chunk_id_to_fusion_info or weighted_score > chunk_id_to_fusion_info[chunk_id]['retrieval_score']:
-                                        chunk_meta_copy = dict(chunk_meta)
-                                        chunk_meta_copy['retrieval_score'] = weighted_score
-                                        chunk_meta_copy['retrieval_type'] = 'bm25_semantic_fusion'
-                                        chunk_meta_copy['matched_phrase'] = phrase
-                                        chunk_meta_copy['phrase_score'] = final_score
-                                        chunk_meta_copy['sparse_weight'] = sparse_weight
-                                        chunk_meta_copy['fusion_alpha'] = alpha
-                                        chunk_id_to_fusion_info[chunk_id] = chunk_meta_copy
+                    if chunk_id:
+                        # 如果这个chunk已经被其他查询检索到，只在得分更高时更新
+                        if chunk_id not in chunk_id_to_rrf_info or rrf_score > chunk_id_to_rrf_info[chunk_id]['retrieval_score']:
+                            chunk_meta_copy = dict(chunk_meta)
+                            chunk_meta_copy['retrieval_score'] = rrf_score
+                            chunk_meta_copy['retrieval_type'] = 'rrf_bm25_embedding_fusion'
+                            chunk_meta_copy['bm25_rank'] = bm25_chunk_rankings.get(chunk_idx, None)
+                            chunk_meta_copy['embedding_rank'] = embedding_chunk_rankings.get(chunk_idx, None)
+                            chunk_meta_copy['rrf_k'] = k
+                            chunk_id_to_rrf_info[chunk_id] = chunk_meta_copy
         
-        # 5. 排序并返回结果
-        results = list(chunk_id_to_fusion_info.values())
+        # 5. 对RRF分数进行最小-最大归一化
+        results = list(chunk_id_to_rrf_info.values())
+        if results:
+            # 获取所有RRF分数
+            rrf_scores = [result['retrieval_score'] for result in results]
+            min_score = min(rrf_scores)
+            max_score = max(rrf_scores)
+            
+            # 进行最小-最大归一化
+            if max_score > min_score:  # 避免除零错误
+                for result in results:
+                    original_score = result['retrieval_score']
+                    normalized_score = (original_score - min_score) / (max_score - min_score)
+                    result['retrieval_score'] = normalized_score
+                    result['original_rrf_score'] = original_score  # 保留原始分数用于调试
+            else:
+                # 如果所有分数相同，设置为1.0
+                for result in results:
+                    result['original_rrf_score'] = result['retrieval_score']
+                    result['retrieval_score'] = 1.0
+        
+        # 6. 排序并返回结果
         results.sort(key=lambda x: x['retrieval_score'], reverse=True)
         final_results = results[:top_k]
 
         query_summary = f"{len(queries)} queries" if isinstance(query_text, list) else f"'{query_text[:30]}...'"
         logger.info(
-            f"BM25+语义融合检索 for {query_summary} (耗时: {time.time() - start_time:.3f}s) - "
-            f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold}, α={BM25_SEMANTIC_FUSION_ALPHA})")
+            f"RRF融合检索 for {query_summary} (耗时: {time.time() - start_time:.3f}s) - "
+            f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold}, k={60})")
         return final_results

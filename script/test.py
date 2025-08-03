@@ -106,7 +106,7 @@ async def execute_rag_flow(
             logger.info(f"[{flow_request_id}] 召回路径 '{path_name}' 返回 {len(res_or_exc)} 个结果。")
             for chunk_data in res_or_exc:
                 chunk_id = chunk_data.get("chunk_id")
-                chunk_content = chunk_data.get("content", "")[:50]  # 获取前50个字
+                chunk_content = chunk_data.get("content", "")[:100]  # 获取前100个字
                 retrieval_score = chunk_data.get('retrieval_score')
                 
                 # 打印召回信息
@@ -133,10 +133,10 @@ if __name__ == "__main__":
         kb = KnowledgeBase()
         
         # 模拟用户查询和聊天历史
-        test_query = "从孔子的视角怎么看待焚书坑儒?"
+        test_query = "从他的视角怎么看待焚书坑儒?"
         test_chat_history = [
-            {"role": "user", "content": "你好"},
-            {"role": "assistant", "content": "你好!我能帮你什么?"}
+            {"role": "user", "content": "孔子是谁"},
+            {"role": "assistant", "content": "孔子是中国的一个重要的思想家、哲学家、教育家。"}
         ]
         
         # 执行RAG流程并打印结果
