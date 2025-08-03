@@ -80,7 +80,7 @@ async def execute_rag_flow(
                          DENSE_CHUNK_RETRIEVAL_TOP_K, 
                          DENSE_CHUNK_THRESHOLD),
         asyncio.to_thread(kb_instance.search_dense_keywords,
-                         [_KEYWORD],
+                         _KEYWORD + _BROADENED_QUESTION,
                          SPARSE_KEYWORD_RETRIEVAL_TOP_K,
                          SPARSE_KEYWORD_THRESHOLD),
         asyncio.to_thread(kb_instance.search_dense_questions,

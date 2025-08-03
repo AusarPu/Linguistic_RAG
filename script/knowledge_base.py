@@ -5,8 +5,8 @@ import numpy as np
 import json
 import pickle
 from pathlib import Path
-import os
-import time  # 仍然可以用于记录加载时间
+import jieba
+import time
 import logging
 from typing import List, Dict, Optional,Union, Any
 from rank_bm25 import BM25Okapi
@@ -22,13 +22,11 @@ from .config_rag import (
     QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH,
     ALL_QUESTION_TEXTS_SAVE_PATH,  # 用于加载问题文本的路径
 
-    # 检索参数，虽然主要在检索方法中使用，但放在config里是好的
     DENSE_CHUNK_RETRIEVAL_TOP_K,
     DENSE_QUESTION_RETRIEVAL_TOP_K,
     SPARSE_KEYWORD_RETRIEVAL_TOP_K,
     DENSE_CHUNK_THRESHOLD,
     DENSE_QUESTION_THRESHOLD,
-    BM25_SEMANTIC_FUSION_ALPHA
 )
 
 logger = logging.getLogger(__name__)
@@ -45,47 +43,6 @@ def _normalize_embeddings(embeddings: np.ndarray) -> np.ndarray:
         if norm > 1e-9:
             normalized_embeddings[i] = embeddings[i] / norm
     return normalized_embeddings
-
-
-def _simple_tokenize(text: str) -> List[str]:
-    """
-    简单的中英文分词函数。
-    
-    Args:
-        text: 输入文本
-        
-    Returns:
-        分词结果列表
-    """
-    import re
-    # 简单的分词：按空格、标点符号分割，保留中英文字符
-    tokens = re.findall(r'[\w\u4e00-\u9fff]+', text.lower())
-    return tokens
-
-
-def _normalize_scores(scores) -> List[float]:
-    """
-    将分数归一化到0-1范围。
-    
-    Args:
-        scores: 原始分数列表或numpy数组
-        
-    Returns:
-        归一化后的分数列表
-    """
-    if isinstance(scores, np.ndarray):
-        scores = scores.tolist()
-    
-    if not scores:
-        return scores
-    
-    min_score = min(scores)
-    max_score = max(scores)
-    
-    if max_score == min_score:
-        return [1.0] * len(scores)
-    
-    return [(score - min_score) / (max_score - min_score) for score in scores]
 
 
 class KnowledgeBase:
@@ -389,20 +346,9 @@ class KnowledgeBase:
         # 用于存储所有查询的RRF融合结果
         chunk_id_to_rrf_info: Dict[str, Dict[str, Any]] = {}
         
-        for query in queries:
-            # 确保query是字符串
-            if isinstance(query, list):
-                query = ' '.join(query)
-            elif not isinstance(query, str):
-                query = str(query)
-                
+        for query in queries:        
             # 1. BM25检索 - 直接对文本块进行检索
-            query_tokens = _simple_tokenize(query)
-            if not query_tokens:
-                logger.warning(f"查询 '{query[:30]}...' 分词后为空，跳过此查询。")
-                continue
-                
-            bm25_scores = self.chunk_bm25_index.get_scores(query_tokens)
+            bm25_scores = self.chunk_bm25_index.get_scores(query)
             
             # 获取BM25排序结果（按分数降序）
             bm25_ranked_indices = np.argsort(bm25_scores)[::-1]
