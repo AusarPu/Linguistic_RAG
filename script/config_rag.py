@@ -96,6 +96,7 @@ EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH # 用于发送给 Embedding 
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATOR_SYSTEM_PROMPT_FILE = os.path.join(_CONFIG_DIR, "../prompts/generator_system_prompt.txt")
 REWRITER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/rewriter_instruction.txt")
+USEFUL_JUDGER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/useful_judge.txt")
 # -------------------------
 
 # --- 生成参数配置 ---
