@@ -7,3 +7,5 @@ faiss-cpu==1.10.0
 numpy==2.2.5
 ebooklib==0.19
 beautifulsoup4==4.12.3
+rank-bm25==0.2.2
+jieba==0.42.1

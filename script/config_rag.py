@@ -16,12 +16,15 @@ PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 # 检索参数
 MAX_HISTORY = 10
-DENSE_CHUNK_RETRIEVAL_TOP_K = 1000
+DENSE_CHUNK_RETRIEVAL_TOP_K = 5
 DENSE_QUESTION_RETRIEVAL_TOP_K = 5 # 可以与上面不同
-SPARSE_KEYWORD_RETRIEVAL_TOP_K = 1000
-DENSE_CHUNK_THRESHOLD = 0.7
+SPARSE_KEYWORD_RETRIEVAL_TOP_K = 5
+DENSE_CHUNK_THRESHOLD = 0.5
 DENSE_QUESTION_THRESHOLD = 0.6
-SPARSE_KEYWORD_THRESHOLD = 0.6
+SPARSE_KEYWORD_THRESHOLD = 0.1
+
+# BM25和语义搜索融合参数
+BM25_SEMANTIC_FUSION_ALPHA = 0.1  # BM25权重，语义搜索权重为(1-alpha)
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
@@ -41,6 +44,8 @@ ENHANCED_CHUNKS_JSON_PATH = os.path.join(PROCESSED_DATA_DIR,"enhanced_knowledge_
 FAISS_INDEX_CHUNKS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "faiss_index_chunks_ip.idx")
 INDEXED_CHUNKS_METADATA_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "indexed_chunks_metadata.json")
 PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "phrase_sparse_weights_map.pkl")
+PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "phrase_dense_embeddings_map.pkl")
+BM25_INDEX_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "bm25_index.pkl")
 FAISS_INDEX_QUESTIONS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "faiss_index_questions_ip.idx")
 QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "question_index_to_chunk_id_map.json")
 ALL_QUESTION_TEXTS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "all_question_texts.json") # 确保这个已存在
@@ -55,9 +60,9 @@ VLLM_GENERATOR_MEM_UTILIZATION = 0.9 # GPU 显存使用率 (例如 0.9 for 90%)
 # 重写器服务配置
 VLLM_REWRITER_HOST = "localhost"
 VLLM_REWRITER_PORT = 8001         # vLLM 重写器监听的端口
-VLLM_REWRITER_GPU_ID = "0,1"         # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
+VLLM_REWRITER_GPU_ID = "0"         # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
 VLLM_REWRITER_MEM_UTILIZATION = 0.90 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
-VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 2 # 新增：Rewriter的张量并行数
+VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 1 # 新增：Rewriter的张量并行数
 
 # 重写器 LoRA 配置
 REWRITER_LORA_NAME = "rewriter_lora" # 在 vLLM 中标识 LoRA 的名称
@@ -72,7 +77,7 @@ VLLM_RERANKER_MEM_UTILIZATION = 0.1 # 如果与其他模型共享GPU，可能需
 # --- 新增：Embedding VLLM 服务配置 ---
 VLLM_EMBEDDING_HOST = "localhost"  # Embedding 服务部署在本地
 VLLM_EMBEDDING_PORT = 8850       # 为 Embedding 分配端口 8850
-VLLM_EMBEDDING_GPU_ID = 2        # 分配给 Embedding 的 GPU ID
+VLLM_EMBEDDING_GPU_ID = 1        # 分配给 Embedding 的 GPU ID
 VLLM_EMBEDDING_MEM_UTILIZATION = 0.3 # Embedding 模型通常显存占用较少
 
 # --- API 端点 (根据上面配置自动生成) ---

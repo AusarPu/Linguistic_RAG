@@ -29,19 +29,9 @@ from .config_rag import (
 
 logger = logging.getLogger(__name__)
 
-# 全局加载系统提示 (或者在 app_gradio.py 的 load_all_resources 中加载并传入)
-GENERATOR_SYSTEM_PROMPT_CONTENT: Optional[str] = None
-try:
-    if GENERATOR_SYSTEM_PROMPT_FILE and os.path.exists(GENERATOR_SYSTEM_PROMPT_FILE):
-        with open(GENERATOR_SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
-            GENERATOR_SYSTEM_PROMPT_CONTENT = f.read()
-        logger.info(f"成功从 {GENERATOR_SYSTEM_PROMPT_FILE} 加载生成器系统提示。")
-    else:
-        logger.warning(f"生成器系统提示文件路径 '{GENERATOR_SYSTEM_PROMPT_FILE}' 未配置或文件不存在。")
-        GENERATOR_SYSTEM_PROMPT_CONTENT = "你是一个耐心、友好、乐于助人的AI助手。"  # 默认或备用
-except Exception as e:
-    logger.error(f"加载生成器系统提示时出错: {e}", exc_info=True)
-    GENERATOR_SYSTEM_PROMPT_CONTENT = "你是一个耐心、友好、乐于助人的AI助手。"
+# 全局加载系统提示
+with open(GENERATOR_SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
+    GENERATOR_SYSTEM_PROMPT_CONTENT = f.read()
 
 
 async def execute_rag_flow(

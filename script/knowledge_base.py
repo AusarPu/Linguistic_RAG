@@ -8,13 +8,16 @@ from pathlib import Path
 import os
 import time  # 仍然可以用于记录加载时间
 import logging
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional,Union, Any
+from rank_bm25 import BM25Okapi
 
 from .vllm_clients import EmbeddingAPIClient
 from .config_rag import (
     FAISS_INDEX_CHUNKS_SAVE_PATH,
     INDEXED_CHUNKS_METADATA_SAVE_PATH,
     PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH,
+    PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH,
+    BM25_INDEX_SAVE_PATH,
     FAISS_INDEX_QUESTIONS_SAVE_PATH,
     QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH,
     ALL_QUESTION_TEXTS_SAVE_PATH,  # 用于加载问题文本的路径
@@ -24,7 +27,8 @@ from .config_rag import (
     DENSE_QUESTION_RETRIEVAL_TOP_K,
     SPARSE_KEYWORD_RETRIEVAL_TOP_K,
     DENSE_CHUNK_THRESHOLD,
-    DENSE_QUESTION_THRESHOLD
+    DENSE_QUESTION_THRESHOLD,
+    BM25_SEMANTIC_FUSION_ALPHA
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +47,47 @@ def _normalize_embeddings(embeddings: np.ndarray) -> np.ndarray:
     return normalized_embeddings
 
 
+def _simple_tokenize(text: str) -> List[str]:
+    """
+    简单的中英文分词函数。
+    
+    Args:
+        text: 输入文本
+        
+    Returns:
+        分词结果列表
+    """
+    import re
+    # 简单的分词：按空格、标点符号分割，保留中英文字符
+    tokens = re.findall(r'[\w\u4e00-\u9fff]+', text.lower())
+    return tokens
+
+
+def _normalize_scores(scores) -> List[float]:
+    """
+    将分数归一化到0-1范围。
+    
+    Args:
+        scores: 原始分数列表或numpy数组
+        
+    Returns:
+        归一化后的分数列表
+    """
+    if isinstance(scores, np.ndarray):
+        scores = scores.tolist()
+    
+    if not scores:
+        return scores
+    
+    min_score = min(scores)
+    max_score = max(scores)
+    
+    if max_score == min_score:
+        return [1.0] * len(scores)
+    
+    return [(score - min_score) / (max_score - min_score) for score in scores]
+
+
 class KnowledgeBase:
     def __init__(self):
         logger.info("Initializing KnowledgeBase to load pre-built indexes...")
@@ -58,6 +103,11 @@ class KnowledgeBase:
         self.chunk_id_to_metadata_map: Dict[str, Dict[str, Any]] = {}
 
         self.phrase_to_sparse_weights_map: Dict[str, Dict[int, float]] = {}
+        self.phrase_to_dense_embeddings_map: Dict[str, np.ndarray] = {}
+        
+        # BM25索引
+        self.bm25_index: Optional[BM25Okapi] = None
+        self.chunk_bm25_index: Optional[BM25Okapi] = None  # 文本块的BM25索引
 
         self.faiss_questions_index: Optional[faiss.Index] = None
         self.question_idx_to_chunk_id_map: List[str] = []
@@ -76,6 +126,8 @@ class KnowledgeBase:
             Path(FAISS_INDEX_CHUNKS_SAVE_PATH),
             Path(INDEXED_CHUNKS_METADATA_SAVE_PATH),
             Path(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH),
+            Path(PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH),
+            Path(BM25_INDEX_SAVE_PATH),
             Path(FAISS_INDEX_QUESTIONS_SAVE_PATH),
             Path(QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH),
             Path(ALL_QUESTION_TEXTS_SAVE_PATH) # 这个是可选的
@@ -113,6 +165,29 @@ class KnowledgeBase:
             self.phrase_to_sparse_weights_map = pickle.load(f)
         logger.info(f"Loaded sparse weights for {len(self.phrase_to_sparse_weights_map)} unique phrases.")
 
+        # 2.5. 加载关键词短语稠密向量映射
+        logger.info(f"Loading phrase dense embeddings map from '{PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH}'...")
+        with open(PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH, "rb") as f:
+            self.phrase_to_dense_embeddings_map = pickle.load(f)
+        logger.info(f"Loaded dense embeddings for {len(self.phrase_to_dense_embeddings_map)} unique phrases.")
+
+        # 2. 加载BM25索引
+        logger.info(f"Loading BM25 index from '{BM25_INDEX_SAVE_PATH}'...")
+        with open(BM25_INDEX_SAVE_PATH, "rb") as f:
+            bm25_data = pickle.load(f)
+            self.bm25_index = bm25_data["bm25_model"]
+            self.bm25_phrase_list = bm25_data["phrase_list"]
+        logger.info(f"Loaded BM25 index with {len(self.bm25_phrase_list)} phrases.")
+        
+        # 2.1. 加载文本块BM25索引
+        chunk_bm25_path = "/home/pushihao/RAG/processed_knowledge_base/chunk_bm25_index.pkl"
+        logger.info(f"Loading chunk BM25 index from '{chunk_bm25_path}'...")
+        with open(chunk_bm25_path, "rb") as f:
+            chunk_bm25_data = pickle.load(f)
+            self.chunk_bm25_index = chunk_bm25_data["bm25_model"]
+            self.chunk_bm25_texts = chunk_bm25_data.get("chunk_texts", [])
+        logger.info(f"Loaded chunk BM25 index with {len(self.chunk_bm25_texts)} chunks.")
+
         # 3. 加载预生成问题稠密检索资源
         logger.info(f"Loading Faiss index for questions from '{FAISS_INDEX_QUESTIONS_SAVE_PATH}'...")
         self.faiss_questions_index = faiss.read_index(FAISS_INDEX_QUESTIONS_SAVE_PATH)
@@ -144,10 +219,11 @@ class KnowledgeBase:
         logger.info("All search indexes and necessary data loaded successfully.")
 
     # --- 检索方法 ---
-    def search_dense_chunks(self, query_text: str, top_k: int = DENSE_CHUNK_RETRIEVAL_TOP_K,
+    def search_dense_chunks(self, query_text: Union[str, List[str]], top_k: int = DENSE_CHUNK_RETRIEVAL_TOP_K,
                             threshold: float = DENSE_CHUNK_THRESHOLD) -> List[Dict[str, Any]]:
         """
         使用Faiss基于块文本的稠密向量进行检索。
+        支持单个查询字符串或多个查询字符串列表。
         返回结果包含 chunk_id, retrieval_score (余弦相似度), 以及块的完整元数据。
         """
         if not self.embedding_model or not self.faiss_chunks_index or not self.indexed_chunks_metadata:
@@ -156,43 +232,61 @@ class KnowledgeBase:
 
         start_time = time.time()
         
-        query_output = self.embedding_model.encode(instruct="Given a question, retrieve relevant text passages that contain information to answer the question.", texts=query_text)
-        query_vector = query_output.get("dense_vecs")
-        if query_vector is None or query_vector.size == 0:
-            raise RuntimeError("未能为查询生成稠密向量。")
+        # 将单个字符串转换为列表以统一处理
+        queries = [query_text] if isinstance(query_text, str) else query_text
+        
+        # 用于存储所有查询的结果
+        all_results = {}  # chunk_id -> chunk_meta 的映射，用于去重
+        
+        for query in queries:
+            query_output = self.embedding_model.encode(
+                instruct="Given a question, retrieve relevant text passages that contain information to answer the question.",
+                texts=query
+            )
+            query_vector = query_output.get("dense_vecs")
+            if query_vector is None or query_vector.size == 0:
+                logger.warning(f"未能为查询 '{query[:30]}...' 生成稠密向量，跳过此查询。")
+                continue
 
-        query_vector_normalized = _normalize_embeddings(query_vector.astype(np.float32))
+            # 确保query_vector是2D数组，FAISS需要2D输入
+            if query_vector.ndim == 1:
+                query_vector = query_vector.reshape(1, -1)
 
-        # Faiss IndexFlatIP 返回的是内积 (如果向量归一化了，就是余弦相似度)
-        # 我们取比 top_k 稍多一些的候选（例如 top_k * 3 或固定数量如50），然后用阈值过滤并精确排序
-        # 这是因为Faiss的 search 可能不会完美按内积排序（取决于索引类型和参数），或者我们需要严格的阈值过滤
-        num_candidates_to_fetch = min(top_k * 5, self.faiss_chunks_index.ntotal)  # 可调整倍数
-        if num_candidates_to_fetch == 0: return []
+            num_candidates_to_fetch = min(top_k * 5, self.faiss_chunks_index.ntotal)
+            if num_candidates_to_fetch == 0: 
+                continue
 
-        scores, faiss_indices = self.faiss_chunks_index.search(query_vector_normalized, num_candidates_to_fetch)
+            scores, faiss_indices = self.faiss_chunks_index.search(query_vector, num_candidates_to_fetch)
 
-        results = []
-        for i in range(len(faiss_indices[0])):
-            idx = faiss_indices[0][i]
-            score = float(scores[0][i])  # score 越大越好 (余弦相似度)
+            # 处理当前查询的结果
+            for i in range(len(faiss_indices[0])):
+                idx = faiss_indices[0][i]
+                score = float(scores[0][i])
 
-            if idx != -1 and score >= threshold and 0 <= idx < len(self.indexed_chunks_metadata):
-                # 获取原始块的元数据副本
-                chunk_meta_copy = dict(self.indexed_chunks_metadata[idx])
-                chunk_meta_copy['retrieval_score'] = score
-                chunk_meta_copy['retrieval_type'] = 'dense_chunk_text'
-                results.append(chunk_meta_copy)
+                if idx != -1 and score >= threshold and 0 <= idx < len(self.indexed_chunks_metadata):
+                    chunk_meta = self.indexed_chunks_metadata[idx]
+                    chunk_id = chunk_meta.get("chunk_id")
+                    
+                    # 如果这个chunk已经被其他查询检索到，只在得分更高时更新
+                    if chunk_id not in all_results or score > all_results[chunk_id]['retrieval_score']:
+                        chunk_meta_copy = dict(chunk_meta)
+                        chunk_meta_copy['retrieval_score'] = score
+                        chunk_meta_copy['retrieval_type'] = 'dense_chunk_text'
+                        all_results[chunk_id] = chunk_meta_copy
 
-        # 按实际的 retrieval_score 再次排序 (因为 Faiss 返回的顺序和阈值过滤可能影响)
-        # 并且只取最终的 top_k
-        results.sort(key=lambda x: x['retrieval_score'], reverse=True)
-        final_results = results[:top_k]
+        # 将所有结果转换为列表并排序
+        final_results = list(all_results.values())
+        final_results.sort(key=lambda x: x['retrieval_score'], reverse=True)
+        final_results = final_results[:top_k]
 
+        query_summary = f"{len(queries)} queries" if isinstance(query_text, list) else f"'{query_text[:30]}...'"
         logger.info(
-            f"稠密块检索 for '{query_text[:30]}...' (耗时: {time.time() - start_time:.3f}s) - 返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold})")
+            f"稠密块检索 for {query_summary} (耗时: {time.time() - start_time:.3f}s) - "
+            f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold})")
+        
         return final_results
 
-    def search_dense_questions(self, query_text: str, top_k: int = DENSE_QUESTION_RETRIEVAL_TOP_K,
+    def search_dense_questions(self, query_text: Union[str, List[str]], top_k: int = DENSE_QUESTION_RETRIEVAL_TOP_K,
                                threshold: float = DENSE_QUESTION_THRESHOLD) -> List[Dict[str, Any]]:
         """
         使用Faiss基于预生成问题的稠密向量进行检索。
@@ -205,107 +299,183 @@ class KnowledgeBase:
 
         start_time = time.time()
         
-        query_output = self.embedding_model.encode(instruct="Given a question, retrieve similar or related questions that address the same topic or domain.", texts=query_text)
-        query_vector = query_output.get("dense_vecs")
-        if query_vector is None or query_vector.size == 0:
-            raise RuntimeError("未能为查询生成稠密向量。")
-
-        query_vector_normalized = _normalize_embeddings(query_vector.astype(np.float32))
-
-        num_candidates_to_fetch = min(top_k * 5, self.faiss_questions_index.ntotal)
-        if num_candidates_to_fetch == 0: return []
-
-        scores, q_indices = self.faiss_questions_index.search(query_vector_normalized, num_candidates_to_fetch)
-
-        # 使用字典来确保每个 chunk_id 只被添加一次（基于最高分的问题匹配）
+        # 将单个字符串转换为列表以统一处理
+        queries = [query_text] if isinstance(query_text, str) else query_text
+        
+        # 用于存储所有查询的结果
         chunk_id_to_best_q_match_info: Dict[str, Dict[str, Any]] = {}
+        
+        for query in queries:
+            query_output = self.embedding_model.encode(
+                instruct="Given a question, retrieve similar or related questions that address the same topic or domain.",
+                texts=query
+            )
+            query_vector = query_output.get("dense_vecs")
+            if query_vector is None or query_vector.size == 0:
+                logger.warning(f"未能为查询 '{query[:30]}...' 生成稠密向量，跳过此查询。")
+                continue
 
-        for i in range(len(q_indices[0])):
-            q_idx = q_indices[0][i]  # 这是匹配上的问题在扁平化列表中的索引
-            score = float(scores[0][i])
+            # 确保query_vector是2D数组，FAISS需要2D输入
+            if query_vector.ndim == 1:
+                query_vector = query_vector.reshape(1, -1)
 
-            if q_idx != -1 and score >= threshold and 0 <= q_idx < len(self.question_idx_to_chunk_id_map):
-                original_chunk_id = self.question_idx_to_chunk_id_map[q_idx]
-                matched_q_text = self.question_idx_to_text_map[q_idx] if 0 <= q_idx < len(
-                    self.question_idx_to_text_map) else "未知问题文本"
+            query_vector_normalized = _normalize_embeddings(query_vector.astype(np.float32))
 
-                # 如果这个chunk_id已经因为另一个问题被添加了，只在分数更高时更新
-                if original_chunk_id not in chunk_id_to_best_q_match_info or \
-                        score > chunk_id_to_best_q_match_info[original_chunk_id]['retrieval_score']:
+            num_candidates_to_fetch = min(top_k * 5, self.faiss_questions_index.ntotal)
+            if num_candidates_to_fetch == 0: continue
 
-                    chunk_meta_original = self.chunk_id_to_metadata_map.get(original_chunk_id)
-                    if chunk_meta_original:
-                        chunk_meta_copy = dict(chunk_meta_original)  # 获取原始块的完整元数据
-                        chunk_meta_copy['retrieval_score'] = score
-                        chunk_meta_copy['retrieval_type'] = 'dense_generated_question'
-                        chunk_meta_copy['matched_question'] = matched_q_text  # 记录匹配上的问题
-                        chunk_id_to_best_q_match_info[original_chunk_id] = chunk_meta_copy
+            scores, q_indices = self.faiss_questions_index.search(query_vector_normalized, num_candidates_to_fetch)
+
+            # 使用字典来确保每个 chunk_id 只被添加一次（基于最高分的问题匹配）
+            chunk_id_to_best_q_match_info: Dict[str, Dict[str, Any]] = {}
+
+            for i in range(len(q_indices[0])):
+                q_idx = q_indices[0][i]  # 这是匹配上的问题在扁平化列表中的索引
+                score = float(scores[0][i])
+
+                if q_idx != -1 and score >= threshold and 0 <= q_idx < len(self.question_idx_to_chunk_id_map):
+                    original_chunk_id = self.question_idx_to_chunk_id_map[q_idx]
+                    matched_q_text = self.question_idx_to_text_map[q_idx] if 0 <= q_idx < len(
+                        self.question_idx_to_text_map) else "未知问题文本"
+
+                    # 如果这个chunk_id已经因为另一个问题被添加了，只在分数更高时更新
+                    if original_chunk_id not in chunk_id_to_best_q_match_info or \
+                            score > chunk_id_to_best_q_match_info[original_chunk_id]['retrieval_score']:
+
+                        chunk_meta_original = self.chunk_id_to_metadata_map.get(original_chunk_id)
+                        if chunk_meta_original:
+                            chunk_meta_copy = dict(chunk_meta_original)  # 获取原始块的完整元数据
+                            chunk_meta_copy['retrieval_score'] = score
+                            chunk_meta_copy['retrieval_type'] = 'dense_generated_question'
+                            chunk_meta_copy['matched_question'] = matched_q_text  # 记录匹配上的问题
+                            chunk_id_to_best_q_match_info[original_chunk_id] = chunk_meta_copy
 
         results = list(chunk_id_to_best_q_match_info.values())
         results.sort(key=lambda x: x['retrieval_score'], reverse=True)
         final_results = results[:top_k]
 
+        query_summary = f"{len(queries)} queries" if isinstance(query_text, list) else f"'{query_text[:30]}...'"
         logger.info(
-            f"预生成问题稠密检索 for '{query_text[:30]}...' (耗时: {time.time() - start_time:.3f}s) - 返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold})")
+            f"预生成问题稠密检索 for {query_summary} (耗时: {time.time() - start_time:.3f}s) - "
+            f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold})")
         return final_results
 
-    def search_dense_keywords(self, query_text: str, top_k: int = SPARSE_KEYWORD_RETRIEVAL_TOP_K,
+    def search_dense_keywords(self, query_text: Union[str, List[str]], top_k: int = SPARSE_KEYWORD_RETRIEVAL_TOP_K,
                      threshold: Optional[float] = None) -> List[Dict[str, Any]]:
         """
-        使用稠密向量进行检索。
-        现在使用稠密向量替代原来的稀疏关键词匹配。
+        使用BM25和语义搜索融合的方式进行关键词检索。
+        结合BM25的词频统计和稠密向量的语义匹配。
         
         Args:
-            query_text: 查询文本
+            query_text: 查询文本，可以是单个字符串或字符串列表
             top_k: 返回的最大结果数量
             threshold: 相似度阈值，如果为None则使用默认的块检索阈值
             
         Returns:
             检索结果列表
         """
-
         start_time = time.time()
         
-        query_output = self.embedding_model.encode(instruct="Given a question, retrieve relevant keywords and key concepts that are related to the question topic.", texts=query_text)
-        query_vector = query_output.get("dense_vecs")
-        if query_vector is None or query_vector.size == 0:
-            raise RuntimeError("未能为查询生成稠密向量。")
-
-        query_vector_normalized = _normalize_embeddings(query_vector.astype(np.float32))
-
-        num_candidates_to_fetch = min(top_k * 5, self.faiss_questions_index.ntotal)
-        if num_candidates_to_fetch == 0: return []
-
-        scores, q_indices = self.faiss_questions_index.search(query_vector_normalized, num_candidates_to_fetch)
-
-        # 使用字典来确保每个 chunk_id 只被添加一次（基于最高分的问题匹配）
-        chunk_id_to_best_q_match_info: Dict[str, Dict[str, Any]] = {}
-
-        for i in range(len(q_indices[0])):
-            q_idx = q_indices[0][i]  # 这是匹配上的问题在扁平化列表中的索引
-            score = float(scores[0][i])
-
-            if q_idx != -1 and score >= threshold and 0 <= q_idx < len(self.question_idx_to_chunk_id_map):
-                original_chunk_id = self.question_idx_to_chunk_id_map[q_idx]
-                matched_q_text = self.question_idx_to_text_map[q_idx] if 0 <= q_idx < len(
-                    self.question_idx_to_text_map) else "未知问题文本"
-
-                # 如果这个chunk_id已经因为另一个问题被添加了，只在分数更高时更新
-                if original_chunk_id not in chunk_id_to_best_q_match_info or \
-                        score > chunk_id_to_best_q_match_info[original_chunk_id]['retrieval_score']:
-
-                    chunk_meta_original = self.chunk_id_to_metadata_map.get(original_chunk_id)
-                    if chunk_meta_original:
-                        chunk_meta_copy = dict(chunk_meta_original)  # 获取原始块的完整元数据
-                        chunk_meta_copy['retrieval_score'] = score
-                        chunk_meta_copy['retrieval_type'] = 'dense_generated_question'
-                        chunk_meta_copy['matched_question'] = matched_q_text  # 记录匹配上的问题
-                        chunk_id_to_best_q_match_info[original_chunk_id] = chunk_meta_copy
-
-        results = list(chunk_id_to_best_q_match_info.values())
+        if threshold is None:
+            threshold = DENSE_CHUNK_THRESHOLD
+        
+        if not self.bm25_index or not self.embedding_model:
+            logger.warning("BM25索引或嵌入模型未加载，无法进行关键词检索。")
+            return []
+        
+        # 将单个字符串转换为列表以统一处理
+        queries = [query_text] if isinstance(query_text, str) else query_text
+        
+        # 用于存储所有查询的融合结果
+        chunk_id_to_fusion_info: Dict[str, Dict[str, Any]] = {}
+        
+        for query in queries:
+            # 确保query是字符串
+            if isinstance(query, list):
+                query = ' '.join(query)
+            elif not isinstance(query, str):
+                query = str(query)
+                
+            # 1. BM25检索 - 检索最相关的关键词短语
+            query_tokens = _simple_tokenize(query)
+            if not query_tokens:
+                logger.warning(f"查询 '{query[:30]}...' 分词后为空，跳过此查询。")
+                continue
+                
+            bm25_scores = self.bm25_index.get_scores(query_tokens)
+            
+            # 2. 语义检索 - 为查询生成稠密向量
+            query_output = self.embedding_model.encode(
+                instruct="Given a question, retrieve relevant keywords and key concepts that are related to the question topic.",
+                texts=query
+            )
+            query_vector = query_output.get("dense_vecs")
+            if query_vector is None or query_vector.size == 0:
+                logger.warning(f"未能为查询 '{query[:30]}...' 生成稠密向量，仅使用BM25结果。")
+                semantic_scores = [0.0] * len(bm25_scores)
+            else:
+                # 归一化查询向量
+                query_vector = _normalize_embeddings(query_vector.reshape(1, -1))
+                
+                # 计算与关键词短语的语义相似度
+                semantic_scores = []
+                for phrase_embedding in self.phrase_to_dense_embeddings_map.values():
+                    # 确保短语向量是2D数组并归一化
+                    if phrase_embedding.ndim == 1:
+                        phrase_embedding = phrase_embedding.reshape(1, -1)
+                    phrase_embedding = _normalize_embeddings(phrase_embedding)
+                    
+                    # 计算余弦相似度
+                    similarity = np.dot(query_vector, phrase_embedding.T)[0, 0]
+                    semantic_scores.append(similarity)
+            
+            # 3. 分数归一化和融合
+            bm25_scores_norm = _normalize_scores(bm25_scores)
+            semantic_scores_norm = _normalize_scores(semantic_scores)
+            
+            # 4. 加权融合并收集相关短语
+            alpha = BM25_SEMANTIC_FUSION_ALPHA
+            phrase_scores = {}
+            
+            for i, phrase in enumerate(self.bm25_phrase_list):
+                if i < len(bm25_scores_norm) and i < len(semantic_scores_norm):
+                    final_score = alpha * bm25_scores_norm[i] + (1 - alpha) * semantic_scores_norm[i]
+                    phrase_scores[phrase] = final_score
+            
+            # 5. 基于融合分数传播到文档
+            for phrase, final_score in phrase_scores.items():
+                if phrase in self.phrase_to_sparse_weights_map:
+                    sparse_weights = self.phrase_to_sparse_weights_map[phrase]
+                    for chunk_idx_str, sparse_weight in sparse_weights.items():
+                        chunk_idx = int(chunk_idx_str)
+                        if 0 <= chunk_idx < len(self.indexed_chunks_metadata):
+                            chunk_meta = self.indexed_chunks_metadata[chunk_idx]
+                            chunk_id = chunk_meta.get('chunk_id')
+                            
+                            if chunk_id:
+                                # 使用稀疏权重加权融合分数
+                                weighted_score = final_score * sparse_weight
+                                
+                                # 只保留超过阈值的结果
+                                if threshold is None or weighted_score >= threshold:
+                                    # 如果这个chunk已经被其他查询检索到，只在得分更高时更新
+                                    if chunk_id not in chunk_id_to_fusion_info or weighted_score > chunk_id_to_fusion_info[chunk_id]['retrieval_score']:
+                                        chunk_meta_copy = dict(chunk_meta)
+                                        chunk_meta_copy['retrieval_score'] = weighted_score
+                                        chunk_meta_copy['retrieval_type'] = 'bm25_semantic_fusion'
+                                        chunk_meta_copy['matched_phrase'] = phrase
+                                        chunk_meta_copy['phrase_score'] = final_score
+                                        chunk_meta_copy['sparse_weight'] = sparse_weight
+                                        chunk_meta_copy['fusion_alpha'] = alpha
+                                        chunk_id_to_fusion_info[chunk_id] = chunk_meta_copy
+        
+        # 5. 排序并返回结果
+        results = list(chunk_id_to_fusion_info.values())
         results.sort(key=lambda x: x['retrieval_score'], reverse=True)
         final_results = results[:top_k]
 
+        query_summary = f"{len(queries)} queries" if isinstance(query_text, list) else f"'{query_text[:30]}...'"
         logger.info(
-            f"关键词稠密检索 for '{query_text[:30]}...' (耗时: {time.time() - start_time:.3f}s) - 返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold})")
+            f"BM25+语义融合检索 for {query_summary} (耗时: {time.time() - start_time:.3f}s) - "
+            f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold}, α={BM25_SEMANTIC_FUSION_ALPHA})")
         return final_results

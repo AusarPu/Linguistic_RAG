@@ -19,6 +19,7 @@ from script.config_rag import *
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import jieba
 
 
 
@@ -100,8 +101,10 @@ def build_all_search_indexes(
     chunk_dense_emb_filename: str,
     chunk_faiss_idx_filename: str,
     indexed_chunks_meta_filename: str,
+    chunk_bm25_index_filename: str,  # 新增：文本块BM25索引文件名
     # 关键词短语相关文件名
     phrase_dense_map_filename: str,
+    phrase_bm25_index_filename: str,  # 新增：关键词短语BM25索引文件名
     # 预生成问题相关文件名
     question_dense_emb_filename: str,
     question_faiss_idx_filename: str,
@@ -114,7 +117,10 @@ def build_all_search_indexes(
     """
     构建核心的搜索索引：
     1. 稠密向量索引 (Faiss) 基于块的 'text'。
-    2. 唯一关键词短语的稀疏权重映射 (BGE-M3 lexical_weights)。
+    2. 文本块BM25索引 (使用jieba分词)。
+    3. 唯一关键词短语的稠密向量映射 (BGE-M3)。
+    4. 关键词短语BM25索引。
+    5. 预生成问题的稠密向量索引。
     并保存这些索引及相关的块元数据。
     """
     logger.info(f"开始从 '{enhanced_chunks_path}' 构建核心搜索索引...")
@@ -230,6 +236,35 @@ def build_all_search_indexes(
             faiss.write_index(chunk_faiss_index, str(output_path / chunk_faiss_idx_filename))
             logger.info(f"块文本 Faiss 索引已保存到: {output_path / chunk_faiss_idx_filename}")
 
+            # --- 2.1 为文本块构建BM25索引 (使用jieba分词) ---
+            logger.info(f"开始为 {len(texts_for_chunk_dense_embedding)} 个文本块构建BM25索引 (使用jieba分词)...")
+            try:
+                # 使用jieba对文本块进行分词
+                tokenized_chunks = []
+                with tqdm(total=len(texts_for_chunk_dense_embedding), desc="文本块分词", unit="块") as pbar:
+                    for text in texts_for_chunk_dense_embedding:
+                        tokens = list(jieba.cut(text))
+                        # 过滤掉空白符和单字符
+                        tokens = [token.strip() for token in tokens if token.strip() and len(token.strip()) > 1]
+                        tokenized_chunks.append(tokens)
+                        pbar.update(1)
+                
+                # 创建BM25索引
+                from rank_bm25 import BM25Okapi
+                chunk_bm25 = BM25Okapi(tokenized_chunks)
+                
+                # 保存文本块BM25索引
+                with open(output_path / chunk_bm25_index_filename, "wb") as f:
+                    pickle.dump({
+                        "bm25_model": chunk_bm25,
+                        "chunk_texts": texts_for_chunk_dense_embedding,
+                        "tokenized_chunks": tokenized_chunks
+                    }, f)
+                logger.info(f"文本块BM25索引已保存到: {output_path / chunk_bm25_index_filename}")
+                
+            except Exception as e:
+                logger.error(f"构建文本块BM25索引时出错: {e}", exc_info=True)
+
         except Exception as e:
             logger.error(f"块文本稠密向量处理或Faiss索引构建过程中出错: {e}", exc_info=True)
             # 如果这里失败，后续可能无法进行，或者至少稠密检索会失败
@@ -237,7 +272,7 @@ def build_all_search_indexes(
         logger.warning("没有文本块可用于稠密索引，跳过此步骤。")
 
 
-    # --- 3. 为唯一关键词短语编码稠密向量 ---
+    # --- 3. 为唯一关键词短语编码稠密向量和构建BM25索引 ---
     phrase_to_dense_embeddings_map: Dict[str, np.ndarray] = {}
     if all_unique_keyword_phrases:
         logger.info(f"开始为 {len(all_unique_keyword_phrases)} 个唯一关键词短语生成稠密向量...")
@@ -269,6 +304,18 @@ def build_all_search_indexes(
                     pbar.update(1)
             
             logger.info("唯一关键词短语的稠密向量映射生成完成。")
+
+            # 创建并保存关键词短语BM25索引
+            from rank_bm25 import BM25Okapi
+            tokenized_phrases = [phrase.split() for phrase in unique_phrases_list_for_encoding]
+            phrase_bm25 = BM25Okapi(tokenized_phrases)
+            
+            with open(output_path / phrase_bm25_index_filename, "wb") as f:
+                pickle.dump({
+                    "bm25_model": phrase_bm25,
+                    "phrase_list": unique_phrases_list_for_encoding
+                }, f)
+            logger.info(f"关键词短语BM25索引已保存到: {output_path / phrase_bm25_index_filename}")
 
             with open(output_path / phrase_dense_map_filename, "wb") as f:
                 pickle.dump(phrase_to_dense_embeddings_map, f)
@@ -392,7 +439,9 @@ def build_test_indexes_with_limit(enhanced_chunks_path, test_limit=None):
             chunk_dense_emb_filename="test_dense_embeddings_chunks.npy",
             chunk_faiss_idx_filename="test_faiss_index_chunks_ip.idx",
             indexed_chunks_meta_filename="test_indexed_chunks_metadata.json",
+            chunk_bm25_index_filename="test_chunk_bm25_index.pkl",
             phrase_dense_map_filename="test_phrase_dense_embeddings_map.pkl",
+            phrase_bm25_index_filename="test_phrase_bm25_index.pkl",
             question_dense_emb_filename="test_dense_embeddings_questions.npy",
             question_faiss_idx_filename="test_faiss_index_questions_ip.idx",
             question_to_chunk_id_map_filename="test_question_index_to_chunk_id_map.json",
@@ -405,7 +454,9 @@ def build_test_indexes_with_limit(enhanced_chunks_path, test_limit=None):
             "test_dense_embeddings_chunks.npy",
             "test_faiss_index_chunks_ip.idx", 
             "test_indexed_chunks_metadata.json",
+            "test_chunk_bm25_index.pkl",
             "test_phrase_dense_embeddings_map.pkl",
+            "test_phrase_bm25_index.pkl",
             "test_dense_embeddings_questions.npy",
             "test_faiss_index_questions_ip.idx",
             "test_question_index_to_chunk_id_map.json",
@@ -466,7 +517,9 @@ if __name__ == '__main__':
             chunk_dense_emb_filename="dense_embeddings_chunks.npy",
             chunk_faiss_idx_filename="faiss_index_chunks_ip.idx",
             indexed_chunks_meta_filename="indexed_chunks_metadata.json",
+            chunk_bm25_index_filename="chunk_bm25_index.pkl",
             phrase_dense_map_filename="phrase_dense_embeddings_map.pkl",
+            phrase_bm25_index_filename="phrase_bm25_index.pkl",
             question_dense_emb_filename="dense_embeddings_questions.npy",
             question_faiss_idx_filename="faiss_index_questions_ip.idx",
             question_to_chunk_id_map_filename="question_index_to_chunk_id_map.json",
