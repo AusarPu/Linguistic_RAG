@@ -194,7 +194,7 @@ async def execute_rag_flow(
     ])
     
     # 构建基于broadened question的思考过程
-    thinking_process = f"<think>好的，我认为要回答这个问题，应该从这几个方面来回答：{', '.join(_BROADENED_QUESTION)}。"
+    thinking_process = f"<think>好的，我认为要回答这个问题，应该从这几个方面来回答：{', '.join(_BROADENED_QUESTION)}"
     yield {"type": "useful_chunks_preview", "count": len(candidate_chunks_for_reranker),
            "preview": preview_for_ui_useful}
 

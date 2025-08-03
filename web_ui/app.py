@@ -18,20 +18,11 @@ from web_ui.event_handlers import update_ui_for_event, format_references_for_dis
 # --- 全局变量和初始化 ---
 logger = logging.getLogger(__name__)
 kb_instance: Optional[KnowledgeBase] = None
-# 从config加载系统提示，如果rag_pipeline.py中已经加载，确保这里获取的是同一个
-# GENERATOR_SYSTEM_PROMPT_CONTENT = config.GENERATOR_SYSTEM_PROMPT_CONTENT (假设config中直接定义或加载)
-# 在rag_pipeline.py中，GENERATOR_SYSTEM_PROMPT_CONTENT 是在模块级别加载的
-# 我们可以在这里直接引用它，或者确保config.py中的setup_logging()被调用
-try:
-    if config.GENERATOR_SYSTEM_PROMPT_FILE and \
-            config.os.path.exists(config.GENERATOR_SYSTEM_PROMPT_FILE):  #
-        with open(config.GENERATOR_SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:  #
-            GENERATOR_SYSTEM_PROMPT_CONTENT = f.read()  #
-    else:
-        GENERATOR_SYSTEM_PROMPT_CONTENT = "你是一个耐心、友好、乐于助人的AI助手。"  #
-except Exception as e:
-    logger.error(f"加载生成器系统提示时出错: {e}")  #
-    GENERATOR_SYSTEM_PROMPT_CONTENT = "你是一个耐心、友好、乐于助人的AI助手。"  #
+
+
+with open(config.GENERATOR_SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
+    GENERATOR_SYSTEM_PROMPT_CONTENT = f.read()
+
 
 
 def load_resources():
