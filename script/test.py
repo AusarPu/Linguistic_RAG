@@ -98,23 +98,11 @@ async def execute_rag_flow(
 
     for i, res_or_exc in enumerate(retrieval_outputs):
         path_name = retrieval_paths_display_names[i]
-        if isinstance(res_or_exc, Exception):
-            logger.error(f"[{flow_request_id}] 召回路径 '{path_name}' 执行时发生错误: {res_or_exc}")
-            yield {"type": "error", "stage": f"retrieval_{path_name}",
-                    "message": f"召回路径 '{path_name}' 失败."}
-        elif isinstance(res_or_exc, list):
+        if res_or_exc:
             logger.info(f"[{flow_request_id}] 召回路径 '{path_name}' 返回 {len(res_or_exc)} 个结果。")
             for chunk_data in res_or_exc:
                 chunk_id = chunk_data.get("chunk_id")
-                chunk_content = chunk_data.get("content", "")[:100]  # 获取前100个字
                 retrieval_score = chunk_data.get('retrieval_score')
-                
-                # 打印召回信息
-                print(f"块ID: {chunk_id}")
-                print(f"内容预览: {chunk_content}...")
-                print(f"召回方式: {path_name}")
-                print(f"召回分数: {retrieval_score}\n")
-                
                 if chunk_id not in all_retrieved_chunks_map:
                     all_retrieved_chunks_map[chunk_id] = chunk_data
                     all_retrieved_chunks_map[chunk_id].setdefault('retrieved_from_paths', {})[
@@ -123,6 +111,27 @@ async def execute_rag_flow(
                     # 如果块已通过其他路径召回，添加来源并记录分数
                     all_retrieved_chunks_map[chunk_id].setdefault('retrieved_from_paths', {})[
                         path_name] = retrieval_score
+    
+
+    candidate_chunks_for_reranker = list(all_retrieved_chunks_map.values())
+    retrieval_duration = time.time() - retrieval_start_time
+    logger.info(
+        f"[{flow_request_id}] RAG Flow STAGE: Retrieval complete. Found {len(candidate_chunks_for_reranker)} unique candidates. Duration: {retrieval_duration:.3f}s")
+
+    preview_for_ui_retrieved = [{"id": c.get("chunk_id"),
+                                    "text_preview": c.get("text", ""),
+                                    "from_paths": list(c.get("retrieved_from_paths", {}).keys()),
+                                    "scores": c.get("retrieved_from_paths", {})  # 也发送原始分数
+                                    } for c in candidate_chunks_for_reranker]
+    yield {"type": "retrieved_chunks_preview", "count": len(candidate_chunks_for_reranker),
+            "preview": preview_for_ui_retrieved}
+
+    if not candidate_chunks_for_reranker:
+        yield _build_status_event("no_context_found_after_retrieval", "未能从知识库中找到与查询相关的上下文信息。")
+        yield {"type": "content_delta", "text": "抱歉，我没有找到与您问题相关的直接信息。"}  # 给前端一个友好的提示
+        yield {"type": "pipeline_end", "reason": "no_context_found_after_retrieval"}
+        return
+
    
 
 
