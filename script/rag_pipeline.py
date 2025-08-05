@@ -1,31 +1,21 @@
 # script/rag_pipeline.py
 
 import asyncio
-import os
-import sys
 import time
 import logging
 import json
-from typing import List, Dict, Any, Tuple, AsyncGenerator, Optional
-
-import aiohttp  # 仅当 VLLM 客户端函数也在此文件时直接需要
-
+from typing import List, Dict, Any,AsyncGenerator, Optional
 # --- 从项目中导入 ---
 from .knowledge_base import KnowledgeBase
 from .query_rewriter import generate_rewritten_query
 from .useful_judger import judge_knowledge_usefulness
-from .vllm_clients import call_reranker_vllm, call_generator_vllm_stream
+from .vllm_clients import call_generator_vllm_stream
 
 
 from .config_rag import (
     # 检索参数
     DENSE_CHUNK_RETRIEVAL_TOP_K, DENSE_QUESTION_RETRIEVAL_TOP_K, SPARSE_KEYWORD_RETRIEVAL_TOP_K,
-    DENSE_CHUNK_THRESHOLD, DENSE_QUESTION_THRESHOLD, SPARSE_KEYWORD_THRESHOLD,
-    # Reranker 参数
-    RERANKER_TOP_N_INPUT_MAX,
-    # Generator 参数
-    GENERATOR_CONTEXT_TOP_N, GENERATOR_SYSTEM_PROMPT_FILE,
-    # (其他如API URL, MODEL NAME等由各客户端函数内部从config获取)
+    DENSE_CHUNK_THRESHOLD, DENSE_QUESTION_THRESHOLD, SPARSE_KEYWORD_THRESHOLD,GENERATOR_SYSTEM_PROMPT_FILE,
 )
 
 logger = logging.getLogger(__name__)

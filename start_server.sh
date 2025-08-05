@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo ">>> 启动 RAG 系统核心服务 (Rewriter, Reranker, Web UI)..."
+echo ">>> 启动 RAG 系统核心服务 (Rewriter, Embedding)..."
 
 # --- 配置 --- 
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -14,14 +14,13 @@ fi
 
 LOG_DIR="$PROJECT_ROOT/logs"
 PYTHON_CMD="python3" # 或你的 python 命令
-GRADIO_SCRIPT="$PROJECT_ROOT/web_ui/app.py"
 
 REWRITER_LOG="$LOG_DIR/vllm_rewriter.log"
-RERANKER_LOG="$LOG_DIR/vllm_reranker.log"
+
 EMBEDDING_LOG="$LOG_DIR/vllm_embedding.log"
 PID_DIR="$PROJECT_ROOT/pids" # 定义 PID_DIR
 REWRITER_PID_FILE="$PID_DIR/vllm_rewriter.pid"
-RERANKER_PID_FILE="$PID_DIR/vllm_reranker.pid"
+
 EMBEDDING_PID_FILE="$PID_DIR/vllm_embedding.pid"
 
 # --- 读取配置函数 ---
@@ -50,32 +49,7 @@ REWRITER_MAX_LORA_RANK=$(read_config VLLM_MAX_LORA_RANK)
 REWRITER_TENSOR_PARALLEL_SIZE=$(read_config VLLM_REWRITER_TENSOR_PARALLEL_SIZE)
 if [ -z "$REWRITER_TENSOR_PARALLEL_SIZE" ]; then REWRITER_TENSOR_PARALLEL_SIZE=2; fi # 默认值
 
-# 读取 Reranker 配置
-# 确保我们从 script.config 中读取正确的变量名
-CONFIG_MODULE="script.config_rag" # 确保 CONFIG_MODULE 已定义
-RERANKER_MODEL_PATH=$(read_config VLLM_RERANKER_MODEL_PATH)
-if [ -z "$RERANKER_MODEL_PATH" ]; then 
-    echo "错误: VLLM_RERANKER_MODEL_PATH 未在 $CONFIG_MODULE 中配置。" >&2;
-fi
 
-RERANKER_PORT=$(read_config VLLM_RERANKER_PORT)
-if [ -z "$RERANKER_PORT" ]; then 
-    echo "错误: VLLM_RERANKER_PORT 未在 $CONFIG_MODULE 中配置。" >&2;
-fi
-
-RERANKER_GPU_ID=$(read_config VLLM_RERANKER_GPU_ID)
-if [ -z "$RERANKER_GPU_ID" ]; then 
-    echo "警告: VLLM_RERANKER_GPU_ID 未在 $CONFIG_MODULE 中配置，将使用默认值: 0" >&2;
-    RERANKER_GPU_ID="0"; 
-fi
-
-# RERANKER_MEM_UTILIZATION (如果需要，从config.py添加并在这里读取)
-# 假设 VLLM_RERANKER_MEM_UTILIZATION 存在于 config.py
-RERANKER_MEM_UTILIZATION=$(read_config VLLM_RERANKER_MEM_UTILIZATION)
-if [ -z "$RERANKER_MEM_UTILIZATION" ]; then 
-    echo "警告: VLLM_RERANKER_MEM_UTILIZATION 未在 $CONFIG_MODULE 中配置，将使用默认值: 0.9" >&2;
-    RERANKER_MEM_UTILIZATION="0.9"; 
-fi
 
 # 读取 Embedding 配置
 EMBEDDING_MODEL_PATH=$(read_config EMBEDDING_MODEL_PATH)
@@ -110,12 +84,7 @@ cleanup() {
         kill "$REWRITER_PID" &> /dev/null || echo "    Rewriter 进程 $REWRITER_PID 可能已停止。"
         rm -f "$REWRITER_PID_FILE"
     fi
-    if [ -f "$RERANKER_PID_FILE" ]; then
-        RERANKER_PID=$(cat "$RERANKER_PID_FILE")
-        echo "    停止 Reranker (PID: $RERANKER_PID)..."
-        kill "$RERANKER_PID" &> /dev/null || echo "    Reranker 进程 $RERANKER_PID 可能已停止。"
-        rm -f "$RERANKER_PID_FILE"
-    fi
+
     if [ -f "$EMBEDDING_PID_FILE" ]; then
         EMBEDDING_PID=$(cat "$EMBEDDING_PID_FILE")
         echo "    停止 Embedding (PID: $EMBEDDING_PID)..."
@@ -170,37 +139,7 @@ else
     sleep 5
 fi
 
-# --- 启动 Reranker vLLM 服务 ---
-if [ -z "$RERANKER_MODEL_PATH" ] || [ -z "$RERANKER_PORT" ]; then
-    echo "错误: Reranker 服务配置不完整 (模型路径或端口缺失)，跳过启动。" >&2
-else
-    echo ">>> 正在后台启动 Reranker vLLM 服务..."
-    echo "    模型路径: $RERANKER_MODEL_PATH"
-    echo "    端口: $RERANKER_PORT"
-    echo "    分配 GPU: ${RERANKER_GPU_ID:-默认所有可见GPU}"
-    echo "    显存限制: ${RERANKER_MEM_UTILIZATION:-默认}"
 
-    # 使用 bash 数组来安全地构建命令
-    RERANKER_CMD_ARRAY=(
-        vllm serve "$RERANKER_MODEL_PATH"
-        --port "$RERANKER_PORT"
-        --trust-remote-code
-        --disable-log-requests
-        --max-model-len 8192
-        --max_num_seqs 1024
-    )
-
-    # 有条件地添加内存参数
-    if [ ! -z "$RERANKER_MEM_UTILIZATION" ] && [ "$RERANKER_MEM_UTILIZATION" != "None" ]; then
-      RERANKER_CMD_ARRAY+=(--gpu-memory-utilization "$RERANKER_MEM_UTILIZATION")
-    fi
-    
-    # 使用 nohup 和正确的变量展开来启动服务
-    (export CUDA_VISIBLE_DEVICES=${RERANKER_GPU_ID}; nohup "${RERANKER_CMD_ARRAY[@]}" > "$RERANKER_LOG" 2>&1 & echo $! > "$RERANKER_PID_FILE")
-    echo "    Reranker 服务 PID: $(cat "$RERANKER_PID_FILE")，日志: $RERANKER_LOG"
-    echo "    等待 Reranker 服务启动 (约30-60秒)..."
-    sleep 5
-fi
 
 # --- 启动 Embedding vLLM 服务 ---
 if [ -z "$EMBEDDING_MODEL_PATH" ] || [ -z "$EMBEDDING_PORT" ]; then
@@ -234,17 +173,11 @@ else
     sleep 5
 fi
 
-# --- 启动 Gradio Web UI (前台运行) ---
-if [ ! -f "$GRADIO_SCRIPT" ]; then
-    echo "错误: Gradio 应用脚本未找到: $GRADIO_SCRIPT" >&2
-    exit 1
-fi
+echo ">>> vLLM 服务启动完成。"
+echo ">>> 如需启动前端，请运行: ./start_frontend.sh"
 
-echo ">>> 启动 Gradio Web UI (前台运行)..."
-cd "$PROJECT_ROOT" || { echo "错误: 无法切换到项目根目录 $PROJECT_ROOT"; exit 1; }
-
-echo "    从 $(pwd) 启动 Gradio 应用: $GRADIO_SCRIPT"
-$PYTHON_CMD "$GRADIO_SCRIPT"
-
-# Gradio 退出后，trap EXIT 会调用 cleanup 函数
-echo ">>> Gradio Web UI 已退出。"
+# 保持脚本运行，等待信号
+echo ">>> 按 Ctrl+C 停止所有服务..."
+while true; do
+    sleep 1
+done

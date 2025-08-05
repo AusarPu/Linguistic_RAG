@@ -17,9 +17,9 @@
 ## 🏗️ 系统架构
 
 ```
-用户查询 → 查询重写 → 多路召回 → 重排序 → 生成回答
-    ↓           ↓         ↓        ↓        ↓
-  Web UI → Query Rewriter → Knowledge Base → Reranker → Generator
+用户查询 → 查询重写 → 多路召回 → 生成回答
+    ↓           ↓         ↓        ↓
+  Web UI → Query Rewriter → Knowledge Base → Generator
 ```
 
 ## 📁 项目结构
@@ -84,7 +84,6 @@ pip install -r requirements.txt
 VLLM_BASE_MODEL_LOCAL_PATH = "/path/to/Qwen3-30B-A3B-FP8"
 VLLM_REWRITE_MODEL_LOCAL_PATH = "/path/to/Qwen3-30B-A3B-FP8"
 EMBEDDING_MODEL_PATH = "/path/to/bge-large-zh-v1.5"
-VLLM_RERANKER_MODEL_PATH = "/path/to/bge-reranker-v2-m3"
 ```
 
 #### 外部API模式 (仅需1-2GB GPU显存)
@@ -92,9 +91,8 @@ VLLM_RERANKER_MODEL_PATH = "/path/to/bge-reranker-v2-m3"
 如果使用外部LLM API服务，只需配置嵌入模型：
 
 ```python
-# 仅需要嵌入和重排序模型
+# 仅需要嵌入模型
 EMBEDDING_MODEL_PATH = "/path/to/bge-large-zh-v1.5"
-VLLM_RERANKER_MODEL_PATH = "/path/to/bge-reranker-v2-m3"
 
 # API配置
 GENERATOR_API_URL = "https://api.openai.com/v1/chat/completions"
@@ -150,15 +148,14 @@ SPARSE_KEYWORD_THRESHOLD = 0.6           # 关键词检索阈值
 # GPU配置
 VLLM_GENERATOR_GPU_ID = 0                # 生成器GPU
 VLLM_REWRITER_GPU_ID = "0,1"             # 重写器GPU（支持多卡）
-VLLM_RERANKER_GPU_ID = 1                 # 重排序器GPU
 ```
 
 ### 服务端口配置
 
 - **生成器服务**: `localhost:8001`
 - **重写器服务**: `localhost:8001` 
-- **重排序服务**: `localhost:8002`
-- **Web界面**: `localhost:8848`
+- **嵌入服务**: `localhost:8850`
+- **Web界面**: `localhost:8080`
 
 ## 📊 功能模块
 
