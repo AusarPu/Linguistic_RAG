@@ -1,6 +1,6 @@
 # RAG 语言学知识库问答系统
 
-一个基于检索增强生成（RAG）技术的语言学知识库问答系统，支持多路召回、查询重写、重排序等高级功能。
+一个基于检索增强生成（RAG）技术的语言学知识库问答系统，支持多路召回、查询重写、有用性判断等高级功能。
 
 ## 🌟 项目特色
 
@@ -8,18 +8,18 @@
 
 - **多路召回策略**: 结合全文稠密、关键词稀疏、预生成问题三种检索方式
 - **智能查询重写**: 基于对话历史优化用户查询，支持复杂查询分解
-- **高效重排序**: 使用BGE重排序模型提升检索精度
+- **有用性判断**: 智能筛选与查询相关的知识块，提升回答质量
 - **流式生成**: 支持实时流式回答生成
-- **Web界面**: 基于Gradio的友好用户界面，运行在8848端口
+- **Web界面**: 基于Gradio的友好用户界面，运行在8080端口
 - **灵活部署**: vLLM后端完全兼容OpenAI API，支持本地部署或外部API
 - **上下文优化**: 智能优化文本块连贯性，提升检索质量
 
 ## 🏗️ 系统架构
 
 ```
-用户查询 → 查询重写 → 多路召回 → 生成回答
-    ↓           ↓         ↓        ↓
-  Web UI → Query Rewriter → Knowledge Base → Generator
+用户查询 → 查询重写 → 多路召回 → 有用性判断 → 生成回答
+    ↓           ↓         ↓          ↓         ↓
+  Web UI → Query Rewriter → Knowledge Base → Usefulness Judge → Generator
 ```
 
 ## 📁 项目结构
@@ -29,10 +29,11 @@ RAG/
 ├── knowledge_base/          # 原始知识库文档
 ├── processed_knowledge_base/ # 处理后的知识库数据
 ├── script/                  # 核心脚本
-│   ├── config.py           # 配置文件
+│   ├── config_rag.py       # 配置文件
 │   ├── knowledge_base.py   # 知识库管理
 │   ├── rag_pipeline.py     # RAG流程
 │   ├── query_rewriter.py   # 查询重写
+│   ├── useful_judger.py    # 有用性判断
 │   └── vllm_clients.py     # vLLM客户端
 ├── preprocess/             # 数据预处理
 │   ├── preprocess_documents.py    # 文档预处理和分块
@@ -40,13 +41,12 @@ RAG/
 │   ├── generate_summary_question.py # 生成问题摘要
 │   └── optimize_chunk_b_via_vllm.py # 基于上下文的文本块优化
 
-├── web_ui/                 # Web界面
-│   ├── app.py             # 主应用
-│   ├── ui_components.py   # UI组件
-│   └── event_handlers.py  # 事件处理
+├── Gradio_UI/              # Web界面
+│   └── app.py             # 主应用
 ├── prompts/               # 提示词模板
 ├── requirements.txt       # 依赖包
-└── start_server.sh       # 启动脚本
+├── start_server.sh       # 后端服务启动脚本
+└── start_frontend.sh     # 前端界面启动脚本
 ```
 
 ## 🚀 快速开始
@@ -77,7 +77,7 @@ pip install -r requirements.txt
 
 #### 本地部署模式 (需要32GB+ GPU显存)
 
-在 `script/config.py` 中配置本地模型路径：
+在 `script/config_rag.py` 中配置本地模型路径：
 
 ```python
 # 基础模型路径
@@ -123,16 +123,19 @@ REWRITER_API_URL = "https://api.openai.com/v1/chat/completions"
 ### 启动服务
 
 ```bash
-# 启动所有服务（推荐）
+# 启动后端服务
 bash start_server.sh
 
+# 启动前端界面
+bash start_frontend.sh
+
 # 或手动启动Web界面
-python web_ui/app.py
+python Gradio_UI/app.py
 ```
 
 ## 🔧 配置说明
 
-### 核心配置 (`script/config.py`)
+### 核心配置 (`script/config_rag.py`)
 
 ```python
 # 检索参数
@@ -148,12 +151,13 @@ SPARSE_KEYWORD_THRESHOLD = 0.6           # 关键词检索阈值
 # GPU配置
 VLLM_GENERATOR_GPU_ID = 0                # 生成器GPU
 VLLM_REWRITER_GPU_ID = "0,1"             # 重写器GPU（支持多卡）
+VLLM_EMBEDDING_GPU_ID = 1                # 嵌入模型GPU
 ```
 
 ### 服务端口配置
 
 - **生成器服务**: `localhost:8001`
-- **重写器服务**: `localhost:8001` 
+- **重写器服务**: `localhost:8002` 
 - **嵌入服务**: `localhost:8850`
 - **Web界面**: `localhost:8080`
 
@@ -173,21 +177,28 @@ VLLM_REWRITER_GPU_ID = "0,1"             # 重写器GPU（支持多卡）
 - **语言学优化**: 针对语言学领域的专业查询优化
 - **JSON格式输出**: 结构化的查询重写结果
 
-### 3. RAG流程 (`rag_pipeline.py`)
+### 3. 有用性判断 (`useful_judger.py`)
+
+- **智能筛选**: 基于查询内容判断知识块的相关性
+- **多维度评估**: 从多个角度评估知识块的有用性
+- **阈值控制**: 可配置的有用性判断标准
+- **性能优化**: 高效的批量处理和并发判断
+
+### 4. RAG流程 (`rag_pipeline.py`)
 
 - **异步流式处理**: 实时响应用户交互
 - **多路并行召回**: 同时执行三种检索策略
-- **智能重排序**: BGE重排序模型提升结果质量
+- **有用性筛选**: 智能过滤无关知识块，提升回答质量
 - **上下文感知生成**: 基于检索结果的智能回答生成
 
-### 4. 数据预处理 (`preprocess/`)
+### 5. 数据预处理 (`preprocess/`)
 
 - **文档解析**: 支持带页码标记的OCR文档
 - **智能分块**: RecursiveCharacterTextSplitter分块策略
 - **上下文优化**: `optimize_chunk_b_via_vllm.py`基于上下文优化文本块连贯性
 - **索引构建**: 自动化的向量索引和元数据构建
 
-### 5. Web界面 (`web_ui/`)
+### 6. Web界面 (`Gradio_UI/`)
 
 - **实时对话**: 支持流式回答显示
 - **多列布局**: 对话区、检索结果区、处理状态区
@@ -250,6 +261,14 @@ async for event in execute_rag_flow(
 - **优势**: 提供精确的答案定位和快速响应
 - **应用场景**: 常见问题的直接匹配
 
+### 4. 有用性判断
+- **技术**: 基于LLM的智能筛选机制
+- **原理**: 评估检索结果与查询的相关性
+- **优势**: 过滤无关内容，提升回答质量
+- **应用场景**: 多路召回结果的智能筛选
+
+
+
 ## 🛠️ 开发指南
 
 ### 添加新的检索策略
@@ -262,6 +281,7 @@ async for event in execute_rag_flow(
 
 - 编辑 `prompts/generator_system_prompt.txt` 修改生成器提示
 - 编辑 `prompts/rewriter_instruction.txt` 修改重写器提示
+- 编辑 `prompts/useful_judge.txt` 修改有用性判断提示
 
 ### 扩展知识库
 
@@ -277,9 +297,9 @@ async for event in execute_rag_flow(
 - 合理分配多GPU资源
 
 ### 检索优化
-- 调整各检索策略的TOP_K值
-- 优化相似度阈值
-- 使用更高效的索引结构
+- 调整各检索策略的TOP_K值和权重配置
+- 优化相似度阈值和有用性判断阈值
+- 使用更高效的索引结构和更大的嵌入模型
 
 ### 生成优化
 - 调整生成参数（temperature, top_p等）
@@ -295,13 +315,16 @@ A: 检查 `config.py` 中的模型路径配置，确保模型文件已下载到�
 A: 降低 `MEM_UTILIZATION` 参数值，或使用更小的模型。
 
 ### Q: 检索结果不准确
-A: 调整检索阈值参数，或重新训练嵌入模型。
+A: 调整检索阈值参数，优化有用性判断标准，或重新训练嵌入模型。
 
 ### Q: Web界面无法访问
-A: 检查防火墙设置，确保8848端口开放。
+A: 检查防火墙设置，确保8080端口开放。
 
 ### Q: 如何使用外部LLM API？
 A: vLLM后端完全兼容OpenAI API格式，可以轻松切换到外部API服务，大幅降低GPU显存需求。
+
+### Q: 有用性判断效果不佳
+A: 检查有用性判断模型是否正确加载，调整判断阈值参数，或优化判断提示词模板。
 
 ## 📄 许可证
 
