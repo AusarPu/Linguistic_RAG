@@ -37,8 +37,7 @@ Thumbs.db
 .venv/
 Gradio_UI/app.log
 Reports/datasets/preparation_results.json
-Reports/datasets/crag/train.json
-Reports/datasets/crag/validation.json
+
 Reports/datasets/evaluation/nq_test.json
 Reports/datasets/hotpot_qa/train.json
 Reports/datasets/hotpot_qa/validation.json

@@ -5,11 +5,11 @@
 """
 
 import os
-# 重要：必须在导入 datasets / huggingface_hub 之前设置镜像端点与缓存/token
+
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 os.environ['HUGGINGFACE_HUB_CACHE'] = '/tmp/huggingface_cache'
 os.environ['HF_DATASETS_CACHE'] = '/tmp/hf_datasets_cache'
-# HF_TOKEN 请通过运行环境变量提供（例如: export HF_TOKEN=...），此处不写入任何密钥
+
 import json
 import requests
 import zipfile
@@ -19,7 +19,6 @@ import logging
 import time
 from collections import deque
 import multiprocessing as mp
-# import signal  # 未使用，移除以避免linter告警
 from datasets import load_dataset
 import pandas as pd
 
@@ -105,39 +104,7 @@ class DatasetPreparator:
         raise Exception("下载在多次重试后仍未成功")
 
 
-    
-    def download_natural_questions(self) -> Dict[str, Any]:
-        """
-        处理Natural Questions数据集
-        """
-        logger.info("开始处理Natural Questions数据集...")
-        logger.info(f"使用镜像源: {os.environ.get('HF_ENDPOINT', 'https://hf-mirror.com')}")
 
-        # 直接调用处理方法，不使用测速监控
-        self._download_nq_once()
-
-        # 读取保存结果
-        nq_dir = self.data_dir / "natural_questions"
-        train_fp = nq_dir / "train.json"
-        val_fp = nq_dir / "validation.json"
-        if not (train_fp.exists() and val_fp.exists()):
-            raise Exception("处理阶段未生成期望文件")
-
-        # 计算样本数量
-        with open(train_fp, "r", encoding="utf-8") as f:
-            train_data = json.load(f)
-        with open(val_fp, "r", encoding="utf-8") as f:
-            val_data = json.load(f)
-
-        logger.info(f"✅ Natural Questions数据集处理完成: 训练集 {len(train_data)} 条, 验证集 {len(val_data)} 条")
-        logger.info(f"数据已保存到: {nq_dir}")
-
-        return {
-            "train_size": len(train_data),
-            "val_size": len(val_data),
-            "status": "success",
-            "path": str(nq_dir)
-        }
     
     def _download_nq_once(self):
         """处理NQ数据集：先下载后处理"""
@@ -688,40 +655,7 @@ class DatasetPreparator:
                 self._download_triviaqa_raw()
                 return self._process_dataset("trivia_qa", self._process_triviaqa_example, 100, 50)
 
-    # ---- CRAG ----
-    def _process_crag_example(self, ex: Dict) -> Dict:
-        try:
-            question = ex.get('question') or ex.get('query') or ''
-            answer = ex.get('answer') or ex.get('ground_truth') or ex.get('gold') or ''
-            if not (question and answer):
-                return None
-            context = ex.get('context') or ex.get('evidence') or ex.get('source') or ''
-            if not isinstance(context, str):
-                context = str(context)[:2000]
-            return {
-                'id': ex.get('id') or ex.get('qid') or '',
-                'question': question,
-                'answer': answer if isinstance(answer, str) else str(answer),
-                'context': context,
-                'document_title': ''
-            }
-        except Exception as e:
-            logger.warning(f"处理CRAG样本失败: {e}")
-            return None
 
-    def _download_crag_once(self):
-        try:
-            return self._download_generic_once(
-                dataset_id="Quivr/CRAG",
-                out_subdir="crag",
-                process_fn_name="_process_crag_example",
-                train_limit=100,
-                val_limit=50,
-            )
-        except Exception:
-            # 如果失败，使用原始数据下载方法
-            self._download_crag_raw()
-            return self._process_dataset("crag", self._process_crag_example, 100, 50)
 
     # ---- MS MARCO ----
     def _process_msmarco_example(self, ex: Dict) -> Dict:
@@ -960,70 +894,7 @@ class DatasetPreparator:
         
         logger.info(f"最小 TriviaQA 数据集已创建到 {raw_dir}")
     
-    def _download_crag_raw(self):
-        """下载 CRAG 原始数据（仅下载，不转换格式）"""
-        logger.info("下载 CRAG 原始数据...")
-        
-        try:
-            # 仅下载数据集到缓存，不进行格式转换和保存
-            dataset = load_dataset("Quivr/CRAG", trust_remote_code=True)
-            logger.info(f"CRAG 数据集下载完成，缓存到系统")
-        except Exception as e:
-            logger.warning(f"使用 Quivr/CRAG 失败: {e}，尝试其他方式...")
-            # 如果失败，创建一个最小的数据集
-            logger.info("创建最小的 CRAG 数据集...")
-            self._create_minimal_crag_dataset()
-            return
-    
-    def _create_minimal_crag_dataset(self):
-        """创建最小的 CRAG 数据集"""
-        raw_dir = self.data_dir / "raw" / "crag"
-        
-        # 创建最小的训练数据
-        train_data = [
-            {
-                "interaction_id": "crag_train_001",
-                "query_time": "2024-01-01T00:00:00Z",
-                "domain": "open",
-                "question_type": "simple",
-                "static_or_dynamic": "static",
-                "query": "What is the capital of France?",
-                "answer": "Paris",
-                "alt_ans": ["Paris, France"],
-                "split": 1,
-                "popularity": "head",
-                "search_results": []
-            }
-        ]
-        
-        # 创建最小的验证数据
-        val_data = [
-            {
-                "interaction_id": "crag_val_001",
-                "query_time": "2024-01-01T00:00:00Z",
-                "domain": "open",
-                "question_type": "simple",
-                "static_or_dynamic": "static",
-                "query": "What is the largest ocean on Earth?",
-                "answer": "Pacific Ocean",
-                "alt_ans": ["Pacific"],
-                "split": 0,
-                "popularity": "head",
-                "search_results": []
-            }
-        ]
-        
-        # 保存数据
-        import json
-        with open(raw_dir / "train_raw.json", 'w', encoding='utf-8') as f:
-            for item in train_data:
-                f.write(json.dumps(item, ensure_ascii=False) + '\n')
-        
-        with open(raw_dir / "validation_raw.json", 'w', encoding='utf-8') as f:
-            for item in val_data:
-                f.write(json.dumps(item, ensure_ascii=False) + '\n')
-        
-        logger.info(f"最小 CRAG 数据集已创建到 {raw_dir}")
+
     
     def _download_msmarco_raw(self):
         """下载 MS MARCO 原始数据（仅下载，不转换格式）"""
@@ -1118,16 +989,7 @@ class DatasetPreparator:
         logger.info(f"✅ TriviaQA完成: 训练集 {len(train)} 条, 验证集 {len(val)} 条")
         return {"train_size": len(train), "val_size": len(val), "status": "success", "path": str(out_dir)}
 
-    def download_crag(self) -> Dict[str, Any]:
-        logger.info("开始处理CRAG数据集...")
-        self._download_crag_once()
-        out_dir = self.data_dir / "crag"
-        with open(out_dir / "train.json", "r", encoding="utf-8") as f:
-            train = json.load(f)
-        with open(out_dir / "validation.json", "r", encoding="utf-8") as f:
-            val = json.load(f)
-        logger.info(f"✅ CRAG完成: 训练集 {len(train)} 条, 验证集 {len(val)} 条")
-        return {"train_size": len(train), "val_size": len(val), "status": "success", "path": str(out_dir)}
+
 
     def download_msmarco(self) -> Dict[str, Any]:
         logger.info("开始处理MS MARCO数据集...")
@@ -1196,21 +1058,7 @@ class DatasetPreparator:
             logger.error(f"TriviaQA 下载失败: {e}")
             download_results["trivia_qa"] = "failed"
         
-        # 下载 CRAG
-        logger.info("下载 CRAG...")
-        try:
-            self._watchdog_run(
-                target=self._download_crag_raw,
-                args=(),
-                min_speed_bytes=1_048_576,
-                window_seconds=60,
-                check_interval=1.0,
-                max_retries=3,
-            )
-            download_results["crag"] = "success"
-        except Exception as e:
-            logger.error(f"CRAG 下载失败: {e}")
-            download_results["crag"] = "failed"
+
         
         # 下载 MS MARCO
         logger.info("下载 MS MARCO...")
@@ -1274,10 +1122,7 @@ class DatasetPreparator:
             logger.info("处理 TriviaQA...")
             results["trivia_qa"] = self._process_dataset("trivia_qa", self._process_triviaqa_example)
         
-        # 处理 CRAG
-        if (self.data_dir / "raw" / "crag").exists():
-            logger.info("处理 CRAG...")
-            results["crag"] = self._process_dataset("crag", self._process_crag_example)
+
         
         # 处理 MS MARCO
         if (self.data_dir / "raw" / "ms_marco").exists():
