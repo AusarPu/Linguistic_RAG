@@ -145,8 +145,8 @@ class DatasetPreparator:
         # 处理训练集和验证集（限制数量以减少处理时间）
         train_data: List[Dict] = []
         val_data: List[Dict] = []
-        train_limit = 100
-        val_limit = 50
+        train_limit = 9999999999999999999999999999
+        val_limit = 9999999999999999999999999
 
         # 选择可用的分割名称并打印信息
         available_splits = list(dataset.keys())
@@ -374,14 +374,13 @@ class DatasetPreparator:
             if not answer_text:
                 return None
 
-            # 4) 构造上下文：优先使用tokens拼接，退化为清理后的HTML内容
+            # 4) 构造上下文：直接使用原始内容
             context = ""
             if tokens and isinstance(tokens, list):
                 try:
-                    # 取前500个token作为上下文
-                    context_tokens = tokens[:500] if len(tokens) > 500 else tokens
+                    # 直接拼接所有token
                     result_tokens = []
-                    for t in context_tokens:
+                    for t in tokens:
                         if isinstance(t, dict):
                             token_text = t.get("token", "")
                         else:
@@ -394,13 +393,13 @@ class DatasetPreparator:
                     context = ""
             
             if not context:
-                # 退化方案：使用document html并进行深度清理
+                # 使用原始HTML内容
                 if isinstance(document, dict):
                     html_content = document.get("html", "")
                     if html_content:
-                        context = self._clean_html_content(html_content)
-                        if len(context) < 50 and title:  # 如果清理后内容过短，使用标题作为退化方案
-                            context = title
+                        context = html_content
+                    elif title:  # 如果没有HTML内容，使用标题
+                        context = title
 
             return {
                 "id": example.get("example_id") or example.get("id", ""),
@@ -421,23 +420,6 @@ class DatasetPreparator:
         
         eval_dir = self.data_dir / "evaluation"
         eval_dir.mkdir(exist_ok=True)
-        
-        # 为QuAC创建小规模测试集
-        quac_val_file = self.data_dir / "quac" / "validation.json"
-        if quac_val_file.exists():
-            with open(quac_val_file, "r", encoding="utf-8") as f:
-                quac_data = json.load(f)
-            
-            # 确保数据是列表格式
-            if isinstance(quac_data, list):
-                # 取前50个对话用于快速测试
-                quac_test = quac_data[:50] if len(quac_data) > 50 else quac_data
-            else:
-                # 如果不是列表，转换为列表
-                quac_test = [quac_data] if quac_data else []
-            
-            with open(eval_dir / "quac_test.json", "w", encoding="utf-8") as f:
-                json.dump(quac_test, f, ensure_ascii=False, indent=2)
         
         # 为Natural Questions创建小规模测试集
         nq_val_file = self.data_dir / "natural_questions" / "validation.json"
@@ -533,7 +515,6 @@ class DatasetPreparator:
         os.replace(tmp_train, final_train)
         os.replace(tmp_val, final_val)
 
-    # ---- HotpotQA ----
     # ---- HotpotQA ----
     def _process_hotpotqa_example(self, ex: Dict) -> Dict:
         try:
@@ -742,76 +723,10 @@ class DatasetPreparator:
             dataset = load_dataset("google-research-datasets/natural_questions", trust_remote_code=True)
             logger.info(f"Natural Questions 数据集下载完成，缓存到系统")
         except Exception as e:
-            logger.warning(f"使用 google-research-datasets/natural_questions 失败: {e}，尝试其他方式...")
-            # 如果失败，创建一个最小的数据集
-            logger.info("创建最小的 Natural Questions 数据集...")
-            self._create_minimal_nq_dataset()
-            return
+            logger.error(f"下载 Natural Questions 数据集失败: {e}")
+            raise Exception(f"无法下载 Natural Questions 数据集: {e}")
     
-    def _create_minimal_nq_dataset(self):
-        """创建最小的 Natural Questions 数据集"""
-        raw_dir = self.data_dir / "raw" / "natural_questions"
-        
-        # 创建最小的训练数据
-        train_data = [
-            {
-                "id": "nq_train_001",
-                "document": {
-                    "title": "Paris",
-                    "url": "https://en.wikipedia.org/wiki/Paris",
-                    "html": "<html><body><p>Paris is the capital of France.</p></body></html>",
-                    "tokens": [{"token": "Paris", "is_html": False, "start_byte": 0, "end_byte": 5}]
-                },
-                "question": {
-                    "text": "What is the capital of France?",
-                    "tokens": ["What", "is", "the", "capital", "of", "France", "?"]
-                },
-                "long_answer_candidates": [],
-                "annotations": [{
-                    "id": "001",
-                    "long_answer": {"start_token": -1, "end_token": -1, "start_byte": -1, "end_byte": -1, "candidate_index": -1},
-                    "short_answers": [{"start_token": 0, "end_token": 1, "start_byte": 0, "end_byte": 5, "text": "Paris"}],
-                    "yes_no_answer": -1
-                }]
-            }
-        ]
-        
-        # 创建最小的验证数据
-        val_data = [
-            {
-                "id": "nq_val_001",
-                "document": {
-                    "title": "Pacific Ocean",
-                    "url": "https://en.wikipedia.org/wiki/Pacific_Ocean",
-                    "html": "<html><body><p>The Pacific Ocean is the largest ocean on Earth.</p></body></html>",
-                    "tokens": [{"token": "Pacific", "is_html": False, "start_byte": 0, "end_byte": 7}]
-                },
-                "question": {
-                    "text": "What is the largest ocean on Earth?",
-                    "tokens": ["What", "is", "the", "largest", "ocean", "on", "Earth", "?"]
-                },
-                "long_answer_candidates": [],
-                "annotations": [{
-                    "id": "001",
-                    "long_answer": {"start_token": -1, "end_token": -1, "start_byte": -1, "end_byte": -1, "candidate_index": -1},
-                    "short_answers": [{"start_token": 0, "end_token": 2, "start_byte": 0, "end_byte": 13, "text": "Pacific Ocean"}],
-                    "yes_no_answer": -1
-                }]
-            }
-        ]
-        
-        # 保存数据
-        import json
-        with open(raw_dir / "train_raw.json", 'w', encoding='utf-8') as f:
-            for item in train_data:
-                f.write(json.dumps(item, ensure_ascii=False) + '\n')
-        
-        with open(raw_dir / "validation_raw.json", 'w', encoding='utf-8') as f:
-            for item in val_data:
-                f.write(json.dumps(item, ensure_ascii=False) + '\n')
-        
-        logger.info(f"最小 Natural Questions 数据集已创建到 {raw_dir}")
-    
+
     def _download_hotpotqa_raw(self):
         """下载 HotpotQA 原始数据（仅下载，不转换格式）"""
         logger.info("下载 HotpotQA 原始数据...")
@@ -834,67 +749,9 @@ class DatasetPreparator:
                 dataset = load_dataset("mandarjoshi/trivia_qa", "unfiltered", trust_remote_code=True)
                 logger.info(f"TriviaQA 数据集下载完成，缓存到系统")
             except Exception as e2:
-                logger.warning(f"所有配置都失败: {e2}，创建最小数据集...")
-                self._create_minimal_triviaqa_dataset()
-                return
+                # 所有下载尝试都失败时直接抛出异常
+                raise Exception(f"TriviaQA数据集下载失败: {e2}")
     
-    def _create_minimal_triviaqa_dataset(self):
-        """创建最小的 TriviaQA 数据集"""
-        raw_dir = self.data_dir / "raw" / "trivia_qa"
-        
-        # 创建最小的训练数据
-        train_data = [
-            {
-                "question": "What is the capital of France?",
-                "question_id": "trivia_001",
-                "question_source": "manual",
-                "entity_pages": [],
-                "search_results": [],
-                "answer": {
-                    "aliases": ["Paris", "Paris, France"],
-                    "normalized_aliases": ["paris", "paris france"],
-                    "matched_wiki_entity_name": "Paris",
-                    "normalized_matched_wiki_entity_name": "paris",
-                    "normalized_value": "paris",
-                    "type": "Entity",
-                    "value": "Paris"
-                }
-            }
-        ]
-        
-        # 创建最小的验证数据
-        val_data = [
-            {
-                "question": "What is the largest ocean on Earth?",
-                "question_id": "trivia_002",
-                "question_source": "manual",
-                "entity_pages": [],
-                "search_results": [],
-                "answer": {
-                    "aliases": ["Pacific Ocean", "Pacific"],
-                    "normalized_aliases": ["pacific ocean", "pacific"],
-                    "matched_wiki_entity_name": "Pacific Ocean",
-                    "normalized_matched_wiki_entity_name": "pacific ocean",
-                    "normalized_value": "pacific ocean",
-                    "type": "Entity",
-                    "value": "Pacific Ocean"
-                }
-            }
-        ]
-        
-        # 保存数据
-        import json
-        with open(raw_dir / "train_raw.json", 'w', encoding='utf-8') as f:
-            for item in train_data:
-                f.write(json.dumps(item, ensure_ascii=False) + '\n')
-        
-        with open(raw_dir / "validation_raw.json", 'w', encoding='utf-8') as f:
-            for item in val_data:
-                f.write(json.dumps(item, ensure_ascii=False) + '\n')
-        
-        logger.info(f"最小 TriviaQA 数据集已创建到 {raw_dir}")
-    
-
     
     def _download_msmarco_raw(self):
         """下载 MS MARCO 原始数据（仅下载，不转换格式）"""
