@@ -8,6 +8,43 @@ import json
 import os
 from pathlib import Path
 
+
+def _gather_triviaqa_context(sample) -> str:
+    """从TriviaQA原始样本中汇总上下文文本。
+    优先使用 entity_pages.wiki_context 与 search_results.search_context，标题作为补充。
+    """
+    texts = []
+
+    entity_pages = sample.get("entity_pages") or {}
+    if isinstance(entity_pages, dict):
+        wiki_ctx = entity_pages.get("wiki_context") or []
+        if isinstance(wiki_ctx, list):
+            texts.extend(wiki_ctx)
+        titles = entity_pages.get("title") or []
+        if isinstance(titles, list):
+            texts.extend(titles)
+
+    search_results = sample.get("search_results") or {}
+    if isinstance(search_results, dict):
+        search_ctx = search_results.get("search_context") or []
+        if isinstance(search_ctx, list):
+            texts.extend(search_ctx)
+        sr_titles = search_results.get("title") or []
+        if isinstance(sr_titles, list):
+            texts.extend(sr_titles)
+
+    # 过滤非字符串与空白
+    texts = [t for t in texts if isinstance(t, str) and t.strip()]
+    # 去重保序
+    seen = set()
+    uniq = []
+    for t in texts:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return "\n\n".join(uniq)
+
+
 def convert_triviaqa_sample(sample):
     """
     转换单个TriviaQA样本为统一格式
@@ -18,13 +55,24 @@ def convert_triviaqa_sample(sample):
     Returns:
         dict: 统一格式的样本
     """
-    # TriviaQA的数据结构也相对简单，直接映射即可
+    # TriviaQA 原始：有 question / question_id，无直接 context
+    # context 从 entity_pages.wiki_context / search_results.search_context 汇总
+    # id 使用 question_id（或回退 id）
+    # answer 兼容 answer / answer_text / answers 数组
+    ans = sample.get('answer') or sample.get('answer_text') or ""
+    answers_list = sample.get('answers')
+    if not ans and isinstance(answers_list, list) and answers_list:
+        ans = answers_list[0] if isinstance(answers_list[0], str) else ""
+
+    context_text = _gather_triviaqa_context(sample)
+
     return {
-        "id": sample.get('id', ''),
+        "id": sample.get('id') or sample.get('question_id', ''),
         "question": sample.get('question', ''),
-        "answer": sample.get('answer', ''),
-        "context": sample.get('context', '')
+        "answer": ans,
+        "context": context_text
     }
+
 
 def convert_triviaqa_dataset(input_file, output_file):
     """
@@ -58,6 +106,7 @@ def convert_triviaqa_dataset(input_file, output_file):
     
     print(f"转换完成: {len(converted_samples)} 个样本")
 
+
 def main():
     """
     主函数：转换TriviaQA数据集
@@ -86,6 +135,7 @@ def main():
             print(f"警告: 输入文件不存在: {input_file}")
     
     print("TriviaQA数据集转换完成！")
+
 
 if __name__ == "__main__":
     main()

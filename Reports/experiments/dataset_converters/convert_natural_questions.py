@@ -7,6 +7,33 @@ Natural Questions数据集格式转换脚本
 import json
 import os
 from pathlib import Path
+import re
+import html
+try:
+    from bs4 import BeautifulSoup  # 可选依赖
+except ImportError:
+    BeautifulSoup = None
+
+
+def _html_to_text(html_str: str) -> str:
+    """将HTML内容转换为纯文本。
+    优先使用BeautifulSoup（如已安装），否则回退到正则去标签与HTML实体反解。
+    """
+    if not isinstance(html_str, str):
+        return ""
+    text = ""
+    if BeautifulSoup is not None:
+        try:
+            soup = BeautifulSoup(html_str, "lxml")
+            text = soup.get_text(" ")
+        except Exception:
+            text = re.sub(r"<[^>]+>", " ", html_str)
+    else:
+        text = re.sub(r"<[^>]+>", " ", html_str)
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
 
 def convert_natural_questions_sample(sample):
     """
@@ -18,13 +45,20 @@ def convert_natural_questions_sample(sample):
     Returns:
         dict: 统一格式的样本
     """
-    # Natural Questions的数据结构相对简单，直接映射即可
+    # Natural Questions 原始结构：{"id": "...", "document": {"html": "..."}}
+    document = sample.get("document")
+    doc_html = ""
+    if isinstance(document, dict):
+        doc_html = document.get("html", "") or ""
+    context_text = _html_to_text(doc_html)
+
     return {
         "id": sample.get('id', ''),
-        "question": sample.get('question', ''),
-        "answer": sample.get('answer', ''),
-        "context": sample.get('context', '')
+        "question": "",            # 原始文件不含问题
+        "answer": "",              # 原始文件不含答案
+        "context": context_text
     }
+
 
 def convert_natural_questions_dataset(input_file, output_file):
     """
@@ -58,6 +92,7 @@ def convert_natural_questions_dataset(input_file, output_file):
     
     print(f"转换完成: {len(converted_samples)} 个样本")
 
+
 def main():
     """
     主函数：转换Natural Questions数据集
@@ -86,6 +121,7 @@ def main():
             print(f"警告: 输入文件不存在: {input_file}")
     
     print("Natural Questions数据集转换完成！")
+
 
 if __name__ == "__main__":
     main()
