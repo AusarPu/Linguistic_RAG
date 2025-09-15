@@ -8,7 +8,7 @@ import random
 import os
 from pathlib import Path
 
-def extract_sample_data(input_file, output_file, sample_size=1000):
+def extract_sample_data(input_file, output_file, sample_size=10000):
     """
     从输入文件中随机提取指定数量的数据并保存到输出文件
     
@@ -68,7 +68,7 @@ def main():
         
         # 提取样本数据
         try:
-            extract_sample_data(input_file, output_file, sample_size=1000)
+            extract_sample_data(input_file, output_file, sample_size=10000)
         except Exception as e:
             print(f"处理{dataset}时出错: {str(e)}\n")
     
