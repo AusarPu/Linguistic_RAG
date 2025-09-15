@@ -51,15 +51,15 @@ ALL_QUESTION_TEXTS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "all_question_te
 # 生成器服务配置
 VLLM_GENERATOR_HOST = "localhost" # vLLM 监听的主机名 (通常 localhost 即可，因为 Gradio 和 vLLM 在同一容器/机器)
 VLLM_GENERATOR_PORT = 8001        # vLLM 生成器监听的端口
-VLLM_GENERATOR_GPU_ID = 0         # 分配给生成器的 GPU ID
+VLLM_GENERATOR_GPU_ID = "0,1"        # 分配给生成器的 GPU ID
 VLLM_GENERATOR_MEM_UTILIZATION = 0.9 # GPU 显存使用率 (例如 0.9 for 90%)
 
 # 重写器服务配置
 VLLM_REWRITER_HOST = "localhost"
 VLLM_REWRITER_PORT = 8001         # vLLM 重写器监听的端口
-VLLM_REWRITER_GPU_ID = "0"         # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
-VLLM_REWRITER_MEM_UTILIZATION = 0.90 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
-VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 1 # 新增：Rewriter的张量并行数
+VLLM_REWRITER_GPU_ID = "0,1"        # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
+VLLM_REWRITER_MEM_UTILIZATION = 0.9 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
+VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 2 # 新增：Rewriter的张量并行数
 
 # 重写器 LoRA 配置
 REWRITER_LORA_NAME = "rewriter_lora" # 在 vLLM 中标识 LoRA 的名称
@@ -69,7 +69,7 @@ VLLM_MAX_LORA_RANK = 32           # 支持的最大 LoRA Rank
 VLLM_EMBEDDING_HOST = "localhost"  # Embedding 服务部署在本地
 VLLM_EMBEDDING_PORT = 8850       # 为 Embedding 分配端口 8850
 VLLM_EMBEDDING_GPU_ID = 1        # 分配给 Embedding 的 GPU ID
-VLLM_EMBEDDING_MEM_UTILIZATION = 0.3 # Embedding 模型通常显存占用较少
+VLLM_EMBEDDING_MEM_UTILIZATION = 0.1 # Embedding 模型通常显存占用较少
 
 # --- API 端点 (根据上面配置自动生成) ---
 GENERATOR_API_URL = f"http://{VLLM_GENERATOR_HOST}:{VLLM_GENERATOR_PORT}/v1/chat/completions"
@@ -123,7 +123,7 @@ VLLM_REQUEST_TIMEOUT_GENERATION = 300.0     # 为生成答案设置更长的超�
 # --- 块优化专用超时配置 ---
 VLLM_REQUEST_TIMEOUT_SINGLE = 60*3          # 超时B：单个块优化超时
 VLLM_REQUEST_TIMEOUT_TOTAL = 3600*8         # 超时A：整体流程超时(8小时)
-OPTIMIZATION_BATCH_SIZE = 250                # 分批处理大小
+OPTIMIZATION_BATCH_SIZE = 400                # 分批处理大小
 
 # --- 日志配置函数 (方便在其他地方统一设置) ---
 def setup_logging():
