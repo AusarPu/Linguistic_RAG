@@ -7,7 +7,7 @@ import asyncio
 import aiohttp  # 用于异步HTTP请求
 import json
 from typing import Optional, Dict, Any
-from collections import defaultdict
+from collections import defaultdict, deque
 
 # 将项目根目录添加到 sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -281,8 +281,91 @@ async def optimize_chunk_b_via_vllm(
 
 
 # -----------------------------------------------------------------------------
-# 主编排函数：加载初级块，异步使用LLM通过滑动窗口优化中心块
+# 动态批处理器类：优化GPU利用率
 # -----------------------------------------------------------------------------
+class DynamicBatchProcessor:
+    """动态批处理器，提高GPU利用率"""
+    
+    def __init__(self, max_concurrent_tasks=50, min_batch_size=10, max_wait_time=2.0):
+        self.max_concurrent_tasks = max_concurrent_tasks
+        self.min_batch_size = min_batch_size
+        self.max_wait_time = max_wait_time
+        self.pending_tasks = deque()
+        self.running_tasks = set()
+        self.completed_results = []
+        
+    async def add_task(self, task_coro, task_info):
+        """添加任务到队列"""
+        self.pending_tasks.append((task_coro, task_info))
+        
+    async def process_dynamically(self):
+        """动态处理任务队列"""
+        last_batch_time = time.time()
+        
+        while self.pending_tasks or self.running_tasks:
+            # 1. 启动新任务（如果有空闲槽位）
+            while (len(self.running_tasks) < self.max_concurrent_tasks and 
+                   self.pending_tasks):
+                task_coro, task_info = self.pending_tasks.popleft()
+                task = asyncio.create_task(self._wrap_task(task_coro, task_info))
+                self.running_tasks.add(task)
+                
+            # 2. 等待任务完成（使用超时避免死锁）
+            if self.running_tasks:
+                done, pending = await asyncio.wait(
+                    self.running_tasks, 
+                    timeout=0.1,  # 短超时，频繁检查
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                # 3. 处理完成的任务
+                for task in done:
+                    self.running_tasks.remove(task)
+                    try:
+                        result = await task
+                        self.completed_results.append(result)
+                    except Exception as e:
+                        logger.error(f"任务执行异常: {e}")
+                        
+            # 4. 检查是否需要强制处理批次（避免长时间等待）
+            current_time = time.time()
+            if (current_time - last_batch_time > self.max_wait_time and 
+                len(self.completed_results) >= self.min_batch_size):
+                yield self._flush_results()
+                last_batch_time = current_time
+                
+        # 5. 处理剩余结果
+        if self.completed_results:
+            yield self._flush_results()
+            
+    def _flush_results(self):
+        """清空并返回当前结果"""
+        results = self.completed_results.copy()
+        self.completed_results.clear()
+        return results
+        
+    async def _wrap_task(self, task_coro, task_info):
+        """包装任务以便追踪"""
+        start_time = time.time()
+        try:
+            result = await task_coro
+            duration = time.time() - start_time
+            return {
+                'task_info': task_info,
+                'result': result,
+                'duration': duration,
+                'status': 'success'
+            }
+        except Exception as e:
+            duration = time.time() - start_time
+            return {
+                'task_info': task_info,
+                'error': str(e),
+                'duration': duration,
+                'status': 'error'
+            }
+
+
 async def process_metadata_batch(chunks_batch):
     """
     批量处理文本块的元数据生成。
@@ -433,79 +516,72 @@ async def refine_all_chunks_with_llm(
                     'retry_count': 0
                 })
 
-        # --- 阶段2: 带重试逻辑的分批并发处理 ---
-        tasks_to_process = all_tasks_info
-        while tasks_to_process:
+        # --- 阶段2: 使用动态批处理器处理 ---
+        processor = DynamicBatchProcessor(
+            max_concurrent_tasks=OPTIMIZATION_BATCH_SIZE,
+            min_batch_size=max(10, OPTIMIZATION_BATCH_SIZE // 5),
+            max_wait_time=2.0
+        )
+        
+        # 添加所有任务到处理器
+        for task_info in all_tasks_info:
+            request_id = f"{task_info['doc_name']}_{task_info['chunk_b']['chunk_id']}_retry{task_info['retry_count']}"
+            
+            task_coro = optimize_chunk_b_via_vllm(
+                task_info['chunk_a']['text'],
+                task_info['chunk_b']['text'],
+                task_info['chunk_c']['text'],
+                session,
+                request_id=request_id
+            )
+            
+            await processor.add_task(task_coro, task_info)
+            total_llm_calls += 1
+        
+        # 动态处理任务
+        batch_count = 0
+        retry_tasks = []
+        
+        async for batch_results in processor.process_dynamically():
             # 检查总体超时
             elapsed_time = time.time() - overall_start_time
             if elapsed_time > VLLM_REQUEST_TIMEOUT_TOTAL:
                 logger.warning(f"达到总体超时限制 {VLLM_REQUEST_TIMEOUT_TOTAL}秒，已处理时间: {elapsed_time:.2f}秒")
-                logger.warning(f"剩余 {len(tasks_to_process)} 个任务将被跳过")
                 break
             
-            # 分批处理
-            current_batch_info = tasks_to_process[:OPTIMIZATION_BATCH_SIZE]
-            tasks_to_process = tasks_to_process[OPTIMIZATION_BATCH_SIZE:] # 剩余任务
-            retry_tasks = [] # 当前批次的重试任务
-
-            logger.warning(f"处理批次: {len(current_batch_info)} 个任务，剩余: {len(tasks_to_process)} 个任务")
+            batch_count += 1
+            logger.warning(f"处理动态批次 {batch_count}: {len(batch_results)} 个结果")
             logger.warning(f"已用时间: {elapsed_time:.2f}秒，剩余时间: {VLLM_REQUEST_TIMEOUT_TOTAL - elapsed_time:.2f}秒")
             
-            tasks = []
-            for task_info in current_batch_info:
-                request_id = f"{task_info['doc_name']}_{task_info['chunk_b']['chunk_id']}_retry{task_info['retry_count']}"
-                logger.debug(f"  准备LLM优化任务 for chunk_id: {task_info['chunk_b']['chunk_id']} (尝试: {task_info['retry_count'] + 1})")
-                
-                # 记录单个任务开始时间
-                task_start_time = time.time()
-                task_info['start_time'] = task_start_time
-                
-                tasks.append(optimize_chunk_b_via_vllm(
-                    task_info['chunk_a']['text'],
-                    task_info['chunk_b']['text'],
-                    task_info['chunk_c']['text'],
-                    session,
-                    request_id=request_id
-                ))
-                total_llm_calls += 1
-
-            if not tasks:
-                break
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for i, result_or_exc in enumerate(results):
-                task_info = current_batch_info[i]
+            # 处理批次结果
+            for wrapped_result in batch_results:
+                task_info = wrapped_result['task_info']
                 original_chunk_b = task_info['chunk_b']
                 chunk_id = original_chunk_b['chunk_id']
+                task_duration = wrapped_result.get('duration', 0)
                 
-                # 计算单个任务耗时
-                task_duration = time.time() - task_info.get('start_time', time.time())
-                
-                if isinstance(result_or_exc, Exception):
-                    logger.critical(f"  LLM优化块 '{chunk_id}' 时发生异常 (耗时: {task_duration:.2f}秒): {result_or_exc}")
-                    continue # 异常情况不重试，直接跳过
-
-                status = result_or_exc.get("status")
-                if status == "success":
-                    refined_chunk = dict(original_chunk_b)
-                    refined_chunk['text'] = result_or_exc["text"]
-                    optimized_chunks_map[chunk_id] = refined_chunk
-                    total_successful_optimizations += 1
-                    processed_chunks_count += 1
-                    logger.info(f"  块 '{chunk_id}' 文本已由LLM更新 (耗时: {task_duration:.2f}秒)")
-                elif status == "json_decode_error" and task_info['retry_count'] < MAX_RETRIES:
-                    logger.error(f"  块 '{chunk_id}' 解析失败，将重试 (耗时: {task_duration:.2f}秒)。内容: '{result_or_exc.get('content', '')[:100]}...'")
-                    task_info['retry_count'] += 1
-                    retry_tasks.append(task_info)
-                else:
-                    if status == "json_decode_error":
-                        logger.critical(f"  块 '{chunk_id}' 达到最大重试次数，放弃优化 (耗时: {task_duration:.2f}秒)")
+                if wrapped_result['status'] == 'success':
+                    result = wrapped_result['result']
+                    
+                    status = result.get("status")
+                    if status == "success":
+                        refined_chunk = dict(original_chunk_b)
+                        refined_chunk['text'] = result["text"]
+                        optimized_chunks_map[chunk_id] = refined_chunk
+                        total_successful_optimizations += 1
+                        processed_chunks_count += 1
+                        logger.info(f"  块 '{chunk_id}' 文本已由LLM更新 (耗时: {task_duration:.2f}秒)")
+                    elif status == "json_decode_error" and task_info['retry_count'] < MAX_RETRIES:
+                        logger.error(f"  块 '{chunk_id}' 解析失败，将重试 (耗时: {task_duration:.2f}秒)。内容: '{result.get('content', '')[:100]}...'")
+                        task_info['retry_count'] += 1
+                        retry_tasks.append(task_info)
                     else:
-                        logger.error(f"  LLM优化块 '{chunk_id}' 未返回有效文本 (status: {status}, 耗时: {task_duration:.2f}秒), 保留原始文本")
-            
-            # 将重试任务添加到待处理队列的开头（优先处理重试）
-            tasks_to_process = retry_tasks + tasks_to_process
+                        if status == "json_decode_error":
+                            logger.critical(f"  块 '{chunk_id}' 达到最大重试次数，放弃优化 (耗时: {task_duration:.2f}秒)")
+                        else:
+                            logger.error(f"  LLM优化块 '{chunk_id}' 未返回有效文本 (status: {status}, 耗时: {task_duration:.2f}秒), 保留原始文本")
+                else:
+                    logger.critical(f"  LLM优化块 '{chunk_id}' 时发生异常 (耗时: {task_duration:.2f}秒): {wrapped_result.get('error', '未知错误')}")
             
             # 增量写入：每个批次完成后保存当前进度
             if processed_chunks_count > 0:
@@ -525,6 +601,51 @@ async def refine_all_chunks_with_llm(
                     logger.debug(f"增量保存进度：已处理 {processed_chunks_count} 个块到临时文件")
                 except Exception as e:
                     logger.error(f"增量写入临时文件失败: {e}")
+        
+        # 处理重试任务（如果有的话）
+        if retry_tasks:
+            logger.warning(f"处理 {len(retry_tasks)} 个重试任务")
+            retry_processor = DynamicBatchProcessor(
+                max_concurrent_tasks=min(OPTIMIZATION_BATCH_SIZE // 2, 20),  # 重试时降低并发
+                min_batch_size=5,
+                max_wait_time=3.0
+            )
+            
+            for task_info in retry_tasks:
+                request_id = f"{task_info['doc_name']}_{task_info['chunk_b']['chunk_id']}_retry{task_info['retry_count']}"
+                
+                task_coro = optimize_chunk_b_via_vllm(
+                    task_info['chunk_a']['text'],
+                    task_info['chunk_b']['text'],
+                    task_info['chunk_c']['text'],
+                    session,
+                    request_id=request_id
+                )
+                
+                await retry_processor.add_task(task_coro, task_info)
+            
+            # 处理重试任务
+            async for retry_batch_results in retry_processor.process_dynamically():
+                for wrapped_result in retry_batch_results:
+                    task_info = wrapped_result['task_info']
+                    original_chunk_b = task_info['chunk_b']
+                    chunk_id = original_chunk_b['chunk_id']
+                    task_duration = wrapped_result.get('duration', 0)
+                    
+                    if wrapped_result['status'] == 'success':
+                        result = wrapped_result['result']
+                        
+                        if result.get("status") == "success":
+                            refined_chunk = dict(original_chunk_b)
+                            refined_chunk['text'] = result["text"]
+                            optimized_chunks_map[chunk_id] = refined_chunk
+                            total_successful_optimizations += 1
+                            processed_chunks_count += 1
+                            logger.info(f"  重试成功: 块 '{chunk_id}' 文本已由LLM更新 (耗时: {task_duration:.2f}秒)")
+                        else:
+                            logger.error(f"  重试失败: 块 '{chunk_id}' 仍无法优化 (耗时: {task_duration:.2f}秒)")
+                    else:
+                        logger.error(f"  重试异常: 块 '{chunk_id}' (耗时: {task_duration:.2f}秒): {wrapped_result.get('error', '未知错误')}")
 
     # --- 阶段3: 按原始顺序重建最终列表 --- 
     final_refined_chunks_list = []
@@ -565,7 +686,7 @@ async def refine_all_chunks_with_llm(
             pass
 
 
-async def enhance_chunks_with_llm_metadata(input_chunks_json_path, output_chunks_json_path, test_limit=None):
+async def enhance_chunks_with_llm_metadata(input_chunks_json_path, output_chunks_json_path, test_limit=None, use_dynamic_batching=True):
     """
     主编排函数：为文本块生成元数据（关键词摘要和相关问题），并筛选有意义的块。
     
@@ -573,6 +694,7 @@ async def enhance_chunks_with_llm_metadata(input_chunks_json_path, output_chunks
         input_chunks_json_path (str): 输入的文本块JSON文件路径
         output_chunks_json_path (str): 输出的增强文本块JSON文件路径
         test_limit (int, optional): 测试模式下限制处理的块数量
+        use_dynamic_batching (bool): 是否使用动态批处理（默认True）
     """
     import time
     import os
@@ -602,35 +724,127 @@ async def enhance_chunks_with_llm_metadata(input_chunks_json_path, output_chunks
     
     start_time = time.time()
     
-    # 分批处理
-    for batch_start in range(0, len(initial_chunks), METADATA_BATCH_SIZE):
-        batch_end = min(batch_start + METADATA_BATCH_SIZE, len(initial_chunks))
-        current_batch = initial_chunks[batch_start:batch_end]
+    if use_dynamic_batching:
+        # 使用动态批处理
+        logging.warning(f"使用动态批处理模式，最大并发: {METADATA_BATCH_SIZE}")
         
-        logging.warning(f"处理批次 {batch_start//METADATA_BATCH_SIZE + 1}: 块 {batch_start+1}-{batch_end} (共 {len(current_batch)} 个)")
+        processor = DynamicBatchProcessor(
+            max_concurrent_tasks=METADATA_BATCH_SIZE,
+            min_batch_size=max(10, METADATA_BATCH_SIZE // 5),
+            max_wait_time=2.0
+        )
         
-        # 处理当前批次
-        batch_success, batch_meaningful, batch_not_meaningful, batch_failed, batch_enhanced = await process_metadata_batch(current_batch)
+        # 添加所有任务到处理器
+        for chunk in initial_chunks:
+            text_content = chunk.get('text', '').strip()
+            chunk_id = chunk.get('chunk_id', '未知')
+            
+            if not text_content:
+                # 空文本块直接标记为无意义
+                async def empty_task():
+                    return {
+                        'status': 'success',
+                        'data': {
+                            'is_meaningful': False,
+                            'reason_if_not_meaningful': '文本块为空',
+                            'keyword_summaries': [],
+                            'generated_questions': []
+                        }
+                    }
+                await processor.add_task(empty_task(), {'chunk': chunk, 'chunk_id': chunk_id})
+            else:
+                await processor.add_task(
+                    generate_metadata_for_chunk_via_vllm(text_content, chunk_id),
+                    {'chunk': chunk, 'chunk_id': chunk_id}
+                )
         
-        # 更新统计信息
-        total_success += batch_success
-        total_meaningful += batch_meaningful
-        total_not_meaningful += batch_not_meaningful
-        total_failed += batch_failed
+        # 动态处理任务
+        batch_count = 0
+        async for batch_results in processor.process_dynamically():
+            batch_count += 1
+            logging.warning(f"处理动态批次 {batch_count}: {len(batch_results)} 个结果")
+            
+            # 处理批次结果
+            batch_success = 0
+            batch_meaningful = 0
+            batch_not_meaningful = 0
+            batch_failed = 0
+            
+            for wrapped_result in batch_results:
+                chunk = wrapped_result['task_info']['chunk']
+                chunk_id = wrapped_result['task_info']['chunk_id']
+                
+                if wrapped_result['status'] == 'success':
+                    result = wrapped_result['result']
+                    
+                    if result['status'] == 'success':
+                        batch_success += 1
+                        metadata = result['data']
+                        
+                        if metadata['is_meaningful']:
+                            batch_meaningful += 1
+                            # 为有意义的块添加元数据
+                            enhanced_chunk = chunk.copy()
+                            enhanced_chunk.update({
+                                'keyword_summaries': metadata['keyword_summaries'],
+                                'generated_questions': metadata['generated_questions'],
+                                'is_meaningful': True
+                            })
+                            all_enhanced_chunks.append(enhanced_chunk)
+                        else:
+                            batch_not_meaningful += 1
+                            logging.info(f"块 {chunk_id} 被判定为无意义: {metadata.get('reason_if_not_meaningful', '未知原因')}")
+                    else:
+                        batch_failed += 1
+                        logging.error(f"块 {chunk_id} 元数据生成失败: {result.get('reason', '未知错误')}")
+                else:
+                    batch_failed += 1
+                    logging.error(f"块 {chunk_id} 任务执行异常: {wrapped_result.get('error', '未知异常')}")
+            
+            # 更新总统计
+            total_success += batch_success
+            total_meaningful += batch_meaningful
+            total_not_meaningful += batch_not_meaningful
+            total_failed += batch_failed
+            
+            # 增量写入临时文件
+            with open(temp_output_path, 'w', encoding='utf-8') as f:
+                json.dump(all_enhanced_chunks, f, ensure_ascii=False, indent=2)
+            
+            logging.warning(f"批次完成 - 成功: {batch_success}, 有意义: {batch_meaningful}, 无意义: {batch_not_meaningful}, 失败: {batch_failed}")
+    
+    else:
+        # 使用传统静态批处理
+        logging.warning(f"使用传统静态批处理模式，批次大小: {METADATA_BATCH_SIZE}")
         
-        # 将处理结果添加到总列表
-        all_enhanced_chunks.extend(batch_enhanced)
-        
-        # 增量写入临时文件
-        with open(temp_output_path, 'w', encoding='utf-8') as f:
-            json.dump(all_enhanced_chunks, f, ensure_ascii=False, indent=2)
-        
-        logging.warning(f"批次完成 - 成功: {batch_success}, 有意义: {batch_meaningful}, 无意义: {batch_not_meaningful}, 失败: {batch_failed}")
-        
-        # 检查是否达到处理上限
-        if test_limit and len(all_enhanced_chunks) >= test_limit:
-            logging.warning(f"已达到测试限制 {test_limit}，停止处理")
-            break
+        for batch_start in range(0, len(initial_chunks), METADATA_BATCH_SIZE):
+            batch_end = min(batch_start + METADATA_BATCH_SIZE, len(initial_chunks))
+            current_batch = initial_chunks[batch_start:batch_end]
+            
+            logging.warning(f"处理批次 {batch_start//METADATA_BATCH_SIZE + 1}: 块 {batch_start+1}-{batch_end} (共 {len(current_batch)} 个)")
+            
+            # 处理当前批次
+            batch_success, batch_meaningful, batch_not_meaningful, batch_failed, batch_enhanced = await process_metadata_batch(current_batch)
+            
+            # 更新统计信息
+            total_success += batch_success
+            total_meaningful += batch_meaningful
+            total_not_meaningful += batch_not_meaningful
+            total_failed += batch_failed
+            
+            # 将处理结果添加到总列表
+            all_enhanced_chunks.extend(batch_enhanced)
+            
+            # 增量写入临时文件
+            with open(temp_output_path, 'w', encoding='utf-8') as f:
+                json.dump(all_enhanced_chunks, f, ensure_ascii=False, indent=2)
+            
+            logging.warning(f"批次完成 - 成功: {batch_success}, 有意义: {batch_meaningful}, 无意义: {batch_not_meaningful}, 失败: {batch_failed}")
+            
+            # 检查是否达到处理上限
+            if test_limit and len(all_enhanced_chunks) >= test_limit:
+                logging.warning(f"已达到测试限制 {test_limit}，停止处理")
+                break
     
     # 最终统计和保存
     end_time = time.time()
@@ -688,12 +902,13 @@ if __name__ == '__main__':
             limit=args.test_limit
         ))
         
-        # 第二步：生成元数据
-        logging.warning(f"\n步骤2: 开始生成元数据，配置: 单次超时={VLLM_REQUEST_TIMEOUT_SINGLE}s, 总超时={VLLM_REQUEST_TIMEOUT_TOTAL}s, 批次大小={METADATA_BATCH_SIZE}")
+        # 第二步：生成元数据（使用动态批处理）
+        logging.warning(f"\n步骤2: 开始生成元数据，配置: 单次超时={VLLM_REQUEST_TIMEOUT_SINGLE}s, 总超时={VLLM_REQUEST_TIMEOUT_TOTAL}s, 最大并发={METADATA_BATCH_SIZE}")
         asyncio.run(enhance_chunks_with_llm_metadata(
             optimized_chunks_path, 
             enhanced_chunks_path, 
-            test_limit=args.test_limit
+            test_limit=args.test_limit,
+            use_dynamic_batching=True
         ))
         
         logging.warning(f"\n=== 完整流水线处理完成 ===")
@@ -714,12 +929,13 @@ if __name__ == '__main__':
         if not args.input_file or not args.output_file:
             logging.critical("错误: metadata模式需要指定input_file和output_file参数")
             exit(1)
-        logging.warning(f"开始生成元数据，配置: 单次超时={VLLM_REQUEST_TIMEOUT_SINGLE}s, 总超时={VLLM_REQUEST_TIMEOUT_TOTAL}s, 批次大小={METADATA_BATCH_SIZE}")
-        # 运行元数据生成函数
+        logging.warning(f"开始生成元数据，配置: 单次超时={VLLM_REQUEST_TIMEOUT_SINGLE}s, 总超时={VLLM_REQUEST_TIMEOUT_TOTAL}s, 最大并发={METADATA_BATCH_SIZE}")
+        # 运行元数据生成函数（使用动态批处理）
         asyncio.run(enhance_chunks_with_llm_metadata(
             args.input_file, 
             args.output_file, 
-            test_limit=args.test_limit
+            test_limit=args.test_limit,
+            use_dynamic_batching=True
         ))
 
     logging.warning(f"\n--- LLM 处理流程运行完毕 ---")

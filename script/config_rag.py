@@ -123,7 +123,7 @@ VLLM_REQUEST_TIMEOUT_GENERATION = 300.0     # 为生成答案设置更长的超�
 # --- 块优化专用超时配置 ---
 VLLM_REQUEST_TIMEOUT_SINGLE = 60*3          # 超时B：单个块优化超时
 VLLM_REQUEST_TIMEOUT_TOTAL = 3600*8         # 超时A：整体流程超时(8小时)
-OPTIMIZATION_BATCH_SIZE = 400                # 分批处理大小
+OPTIMIZATION_BATCH_SIZE = 1000                # 分批处理大小
 
 # --- 日志配置函数 (方便在其他地方统一设置) ---
 def setup_logging():
