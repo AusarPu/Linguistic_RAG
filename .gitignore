@@ -45,3 +45,5 @@ Reports/experiments/dataset_kb/kb
 Reports/experiments/dataset_kb/small_size_kb
 Reports/experiments/dataset_converters/converted
 Reports/experiments/dataset_preprocess
+Reports/experiments/rag_evaluation_results
+Reports/experiments/dataset_indexs
