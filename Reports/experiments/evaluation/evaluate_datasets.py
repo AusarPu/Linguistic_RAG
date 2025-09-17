@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-数据集评估脚本
-对4个数据集进行独立测试，使用RAG pipeline生成答案
+数据集评估脚本（并发版本）
+对4个数据集进行独立测试，实现问题级别的并发处理
 输出格式：包含知识库内容ID、系统回答和问题的JSON文件
 """
 
@@ -12,48 +12,66 @@ import os
 from pathlib import Path
 from typing import List, Dict, Any
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 # 添加项目根目录到路径
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+project_root = "/home/pushihao/RAG"
+sys.path.insert(0, project_root)
 
 from script.rag_pipeline import execute_rag_flow
 from script.knowledge_base import KnowledgeBase
 from script.config_rag import PROCESSED_DATA_DIR
-   # 配置日志
+
+# 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # 数据集配置
+def get_output_filename(is_sample: bool = False) -> str:
+    """根据是否为示例模式返回相应的文件名"""
+    return "sample_results.json" if is_sample else "evaluation_results.json"
+
 DATASETS = {
     "hotpotqa": {
         "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/hotpotqa/validation_converted.json",
         "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/hotpotqa",
-        "output_file": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/hotpotqa/evaluation_results.json"
+        "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/hotpotqa"
     },
     "ms_marco": {
         "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/ms_marco/validation_converted.json",
         "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/ms_marco",
-        "output_file": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/ms_marco/evaluation_results.json"
+        "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/ms_marco"
     },
     "natural_questions": {
         "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/natural_questions/validation_converted.json",
         "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/natural_questions",
-        "output_file": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/natural_questions/evaluation_results.json"
+        "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/natural_questions"
     },
     "triviaqa": {
         "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/triviaqa/validation_converted.json",
         "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/triviaqa",
-        "output_file": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/triviaqa/evaluation_results.json"
+        "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/triviaqa"
     }
 }
 
-async def process_single_question(question: str, kb_instance: KnowledgeBase) -> Dict[str, Any]:
+# 并发配置
+DEFAULT_BATCH_SIZE = 3  # 默认批处理大小
+DEFAULT_MAX_QUESTIONS = 50  # 默认最大问题数量
+
+# 线程锁用于保护共享资源
+result_lock = threading.Lock()
+
+async def process_single_question(question: str, kb_instance: KnowledgeBase, question_id: str = "") -> Dict[str, Any]:
     """
     处理单个问题，返回结果
     """
     retrieved_chunk_ids = []
     system_answer = ""
     reasoning_text = ""
+    rewritten_query = {}
+    pipeline_end_reason = ""
     
     try:
         # 执行RAG流程
@@ -62,8 +80,12 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase) -> 
             chat_history_openai=[],  # 空的聊天历史
             kb_instance=kb_instance
         ):
+            # 收集查询重写结果
+            if event.get("type") == "rewritten_query_result":
+                rewritten_query = event.get("rewritten_text", {})
+            
             # 收集检索到的chunk IDs
-            if event.get("type") == "useful_chunks_preview":
+            elif event.get("type") == "useful_chunks_preview":
                 retrieved_chunk_ids = [chunk.get("chunk_id") for chunk in event.get("preview", [])]
             
             # 收集系统回答（不包括思考内容）
@@ -76,28 +98,93 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase) -> 
             
             # 流程结束
             elif event.get("type") == "pipeline_end":
+                pipeline_end_reason = event.get("reason", "completed")
                 break
                 
     except Exception as e:
-        logger.error(f"处理问题时出错: {str(e)}")
+        logger.error(f"处理问题 {question_id} 时出错: {str(e)}")
         system_answer = f"处理错误: {str(e)}"
+        pipeline_end_reason = "error"
+    
+    # 如果system_answer为空，根据pipeline_end_reason提供默认回答
+    if not system_answer.strip():
+        if pipeline_end_reason == "no_context_found_after_retrieval":
+            system_answer = "抱歉，我没有找到与您问题相关的直接信息。"
+        elif pipeline_end_reason == "no_context_found_after_usefulness":
+            system_answer = "抱歉，我没有找到与您问题直接相关的有用信息。"
+        elif pipeline_end_reason == "error":
+            system_answer = "处理过程中发生错误，无法生成回答。"
+        else:
+            system_answer = "未能生成有效回答。"
     
     return {
         "question": question,
         "retrieved_chunk_ids": retrieved_chunk_ids,
         "system_answer": system_answer.strip(),
-        "reasoning": reasoning_text.strip()  # 可选：保留推理过程用于调试
+        "rewritten_query": rewritten_query,
+        "pipeline_end_reason": pipeline_end_reason,
+        "has_reasoning": bool(reasoning_text.strip())
     }
 
-async def evaluate_dataset(dataset_name: str, config: Dict[str, str], max_questions: int = None) -> None:
+async def process_questions_batch(questions_batch: List[Dict[str, Any]], kb_instance: KnowledgeBase, batch_id: int) -> List[Dict[str, Any]]:
     """
-    评估单个数据集
+    并发处理一批问题
     """
-    logger.info(f"开始评估数据集: {dataset_name}")
+    logger.info(f"开始处理批次 {batch_id}，包含 {len(questions_batch)} 个问题")
+    start_time = time.time()
     
-    # 创建输出目录
-    output_file = Path(config["output_file"])
-    output_file.parent.mkdir(parents=True, exist_ok=True)
+    # 创建并发任务
+    tasks = []
+    for i, item in enumerate(questions_batch):
+        question = item.get("question", "")
+        if not question:
+            continue
+        
+        question_id = f"batch_{batch_id}_q_{i+1}"
+        task = process_single_question(question, kb_instance, question_id)
+        tasks.append((task, item))
+    
+    # 并发执行所有任务
+    results = []
+    completed_tasks = await asyncio.gather(*[task for task, _ in tasks], return_exceptions=True)
+    
+    # 处理结果
+    for i, (result, original_item) in enumerate(zip(completed_tasks, [item for _, item in tasks])):
+        if isinstance(result, Exception):
+            logger.error(f"批次 {batch_id} 中的问题 {i+1} 处理失败: {str(result)}")
+            result = {
+                "question": original_item.get("question", ""),
+                "retrieved_chunk_ids": [],
+                "system_answer": f"处理异常: {str(result)}"
+            }
+        
+        # 添加原始数据中的其他信息
+        result.update({
+            "original_id": original_item.get("id", ""),
+            "ground_truth_answer": original_item.get("answer", "")
+        })
+        
+        results.append(result)
+    
+    duration = time.time() - start_time
+    logger.info(f"批次 {batch_id} 处理完成，耗时 {duration:.2f}s，成功处理 {len(results)} 个问题")
+    
+    return results
+
+async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str], 
+                                    batch_size: int = DEFAULT_BATCH_SIZE, 
+                                    max_questions: int = None,
+                                    is_sample: bool = False) -> None:
+    """
+    并发评估单个数据集
+    """
+    mode_desc = "示例模式" if is_sample else "完整模式"
+    logger.info(f"开始并发评估数据集: {dataset_name} ({mode_desc}, 批大小: {batch_size})")
+    
+    # 创建输出目录和文件路径
+    output_dir = Path(config["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / get_output_filename(is_sample)
     
     # 临时设置PROCESSED_DATA_DIR为当前数据集的索引目录
     original_processed_dir = PROCESSED_DATA_DIR
@@ -136,45 +223,42 @@ async def evaluate_dataset(dataset_name: str, config: Dict[str, str], max_questi
                 if line:
                     questions_data.append(json.loads(line))
         
-        # 限制问题数量（用于测试）
+        # 限制问题数量
         if max_questions:
             questions_data = questions_data[:max_questions]
             logger.info(f"限制处理问题数量为: {max_questions}")
         
         logger.info(f"总共需要处理 {len(questions_data)} 个问题")
         
-        # 处理每个问题
-        results = []
-        for i, item in enumerate(questions_data):
-            question = item.get("question", "")
-            if not question:
-                continue
-                
-            logger.info(f"处理问题 {i+1}/{len(questions_data)}: {question[:50]}...")
+        # 分批处理问题
+        all_results = []
+        total_batches = (len(questions_data) + batch_size - 1) // batch_size
+        
+        for batch_idx in range(0, len(questions_data), batch_size):
+            batch_num = batch_idx // batch_size + 1
+            batch_questions = questions_data[batch_idx:batch_idx + batch_size]
             
-            result = await process_single_question(question, kb_instance)
+            logger.info(f"处理批次 {batch_num}/{total_batches}")
             
-            # 添加原始数据中的其他信息
-            result.update({
-                "original_id": item.get("id", ""),
-                "ground_truth_answer": item.get("answer", ""),
-                "context": item.get("context", "")
-            })
+            # 并发处理当前批次
+            batch_results = await process_questions_batch(batch_questions, kb_instance, batch_num)
+            all_results.extend(batch_results)
             
-            results.append(result)
-            
-            # 每处理10个问题保存一次（防止数据丢失）
-            if (i + 1) % 10 == 0:
-                logger.info(f"已处理 {i+1} 个问题，中间保存结果...")
+            # 每处理完一个批次就保存结果（防止数据丢失）
+            logger.info(f"批次 {batch_num} 完成，保存中间结果...")
+            with result_lock:
                 with open(output_file, 'w', encoding='utf-8') as f:
-                    json.dump(results, f, ensure_ascii=False, indent=2)
+                    json.dump(all_results, f, ensure_ascii=False, indent=2)
+            
+            # 简短休息，避免过度占用资源
+            await asyncio.sleep(0.5)
         
         # 保存最终结果
         logger.info(f"保存最终结果到: {output_file}")
         with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
+            json.dump(all_results, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"数据集 {dataset_name} 评估完成，共处理 {len(results)} 个问题")
+        logger.info(f"数据集 {dataset_name} 并发评估完成，共处理 {len(all_results)} 个问题")
         
     except Exception as e:
         logger.error(f"评估数据集 {dataset_name} 时出错: {str(e)}")
@@ -183,35 +267,74 @@ async def evaluate_dataset(dataset_name: str, config: Dict[str, str], max_questi
         # 恢复原始配置
         config_module.PROCESSED_DATA_DIR = original_processed_dir
 
+async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple], 
+                                         batch_size: int = DEFAULT_BATCH_SIZE,
+                                         max_questions: int = None,
+                                         dataset_concurrent: bool = False) -> None:
+    """
+    评估所有数据集，支持数据集级别的并发
+    """
+    # 判断是否为示例模式
+    is_sample = max_questions is not None and max_questions <= 100
+    
+    if dataset_concurrent:
+        # 数据集级别并发处理
+        logger.info(f"开始并发评估所有数据集，批大小: {batch_size}")
+        tasks = [
+            evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample)
+            for dataset_name, config in datasets_to_process
+        ]
+        await asyncio.gather(*tasks, return_exceptions=True)
+    else:
+        # 数据集串行处理，但问题并发处理
+        logger.info(f"开始串行评估数据集（问题并发），批大小: {batch_size}")
+        for dataset_name, config in datasets_to_process:
+            try:
+                await evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample)
+            except Exception as e:
+                logger.error(f"数据集 {dataset_name} 评估失败: {str(e)}")
+                continue
+
 async def main():
     """
-    主函数：评估所有数据集
+    主函数：并发评估数据集
     """
     import argparse
     
-    parser = argparse.ArgumentParser(description="评估RAG系统在多个数据集上的性能")
+    parser = argparse.ArgumentParser(description="并发评估RAG系统在多个数据集上的性能")
     parser.add_argument("--dataset", type=str, choices=list(DATASETS.keys()) + ["all"], 
                        default="all", help="要评估的数据集")
-    parser.add_argument("--max-questions", type=int, default=None, 
-                       help="限制每个数据集处理的问题数量（用于测试）")
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, 
+                       help=f"并发批处理大小（默认：{DEFAULT_BATCH_SIZE}）")
+    parser.add_argument("--max-questions", type=int, default=DEFAULT_MAX_QUESTIONS, 
+                       help=f"限制每个数据集处理的问题数量（默认：{DEFAULT_MAX_QUESTIONS}）")
+    parser.add_argument("--dataset-concurrent", action="store_true", 
+                       help="启用数据集级别的并发处理（默认：串行处理数据集）")
     
     args = parser.parse_args()
     
     if args.dataset == "all":
-        datasets_to_process = DATASETS.items()
+        datasets_to_process = list(DATASETS.items())
     else:
         datasets_to_process = [(args.dataset, DATASETS[args.dataset])]
     
-    logger.info(f"开始评估，将处理数据集: {[name for name, _ in datasets_to_process]}")
+    logger.info(f"开始并发评估")
+    logger.info(f"数据集: {[name for name, _ in datasets_to_process]}")
+    logger.info(f"批处理大小: {args.batch_size}")
+    logger.info(f"最大问题数: {args.max_questions}")
+    logger.info(f"数据集并发: {'是' if args.dataset_concurrent else '否'}")
     
-    for dataset_name, config in datasets_to_process:
-        try:
-            await evaluate_dataset(dataset_name, config, args.max_questions)
-        except Exception as e:
-            logger.error(f"数据集 {dataset_name} 评估失败: {str(e)}")
-            continue
+    start_time = time.time()
     
-    logger.info("所有数据集评估完成")
+    await evaluate_all_datasets_concurrent(
+        datasets_to_process, 
+        args.batch_size, 
+        args.max_questions,
+        args.dataset_concurrent
+    )
+    
+    total_time = time.time() - start_time
+    logger.info(f"所有数据集并发评估完成，总耗时: {total_time:.2f}s")
 
 if __name__ == "__main__":
     asyncio.run(main())

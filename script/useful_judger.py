@@ -1,5 +1,6 @@
 import logging
 import time
+import asyncio
 from openai import OpenAI
 from .config_rag import USEFUL_JUDGER_INSTRUCTION_FILE
 import json
@@ -22,6 +23,51 @@ def get_client_and_model():
     client = OpenAI(base_url="http://localhost:8001/v1", api_key="-")
     model_id = client.models.list().data[0].id
     return client, model_id
+
+
+async def judge_knowledge_usefulness_async(
+    knowledge_content: str,
+    questions: list[str]
+    ) -> str:
+    """
+    异步版本：判断知识库内容对于给定问题是否有用
+
+    Args:
+        knowledge_content: 知识库内容字符串
+        questions: 问题列表
+
+    Returns:
+        str: 返回useful或useless
+    """
+    func_start_time = time.time() # 函数计时
+    logger.info(f"[{func_start_time:.3f}] 开始判断知识库内容是否有用")
+
+    # 1. 格式化用户输入并加上指示
+    formatted_user_input = _USR_INPUT_FORMAT.format(
+        knowledge_content=knowledge_content,
+        questions=questions
+    )
+
+    # 2. 异步发送给vLLM格式化后的消息
+    def _sync_call():
+        client, model_id = get_client_and_model()
+        completion = client.chat.completions.create(
+        model=model_id,
+        messages=[
+            {"role": "system", "content": _SYS_PROMPT},
+            {"role": "user", "content": formatted_user_input},
+        ],
+        extra_body={"guided_choice": ["useful", "useless"], "enable_thinking": True},
+        )
+        return completion
+
+    # 使用asyncio.to_thread来异步执行同步调用
+    completion = await asyncio.to_thread(_sync_call)
+
+    logger.info(f"[{time.time():.3f}] 判断完成 (总耗时: {time.time() - func_start_time:.3f}s)。")
+
+    response_content = completion.choices[0].message.content.strip()
+    return response_content
 
 
 def judge_knowledge_usefulness(

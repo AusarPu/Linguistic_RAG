@@ -1,5 +1,6 @@
 import logging
 import time
+import asyncio
 from aiohttp import client
 from openai import OpenAI
 from pydantic import BaseModel
@@ -55,6 +56,68 @@ def format_chat_history(messages: list[dict[str, str]]) -> str:
             formatted_messages.append(f"assistant: {content}")
             
     return "\n".join(formatted_messages) + "\n"
+
+
+async def generate_rewritten_query_async(
+    messages: list[dict[str, str]],
+    user_input: str,
+    ) -> dict:
+    """
+    异步版本：使用 vLLM API 端点根据对话历史重写用户当前问题。
+
+    Args:
+        messages: 包含对话历史的列表。
+        user_input: 用户当前输入的原始问题。
+
+    Returns:
+        dict: 包含重写后的查询信息的字典。如果失败则返回原始输入。
+    """
+    func_start_time = time.time() # 函数计时
+    logger.info(f"[{func_start_time:.3f}] 开始查询重写: '{user_input}'")
+
+    # 1. 准备对话历史
+    raw_rewrite_history = messages[-(MAX_HISTORY * 2):]
+    filtered_history = [msg for msg in raw_rewrite_history if msg.get("role") in ["user", "assistant"]]
+    logger.debug(f"使用最近 {len(filtered_history)} 条消息作为重写上下文。")
+
+    # 2. 格式化对话历史
+    formatted_history = format_chat_history(filtered_history)
+    logger.debug(f"格式化后的对话历史: {formatted_history}")
+
+    # 3. 格式化用户输入并加上指示
+    formatted_user_input = _USR_INPUT_FORMAT.format(
+        context=formatted_history,
+        question=user_input
+    )
+
+    # 4. 异步发送给vLLM格式化后的消息
+    def _sync_call():
+        client, model_id = get_client_and_model()
+        completion = client.chat.completions.create(
+        model=model_id,
+        messages=[
+            {"role": "system", "content": _SYS_PROMPT},
+            {"role": "user", "content": formatted_user_input},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "rewrite_output",
+                "schema": rewrite_output.model_json_schema()
+            }
+        },
+        extra_body={"enable_thinking": True},
+        )
+        return completion
+
+    # 使用asyncio.to_thread来异步执行同步调用
+    completion = await asyncio.to_thread(_sync_call)
+
+    logger.info(f"[{time.time():.3f}] ASYNC 查询重写完成 (总耗时: {time.time() - func_start_time:.3f}s)。")
+
+    # 解析JSON响应为rewrite_output对象
+    response_json = json.loads(completion.choices[0].message.content)
+    return response_json
 
 
 def generate_rewritten_query(

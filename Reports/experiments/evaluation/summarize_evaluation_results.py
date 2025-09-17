@@ -44,7 +44,10 @@ def analyze_results(file_path: str) -> Dict[str, Any]:
                 "question": result.get('question', '')[:100] + "..." if len(result.get('question', '')) > 100 else result.get('question', ''),
                 "retrieved_chunks_count": len(result.get('retrieved_chunk_ids', [])),
                 "answer_length": len(result.get('system_answer', '')),
-                "has_ground_truth": bool(result.get('ground_truth_answer'))
+                "has_ground_truth": bool(result.get('ground_truth_answer')),
+                "pipeline_end_reason": result.get('pipeline_end_reason', 'unknown'),
+                "has_rewritten_query": bool(result.get('rewritten_query')),
+                "has_reasoning": result.get('has_reasoning', False)
             })
         
         return {
@@ -76,35 +79,50 @@ def main():
         print(f"\n📊 数据集: {dataset.upper()}")
         print("-" * 50)
         
-        # 检查示例结果文件
-        sample_file = os.path.join(base_dir, dataset, "sample_evaluation_results.json")
+        # 检查结果文件（新的命名方式）
+        sample_file = os.path.join(base_dir, dataset, "sample_results.json")
         full_file = os.path.join(base_dir, dataset, "evaluation_results.json")
         
-        # 优先使用完整结果，如果没有则使用示例结果
-        result_file = full_file if os.path.exists(full_file) else sample_file
+        # 检查旧的命名方式（兼容性）
+        old_sample_file = os.path.join(base_dir, dataset, "sample_evaluation_results.json")
+        old_full_file = os.path.join(base_dir, dataset, "concurrent_evaluation_results.json")
         
-        if os.path.exists(result_file):
-            analysis = analyze_results(result_file)
-            
-            if "error" in analysis:
-                print(f"❌ 错误: {analysis['error']}")
-                continue
-            
-            file_type = "完整结果" if result_file == full_file else "示例结果"
-            print(f"📁 文件类型: {file_type}")
-            print(f"📝 总问题数: {analysis['total_questions']}")
-            print(f"✅ 成功检索到内容的问题: {analysis['questions_with_chunks']} ({analysis['retrieval_success_rate']:.1%})")
-            print(f"❌ 未检索到内容的问题: {analysis['questions_without_chunks']}")
-            print(f"📊 平均每问题检索块数: {analysis['avg_chunks_per_question']}")
-            print(f"🔝 最大检索块数: {analysis['max_chunks_retrieved']}")
-            print(f"📏 平均回答长度: {analysis['avg_answer_length']} 字符")
-            
-            print("\n🔍 示例问题:")
-            for i, sample in enumerate(analysis['sample_questions'], 1):
-                print(f"  {i}. {sample['question']}")
-                print(f"     检索块数: {sample['retrieved_chunks_count']}, 回答长度: {sample['answer_length']}")
+        # 优先使用新命名，然后是旧命名
+        if os.path.exists(full_file):
+            result_file = full_file
+            file_type = "完整结果"
+        elif os.path.exists(sample_file):
+            result_file = sample_file
+            file_type = "示例结果"
+        elif os.path.exists(old_full_file):
+            result_file = old_full_file
+            file_type = "完整结果（旧版）"
+        elif os.path.exists(old_sample_file):
+            result_file = old_sample_file
+            file_type = "示例结果（旧版）"
         else:
             print("❌ 未找到结果文件")
+            continue
+        
+        analysis = analyze_results(result_file)
+        
+        if "error" in analysis:
+            print(f"❌ 错误: {analysis['error']}")
+            continue
+        
+        print(f"📁 文件类型: {file_type}")
+        print(f"📝 总问题数: {analysis['total_questions']}")
+        print(f"✅ 成功检索到内容的问题: {analysis['questions_with_chunks']} ({analysis['retrieval_success_rate']:.1%})")
+        print(f"❌ 未检索到内容的问题: {analysis['questions_without_chunks']}")
+        print(f"📊 平均每问题检索块数: {analysis['avg_chunks_per_question']}")
+        print(f"🔝 最大检索块数: {analysis['max_chunks_retrieved']}")
+        print(f"📏 平均回答长度: {analysis['avg_answer_length']} 字符")
+        
+        print("\n🔍 示例问题:")
+        for i, sample in enumerate(analysis['sample_questions'], 1):
+            print(f"  {i}. {sample['question']}")
+            print(f"     检索块数: {sample['retrieved_chunks_count']}, 回答长度: {sample['answer_length']}")
+            print(f"     流程结束原因: {sample['pipeline_end_reason']}, 有重写查询: {'是' if sample['has_rewritten_query'] else '否'}, 有推理: {'是' if sample['has_reasoning'] else '否'}")
     
     print("\n" + "=" * 80)
     print("📋 输出文件说明:")
@@ -114,9 +132,14 @@ def main():
     print("  - system_answer: 系统生成的回答（不包含思考过程）")
     print("  - original_id: 原始数据集中的问题ID")
     print("  - ground_truth_answer: 标准答案（如果有）")
-    print("\n📍 文件位置:")
+    print("  - rewritten_query: 查询重写器生成的重写结果")
+    print("  - pipeline_end_reason: RAG流程结束的原因")
+    print("  - has_reasoning: 是否包含推理过程")
+    print("\n📍 文件位置和命名:")
     for dataset in datasets:
-        print(f"  - {dataset}: {base_dir}/{dataset}/")
+        print(f"  - {dataset}:")
+        print(f"    • 完整结果: {base_dir}/{dataset}/evaluation_results.json")
+        print(f"    • 示例结果: {base_dir}/{dataset}/sample_results.json")
     print("=" * 80)
 
 if __name__ == "__main__":

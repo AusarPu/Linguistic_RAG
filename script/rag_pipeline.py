@@ -7,8 +7,8 @@ import json
 from typing import List, Dict, Any,AsyncGenerator, Optional
 # --- 从项目中导入 ---
 from .knowledge_base import KnowledgeBase
-from .query_rewriter import generate_rewritten_query
-from .useful_judger import judge_knowledge_usefulness
+from .query_rewriter import generate_rewritten_query, generate_rewritten_query_async
+from .useful_judger import judge_knowledge_usefulness, judge_knowledge_usefulness_async
 from .vllm_clients import call_generator_vllm_stream
 
 
@@ -51,7 +51,7 @@ async def execute_rag_flow(
 
     # 1. 查询重写
     yield _build_status_event("query_rewriting", "步骤1: 正在进行查询重构...")
-    rewritten_query = generate_rewritten_query(messages=chat_history_openai, user_input=user_query)
+    rewritten_query = await generate_rewritten_query_async(messages=chat_history_openai, user_input=user_query)
     _QUESTION = rewritten_query["question"]
     _BROADENED_QUESTION = rewritten_query["broadened_question"]
     _KEYWORD = rewritten_query["keyword"]
@@ -127,12 +127,11 @@ async def execute_rag_flow(
     yield _build_status_event("usefulness_judging", "步骤3: 正在判断知识块的相关性...")
     usefulness_start_time = time.time()
 
-    # 创建判断任务列表
+    # 创建判断任务列表 - 使用异步版本
     judge_tasks = []
     for chunk in candidate_chunks_for_reranker:
         task = asyncio.create_task(
-            asyncio.to_thread(
-                judge_knowledge_usefulness,
+            judge_knowledge_usefulness_async(
                 questions=[_QUESTION]+_BROADENED_QUESTION,
                 knowledge_content=chunk.get("text", "")
             )
