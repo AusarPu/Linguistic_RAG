@@ -6,6 +6,7 @@ import time
 import asyncio
 import aiohttp  # 用于异步HTTP请求
 import json
+import re
 from typing import Optional, Dict, Any
 from collections import defaultdict, deque
 
@@ -31,15 +32,64 @@ OPTIMIZATION_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
 VLLM_METADATA_API_URL = config.GENERATOR_API_URL
 METADATA_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
 METADATA_GENERATION_CONFIG = {
-    "temperature": 0.4,  # 对于信息提取和遵循指令，较低的温度可能更好
-    "max_tokens": 4096,  # 需要足够容纳关键词、问题和JSON结构
+    "temperature": 0.6,  # 对于信息提取和遵循指令，较低的温度可能更好
+    "max_tokens": 10240,  # 需要足够容纳关键词、问题和JSON结构
     # "response_format": {"type": "json_object"} # 如果VLLM和模型支持，强烈建议使用
 }
 METADATA_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
 
-# --- LLM提示词模板：为单个块生成元数据并判断意义 ---
-METADATA_GENERATION_PROMPT_TEMPLATE = """你是一位专业的知识分析和信息提取专家。
-我将提供一段文本（一个文本块）及其标识符。请你基于这段文本内容完成以下任务：
+# --- 语言检测功能 ---
+def detect_text_language(text: str) -> str:
+    """
+    简单的语言检测功能，基于文本特征判断主要语言
+    
+    Args:
+        text (str): 待检测的文本
+    
+    Returns:
+        str: 检测到的语言代码 ('zh', 'en', 'mixed')
+    """
+    if not text or not text.strip():
+        return 'en'  # 默认英文
+    
+    # 统计中文字符数量
+    chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+    # 统计英文字符数量（字母）
+    english_chars = len(re.findall(r'[a-zA-Z]', text))
+    # 总字符数（排除空格和标点）
+    total_chars = chinese_chars + english_chars
+    
+    if total_chars == 0:
+        return 'en'  # 默认英文
+    
+    chinese_ratio = chinese_chars / total_chars
+    english_ratio = english_chars / total_chars
+    
+    # 判断语言
+    if chinese_ratio > 0.3:  # 中文字符占比超过30%
+        if english_ratio > 0.2:  # 英文字符也占一定比例
+            return 'mixed'
+        else:
+            return 'zh'
+    else:
+        return 'en'
+
+
+# --- 动态提示词生成功能 ---
+def get_metadata_prompt_template(language: str) -> str:
+    """
+    根据检测到的语言返回相应的元数据生成提示词模板
+    
+    Args:
+        language (str): 语言代码 ('zh', 'en', 'mixed')
+    
+    Returns:
+        str: 对应语言的提示词模板
+    """
+    
+    if language == 'zh':
+        return """你是一位专业的知识分析和信息提取专家。
+我将提供一段中文文本（一个文本块）及其标识符。请你基于这段文本内容完成以下任务：
 
 1.  **评估内容意义**：
     * 首先，请判断该文本块是否包含实质性的、有意义的、适合用于构建问答知识库的信息。
@@ -48,13 +98,88 @@ METADATA_GENERATION_PROMPT_TEMPLATE = """你是一位专业的知识分析和信
 2.  **关键词摘要提取 (如果文本块有意义)**：
     * 提取或生成若干（例如，1到5个，不必强求数量，质量优先）最能概括该文本块核心内容的"关键词摘要"或"标签"。
     * 每个关键词摘要应该简短精炼，方便作为标签查找，或者其他能准确捕捉核心概念的短语组合。
-    * 关键词应该是全局通用的，不应该出现类似``这本书``，``本书作者``这类，而应该明确这本书是什么，作者是什么，便于以后查找
+    * 关键词应该是全局通用的，不应该出现类似"这本书"、"本书作者"这类，而应该明确这本书是什么，作者是什么，便于以后查找
+    * 可以参考文本块标识符中的信息来生成更准确的关键词
+    * 如果文本块评估为无实质意义，则关键词摘要列表应为空。
+
+3.  **预生成相关问题 (如果文本块有意义)**：
+    * 根据该文本块的内容，生成若干（例如，1到3个，不必强求数量，质量优先）用户最有可能提出的、并且该文本块能够清晰、直接回答的高质量中文问题。
+    * 生成的问题应该是全局通用的，不应该出现类似"这本书"、"本书作者"这类，而应该明确这本书是什么，作者是什么，便于以后查找
+    * 可以参考文本块标识符中的信息来生成更准确的问题
+    * 如果文本块评估为无实质意义，则生成问题列表应为空。
+
+请将你的结果以严格的JSON格式返回，包含以下字段：
+- "is_meaningful": 布尔值 (true 表示有意义，false 表示无实质意义应考虑丢弃)。
+- "reason_if_not_meaningful": 字符串，如果 "is_meaningful" 为 false，请简要说明原因 (例如："仅包含页眉", "内容过短且无信息")。如果 "is_meaningful" 为 true，此字段可为空字符串。
+- "keyword_summaries": 一个包含所提取/生成的关键词摘要字符串的列表。如果 "is_meaningful" 为 false，此列表必须为空。
+- "generated_questions": 一个包含所生成的问句字符串的列表。如果 "is_meaningful" 为 false，此列表必须为空。
+
+确保JSON格式正确，所有字符串值内部的特殊字符（如换行符、双引号）都已正确转义。不要包含任何其他解释或对话。
+
+文本块标识符：{chunk_id}
+
+提供的文本块如下：
+```
+{text_chunk_content}
+```
+"""
+    
+    elif language == 'en':
+        return """You are a professional knowledge analysis and information extraction expert.
+I will provide you with an English text chunk and its identifier. Please complete the following tasks based on this text content:
+
+1.  **Evaluate Content Meaningfulness**:
+    * First, please determine whether this text chunk contains substantial, meaningful information suitable for building a Q&A knowledge base.
+    * If the text chunk content is very sparse with almost no information value (e.g., it might just be headers, footers, isolated chart numbers, blank content, or fragments too fragmented to understand), please indicate this in the returned results.
+
+2.  **Keyword Summary Extraction (if the text chunk is meaningful)**:
+    * Extract or generate several (e.g., 1 to 5, no need to force quantity, quality first) "keyword summaries" or "tags" that best summarize the core content of this text chunk.
+    * Each keyword summary should be concise and precise, convenient for tag searching, or other phrase combinations that accurately capture core concepts.
+    * Keywords should be globally universal, should not appear like "this book", "the author of this book", but should clearly specify what this book is, who the author is, for easy future searching
+    * You can refer to information in the text chunk identifier to generate more accurate keywords
+    * If the text chunk is evaluated as meaningless, the keyword summary list should be empty.
+
+3.  **Pre-generate Related Questions (if the text chunk is meaningful)**:
+    * Based on the content of this text chunk, generate several (e.g., 1 to 3, no need to force quantity, quality first) high-quality English questions that users are most likely to ask and that this text chunk can clearly and directly answer.
+    * Generated questions should be globally universal, should not appear like "this book", "the author of this book", but should clearly specify what this book is, who the author is, for easy future searching
+    * You can refer to information in the text chunk identifier to generate more accurate questions
+    * If the text chunk is evaluated as meaningless, the generated question list should be empty.
+
+Please return your results in strict JSON format, containing the following fields:
+- "is_meaningful": Boolean value (true means meaningful, false means no substantial meaning and should be considered for discarding).
+- "reason_if_not_meaningful": String, if "is_meaningful" is false, please briefly explain the reason (e.g., "Contains only headers", "Content too short and no information"). If "is_meaningful" is true, this field can be an empty string.
+- "keyword_summaries": A list containing extracted/generated keyword summary strings. If "is_meaningful" is false, this list must be empty.
+- "generated_questions": A list containing generated question strings. If "is_meaningful" is false, this list must be empty.
+
+Ensure correct JSON format, all special characters within string values (such as newlines, double quotes) are properly escaped. Do not include any other explanations or conversations.
+
+Text chunk identifier: {chunk_id}
+
+The provided text chunk is as follows:
+```
+{text_chunk_content}
+```
+"""
+    
+    else:  # mixed language
+        return """你是一位专业的知识分析和信息提取专家。
+我将提供一段包含中英文混合内容的文本（一个文本块）及其标识符。请你基于这段文本内容完成以下任务：
+
+1.  **评估内容意义**：
+    * 首先，请判断该文本块是否包含实质性的、有意义的、适合用于构建问答知识库的信息。
+    * 如果文本块内容非常稀疏、几乎没有信息量（例如，可能只是页眉、页脚、孤立的图表编号、空白内容，或非常零碎以至于无法理解的片段），请在返回结果中指明。
+
+2.  **关键词摘要提取 (如果文本块有意义)**：
+    * 提取或生成若干（例如，1到5个，不必强求数量，质量优先）最能概括该文本块核心内容的"关键词摘要"或"标签"。
+    * 每个关键词摘要应该简短精炼，可以是中文、英文或中英文混合，方便作为标签查找。
+    * 关键词应该是全局通用的，不应该出现类似"这本书"、"this book"这类，而应该明确具体的书名、作者等信息，便于以后查找
     * 可以参考文本块标识符中的信息来生成更准确的关键词
     * 如果文本块评估为无实质意义，则关键词摘要列表应为空。
 
 3.  **预生成相关问题 (如果文本块有意义)**：
     * 根据该文本块的内容，生成若干（例如，1到3个，不必强求数量，质量优先）用户最有可能提出的、并且该文本块能够清晰、直接回答的高质量问题。
-    * 生成的问题应该是全局通用的，不应该出现类似``这本书``，``本书作者``这类，而应该明确这本书是什么，作者是什么，便于以后查找
+    * 生成的问题可以是中文、英文或中英文混合，根据文本内容的主要语言来决定
+    * 生成的问题应该是全局通用的，不应该出现类似"这本书"、"this book"这类，而应该明确具体信息，便于以后查找
     * 可以参考文本块标识符中的信息来生成更准确的问题
     * 如果文本块评估为无实质意义，则生成问题列表应为空。
 
@@ -74,15 +199,88 @@ METADATA_GENERATION_PROMPT_TEMPLATE = """你是一位专业的知识分析和信
 ```
 """
 
-# --- 优化中心块B的提示词模板 ---
-# 这个提示词要求LLM只返回包含优化后块B文本的JSON对象
-CHUNK_OPTIMIZATION_PROMPT_TEMPLATE = """
-你是一位专业的文本编辑。你的任务是基于其前文（块A）和后文（块C）来优化中间的文本块（块B）。
+
+def get_optimization_prompt_template(language: str) -> str:
+    """
+    根据检测到的语言返回相应的文本块优化提示词模板
+    
+    Args:
+        language (str): 语言代码 ('zh', 'en', 'mixed')
+    
+    Returns:
+        str: 对应语言的提示词模板
+    """
+    
+    if language == 'zh':
+        return """
+你是一位专业的中文文本编辑。你的任务是基于其前文（块A）和后文（块C）来优化中间的文本块（块B）。
 目标是确保块B在语义上连贯、完整，并且其与块A或块C的边界处没有句子被不自然地切断。
 请只进行必要的最小调整，例如，如果一个句子明显在块A的末尾和块B的开头之间被切断，你可以将属于块B的句子片段从块A的末尾移入块B的开头，或者将属于块A的句子片段从块B的开头移回块A的末尾，以确保块B以一个完整的句子开始和结束（如果上下文允许）。
 同样地，处理块B和块C之间的边界。
 不要添加任何新的、源于外部的信息，也不要对块B的内容进行实质性的重写或总结。优化后的块B应忠于原文的意义和风格，并且长度应与原始块B大致相似。
 但是注意，你可以改写你认为的由OCR识别错误的部分，并进行格式优化，把格式不清楚的部分，都用markdown格式转写一遍
+
+块A (前文内容，如果块B是文档的第一个块，则此部分内容为 "None" 或非常简短):
+```
+{text_chunk_a}
+```
+
+块B (需要优化的当前块，这是你的主要操作对象):
+```
+{text_chunk_b}
+```
+
+块C (后文内容，如果块B是文档的最后一个块，则此部分内容为 "None" 或非常简短):
+```
+{text_chunk_c}
+```
+
+请严格按照以下JSON格式返回优化后的块B的文本。
+确保 "optimized_chunk_B_text" 字段的值是一个符合JSON规范的字符串，这意味着字符串内部的特殊字符（如换行符、双引号、反斜杠等）都需要被正确转义（例如，换行符应表示为 \\n，双引号应表示为 \\"，反斜杠应表示为 \\\\）。
+{{
+  "optimized_chunk_B_text": "这里是优化后的块B的文本内容..."
+}}
+"""
+    
+    elif language == 'en':
+        return """
+You are a professional English text editor. Your task is to optimize the middle text chunk (Chunk B) based on its preceding context (Chunk A) and following context (Chunk C).
+The goal is to ensure that Chunk B is semantically coherent and complete, and that there are no sentences unnaturally cut off at the boundaries between Chunk B and Chunk A or Chunk C.
+Please make only necessary minimal adjustments. For example, if a sentence is clearly cut off between the end of Chunk A and the beginning of Chunk B, you can move the sentence fragment belonging to Chunk B from the end of Chunk A to the beginning of Chunk B, or move the sentence fragment belonging to Chunk A from the beginning of Chunk B back to the end of Chunk A, to ensure that Chunk B starts and ends with complete sentences (if the context allows).
+Similarly, handle the boundary between Chunk B and Chunk C.
+Do not add any new information from external sources, nor substantially rewrite or summarize the content of Chunk B. The optimized Chunk B should remain faithful to the original meaning and style, and its length should be roughly similar to the original Chunk B.
+However, note that you can rewrite parts that you believe are OCR recognition errors, and perform format optimization, converting unclear formatting parts to markdown format.
+
+Chunk A (preceding content, if Chunk B is the first chunk of the document, this part will be "None" or very brief):
+```
+{text_chunk_a}
+```
+
+Chunk B (the current chunk to be optimized, this is your main object of operation):
+```
+{text_chunk_b}
+```
+
+Chunk C (following content, if Chunk B is the last chunk of the document, this part will be "None" or very brief):
+```
+{text_chunk_c}
+```
+
+Please return the optimized Chunk B text strictly in the following JSON format.
+Ensure that the value of the "optimized_chunk_B_text" field is a JSON-compliant string, which means that special characters within the string (such as newlines, double quotes, backslashes, etc.) need to be properly escaped (for example, newlines should be represented as \\n, double quotes as \\", backslashes as \\\\).
+{{
+  "optimized_chunk_B_text": "Here is the optimized text content of Chunk B..."
+}}
+"""
+    
+    else:  # mixed language
+        return """
+你是一位专业的中英文混合文本编辑。你的任务是基于其前文（块A）和后文（块C）来优化中间的文本块（块B）。
+目标是确保块B在语义上连贯、完整，并且其与块A或块C的边界处没有句子被不自然地切断。
+请只进行必要的最小调整，例如，如果一个句子明显在块A的末尾和块B的开头之间被切断，你可以将属于块B的句子片段从块A的末尾移入块B的开头，或者将属于块A的句子片段从块B的开头移回块A的末尾，以确保块B以一个完整的句子开始和结束（如果上下文允许）。
+同样地，处理块B和块C之间的边界。
+不要添加任何新的、源于外部的信息，也不要对块B的内容进行实质性的重写或总结。优化后的块B应忠于原文的意义和风格，并且长度应与原始块B大致相似。
+但是注意，你可以改写你认为的由OCR识别错误的部分，并进行格式优化，把格式不清楚的部分，都用markdown格式转写一遍。对于中英文混合内容，请保持原有的语言分布和风格。
 
 块A (前文内容，如果块B是文档的第一个块，则此部分内容为 "None" 或非常简短):
 ```
@@ -131,8 +329,14 @@ async def generate_metadata_for_chunk_via_vllm(text_chunk_content, chunk_id=None
             }
         }
     
+    # 检测文本语言
+    detected_language = detect_text_language(text_chunk_content)
+    
+    # 根据语言获取相应的提示词模板
+    prompt_template = get_metadata_prompt_template(detected_language)
+    
     # 构建请求数据
-    prompt = METADATA_GENERATION_PROMPT_TEMPLATE.format(
+    prompt = prompt_template.format(
         chunk_id=chunk_id or "未知",
         text_chunk_content=text_chunk_content
     )
@@ -228,7 +432,13 @@ async def optimize_chunk_b_via_vllm(
     formatted_text_a = text_a if text_a is not None else "N/A (此为文档首个待优化块的上下文)"
     formatted_text_c = text_c if text_c is not None else "N/A (此为文档末尾待优化块的上下文)"
 
-    final_prompt = CHUNK_OPTIMIZATION_PROMPT_TEMPLATE.format(
+    # 检测文本语言
+    detected_language = detect_text_language(text_b)
+    
+    # 根据语言获取相应的提示词模板
+    prompt_template = get_optimization_prompt_template(detected_language)
+
+    final_prompt = prompt_template.format(
         text_chunk_a=formatted_text_a,
         text_chunk_b=text_b,
         text_chunk_c=formatted_text_c

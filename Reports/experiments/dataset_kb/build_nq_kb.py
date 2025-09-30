@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 为 Natural Questions 构建独立的知识库块文件
-输入: /home/pushihao/RAG/Reports/experiments/dataset_converters/converted/natural_questions/{train,validation}_converted.json
-输出: /home/pushihao/RAG/Reports/experiments/dataset_kb/natural_questions/{train,validation}_kb_chunks.json
+输入: /home/pushihao/RAG/Reports/experiments/dataset_converters/converted/natural_questions/validation_converted.json
+输出: /home/pushihao/RAG/Reports/experiments/dataset_kb/natural_questions/validation_kb_chunks.json
+只处理验证集的前10000条数据
 """
 from pathlib import Path
 from kb_utils import process_ndjson_or_list_json
@@ -19,22 +20,23 @@ def main():
     output_dir = base / "dataset_kb" / "natural_questions"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    pairs = {
-        "train_converted.json": "train_kb_chunks.json",
-        "validation_converted.json": "validation_kb_chunks.json",
-    }
-
-    for inp, outp in pairs.items():
+    # 只处理验证集，使用1k版本
+    input_file = input_dir / "validation_converted_1k.json"
+    output_file = output_dir / "validation_kb_chunks_1k.json"
+    
+    if input_file.exists():
         process_ndjson_or_list_json(
-            input_file=input_dir / inp,
+            input_file=input_file,
             dataset_name="natural_questions",
-            split_name=Path(outp).stem.split("_")[0],
-            output_file=output_dir / outp,
+            split_name="validation",
+            output_file=output_file,
             chunk_size=CHUNK_SIZE,
             chunk_overlap=CHUNK_OVERLAP,
             min_chunk_len=MIN_CHUNK_LEN,
             separators=SEPARATORS,
         )
+    else:
+        print(f"警告: 输入文件不存在: {input_file}")
 
 
 if __name__ == "__main__":

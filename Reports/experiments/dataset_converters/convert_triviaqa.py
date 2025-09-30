@@ -74,30 +74,78 @@ def convert_triviaqa_sample(sample):
     }
 
 
-def convert_triviaqa_dataset(input_file, output_file):
+def convert_triviaqa_dataset(input_file, output_file, max_samples=None):
     """
     转换整个TriviaQA数据集文件
     
     Args:
         input_file: 输入文件路径
         output_file: 输出文件路径
+        max_samples: 最大样本数量，None表示不限制
     """
     print(f"正在转换 {input_file} -> {output_file}")
+    if max_samples:
+        print(f"限制样本数量: {max_samples}")
     
-    converted_samples = []
-    
-    with open(input_file, 'r', encoding='utf-8') as f:
-        for line_num, line in enumerate(f, 1):
+    # 如果需要限制样本数量，需要按question_id分组采样
+    if max_samples:
+        from collections import defaultdict
+        
+        # 先读取所有样本并按question_id分组
+        question_groups = defaultdict(list)
+        with open(input_file, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                try:
+                    sample = json.loads(line.strip())
+                    question_id = sample.get('question_id', f'unknown_{line_num}')
+                    question_groups[question_id].append(sample)
+                except json.JSONDecodeError as e:
+                    print(f"警告: 第{line_num}行JSON解析失败: {e}")
+                    continue
+                except Exception as e:
+                    print(f"警告: 第{line_num}行处理失败: {e}")
+                    continue
+        
+        print(f"读取了 {len(question_groups)} 个唯一问题ID")
+        
+        # 按question_id顺序选择，确保每个选中的question_id的所有样本都被包含
+        selected_samples = []
+        current_count = 0
+        
+        for question_id, samples in list(question_groups.items()):
+            if current_count + len(samples) <= max_samples:
+                selected_samples.extend(samples)
+                current_count += len(samples)
+            else:
+                # 如果加上这个问题的所有样本会超过限制，就停止
+                break
+        
+        print(f"选择了 {len(selected_samples)} 个样本（来自 {len(set(s.get('question_id') for s in selected_samples))} 个问题ID）")
+        
+        # 转换选中的样本
+        converted_samples = []
+        for sample in selected_samples:
             try:
-                sample = json.loads(line.strip())
                 converted_sample = convert_triviaqa_sample(sample)
                 converted_samples.append(converted_sample)
-            except json.JSONDecodeError as e:
-                print(f"警告: 第{line_num}行JSON解析失败: {e}")
-                continue
             except Exception as e:
-                print(f"警告: 第{line_num}行处理失败: {e}")
+                print(f"警告: 样本处理失败: {e}")
                 continue
+    else:
+        # 原有逻辑：处理所有样本
+        converted_samples = []
+        with open(input_file, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                try:
+                    sample = json.loads(line.strip())
+                    converted_sample = convert_triviaqa_sample(sample)
+                    converted_samples.append(converted_sample)
+                except json.JSONDecodeError as e:
+                    print(f"警告: 第{line_num}行JSON解析失败: {e}")
+                    continue
+                except Exception as e:
+                    print(f"警告: 第{line_num}行处理失败: {e}")
+                    continue
     
     # 写入转换后的数据
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -122,7 +170,7 @@ def main():
     # 转换训练集和验证集
     datasets = {
         "train.json": "train_converted.json",
-        "validation.json": "validation_converted.json"
+        "validation.json": "validation_converted_1k.json"  # 验证集限制1000个样本
     }
     
     for input_name, output_name in datasets.items():
@@ -130,7 +178,9 @@ def main():
         output_file = output_dir / output_name
         
         if input_file.exists():
-            convert_triviaqa_dataset(input_file, output_file)
+            # 验证集限制1000个样本
+            max_samples = 1000 if input_name == "validation.json" else None
+            convert_triviaqa_dataset(input_file, output_file, max_samples=max_samples)
         else:
             print(f"警告: 输入文件不存在: {input_file}")
     

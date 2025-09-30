@@ -486,6 +486,7 @@ if __name__ == '__main__':
     parser.add_argument("--test", action="store_true", help="启用测试模式")
     parser.add_argument("--test-limit", type=int, default=10, help="测试模式下限制处理的块数量（默认：10）")
     parser.add_argument("--input-file", type=str, help="自定义输入文件路径（可选）")
+    parser.add_argument("--output-dir", type=str, help="自定义输出目录路径（可选）")
     
     args = parser.parse_args()
     
@@ -493,8 +494,9 @@ if __name__ == '__main__':
     import logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    # 确定输入文件路径
+    # 确定输入文件路径和输出目录
     input_file = args.input_file or ENHANCED_CHUNKS_JSON_PATH
+    output_dir = args.output_dir or PROCESSED_DATA_DIR
     
     # 检查输入文件是否存在
     if not Path(input_file).is_file():
@@ -508,12 +510,12 @@ if __name__ == '__main__':
     else:
         # 正常模式
         logger.info("=========== 开始构建所有核心搜索索引 ===========")
-        Path(PROCESSED_DATA_DIR).mkdir(parents=True, exist_ok=True)
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         build_all_search_indexes(
             enhanced_chunks_path=input_file,
             embedding_model_name_or_path=EMBEDDING_MODEL_PATH,
-            output_dir=PROCESSED_DATA_DIR,
+            output_dir=output_dir,
             chunk_dense_emb_filename="dense_embeddings_chunks.npy",
             chunk_faiss_idx_filename="faiss_index_chunks_ip.idx",
             indexed_chunks_meta_filename="indexed_chunks_metadata.json",
@@ -523,6 +525,6 @@ if __name__ == '__main__':
             question_dense_emb_filename="dense_embeddings_questions.npy",
             question_faiss_idx_filename="faiss_index_questions_ip.idx",
             question_to_chunk_id_map_filename="question_index_to_chunk_id_map.json",
-            question_texts_list_filename=ALL_QUESTION_TEXTS_SAVE_PATH,
+            question_texts_list_filename="all_question_texts.json",
         )
         logger.info("=========== 所有核心搜索索引构建完成 ===========")

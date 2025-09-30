@@ -22,7 +22,7 @@ def main():
 
     pairs = {
         "train_converted.json": "train_kb_chunks.json",
-        "validation_converted.json": "validation_kb_chunks.json",
+        "validation_converted_1k.json": "validation_kb_chunks_1k.json",
     }
 
     for inp, outp in pairs.items():

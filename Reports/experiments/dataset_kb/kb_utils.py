@@ -152,25 +152,47 @@ def process_ndjson_or_list_json(
     chunk_overlap: int = 0,
     min_chunk_len: int = 10,
     separators: List[str] | None = None,
+    max_samples: int | None = None,
 ) -> int:
     """
     将 input_file 中的每条样本(context)切分为 KB 块，保存到 output_file (JSON 列表)。
     返回生成的块数量。
+    
+    Args:
+        max_samples: 最大处理样本数量，None表示处理所有样本
     """
     if not input_file.is_file():
         print(f"[跳过] 输入文件不存在: {input_file}")
         return 0
 
     print(f"读取: {input_file}")
+    if max_samples:
+        print(f"限制样本数量: {max_samples}")
+    
     total_chunks = 0
     all_chunks: List[Dict[str, Any]] = []
+    processed_samples = 0
+    doc_name_counter = {}  # 用于处理重复的doc_name
 
     for idx, sample in enumerate(_iter_samples_from_file(input_file)):
+        # 如果设置了最大样本数量限制，检查是否已达到限制
+        if max_samples and processed_samples >= max_samples:
+            break
+            
         sample_id = str(sample.get("id", idx))
         context_text = normalize_context_to_text(sample.get("context", ""))
         if not context_text:
             continue
-        doc_name = f"{dataset_name}_{split_name}_{sample_id}"
+            
+        # 处理重复的doc_name，为每个重复的样本添加序号
+        base_doc_name = f"{dataset_name}_{split_name}_{sample_id}"
+        if base_doc_name in doc_name_counter:
+            doc_name_counter[base_doc_name] += 1
+            doc_name = f"{base_doc_name}_part{doc_name_counter[base_doc_name]}"
+        else:
+            doc_name_counter[base_doc_name] = 1
+            doc_name = base_doc_name
+            
         chunks = _chunk_text_to_kb_chunks(
             context_text, doc_name,
             chunk_size=chunk_size,
@@ -182,13 +204,14 @@ def process_ndjson_or_list_json(
             all_chunks.extend(chunks)
             total_chunks += len(chunks)
 
-        if (idx + 1) % 1000 == 0:
-            print(f"  进度: {idx+1} 条样本，累计 {total_chunks} 个块")
+        processed_samples += 1
+        if processed_samples % 1000 == 0:
+            print(f"  进度: {processed_samples} 条样本，累计 {total_chunks} 个块")
 
     # 确保输出目录存在
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with output_file.open('w', encoding='utf-8') as f:
         json.dump(all_chunks, f, ensure_ascii=False, indent=2)
 
-    print(f"完成: {dataset_name}/{split_name} -> {output_file}，共 {total_chunks} 个块")
+    print(f"完成: {dataset_name}/{split_name} -> {output_file}，处理 {processed_samples} 条样本，共 {total_chunks} 个块")
     return total_chunks

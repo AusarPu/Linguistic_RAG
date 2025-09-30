@@ -35,30 +35,31 @@ def get_output_filename(is_sample: bool = False) -> str:
 
 DATASETS = {
     "hotpotqa": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/hotpotqa/validation_converted.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/hotpotqa",
+        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/hotpotqa/validation_converted_1k.json",
+        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/hotpotqa_enhanced",
         "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/hotpotqa"
     },
     "ms_marco": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/ms_marco/validation_converted.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/ms_marco",
+        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/ms_marco/validation_converted_1k.json",
+        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/msmarco_enhanced",
         "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/ms_marco"
     },
     "natural_questions": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/natural_questions/validation_converted.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/natural_questions",
+        # 使用1k子集，确保评估只针对构建索引用到的1000条问题
+        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/natural_questions/validation_converted_1k.json",
+        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/nq_enhanced",
         "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/natural_questions"
     },
     "triviaqa": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/triviaqa/validation_converted.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/triviaqa",
+        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/triviaqa/validation_converted_1k.json",
+        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/triviaqa_enhanced",
         "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/triviaqa"
     }
 }
 
 # 并发配置
 DEFAULT_BATCH_SIZE = 3  # 默认批处理大小
-DEFAULT_MAX_QUESTIONS = 50  # 默认最大问题数量
+DEFAULT_MAX_QUESTIONS = 20  # 默认不限制问题数量（按数据集配置与文件决定）
 
 # 线程锁用于保护共享资源
 result_lock = threading.Lock()
@@ -217,11 +218,19 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
         # 加载问题数据
         logger.info(f"加载问题文件: {config['questions_file']}")
         with open(config["questions_file"], 'r', encoding='utf-8') as f:
-            questions_data = []
-            for line in f:
-                line = line.strip()
-                if line:
-                    questions_data.append(json.loads(line))
+            # 尝试加载为标准JSON数组格式
+            try:
+                questions_data = json.load(f)
+                logger.info(f"成功加载JSON数组格式文件")
+            except json.JSONDecodeError:
+                # 如果失败，尝试JSONL格式（逐行JSON）
+                f.seek(0)  # 重置文件指针
+                questions_data = []
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        questions_data.append(json.loads(line))
+                logger.info(f"成功加载JSONL格式文件")
         
         # 限制问题数量
         if max_questions:

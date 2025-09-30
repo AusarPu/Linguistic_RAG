@@ -35,6 +35,36 @@ def _html_to_text(html_str: str) -> str:
     return text
 
 
+def _extract_answer(sample):
+    """Extract answer from annotations."""
+    annotations = sample.get("annotations", {})
+    
+    # Natural Questions has multiple annotators, so annotations are lists
+    short_answers = annotations.get("short_answers", [])
+    long_answers = annotations.get("long_answer", [])
+    
+    # Try to find a valid short answer from any annotator
+    for short_answer in short_answers:
+        if isinstance(short_answer, dict) and "text" in short_answer:
+            texts = short_answer["text"]
+            if texts and len(texts) > 0 and texts[0]:  # Check if text list is not empty
+                return texts[0]
+    
+    # If no short answer, try to extract from long answer
+    for long_answer in long_answers:
+        if isinstance(long_answer, dict) and long_answer.get("candidate_index", -1) >= 0:
+            # Get the text from document using byte positions
+            document_html = sample["document"]["html"]
+            start_byte = long_answer.get("start_byte", 0)
+            end_byte = long_answer.get("end_byte", len(document_html))
+            if start_byte >= 0 and end_byte > start_byte:
+                answer_html = document_html[start_byte:end_byte]
+                answer_text = _html_to_text(answer_html)
+                # Return first 200 characters to avoid too long answers
+                return answer_text[:200].strip()
+    
+    return ""
+
 def convert_natural_questions_sample(sample):
     """
     转换单个Natural Questions样本为统一格式
@@ -45,7 +75,16 @@ def convert_natural_questions_sample(sample):
     Returns:
         dict: 统一格式的样本
     """
-    # Natural Questions 原始结构：{"id": "...", "document": {"html": "..."}}
+    sample_id = sample.get("id", "")
+    
+    # Extract question text
+    question_data = sample.get("question", {})
+    question_text = question_data.get("text", "") if isinstance(question_data, dict) else ""
+    
+    # Extract answer
+    answer_text = _extract_answer(sample)
+    
+    # Extract HTML content from document
     document = sample.get("document")
     doc_html = ""
     if isinstance(document, dict):
@@ -53,31 +92,35 @@ def convert_natural_questions_sample(sample):
     context_text = _html_to_text(doc_html)
 
     return {
-        "id": sample.get('id', ''),
-        "question": "",            # 原始文件不含问题
-        "answer": "",              # 原始文件不含答案
+        "id": sample_id,
+        "question": question_text,
+        "answer": answer_text,
         "context": context_text
     }
 
 
-def convert_natural_questions_dataset(input_file, output_file):
+def convert_natural_questions_dataset(input_file, output_file, max_samples=None):
     """
     转换整个Natural Questions数据集文件
     
     Args:
         input_file: 输入文件路径
         output_file: 输出文件路径
+        max_samples: 最大样本数量，None表示不限制
     """
+    import random
+    
     print(f"正在转换 {input_file} -> {output_file}")
+    if max_samples:
+        print(f"限制样本数量: {max_samples}")
     
-    converted_samples = []
-    
+    # 首先读取所有样本
+    all_samples = []
     with open(input_file, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
             try:
                 sample = json.loads(line.strip())
-                converted_sample = convert_natural_questions_sample(sample)
-                converted_samples.append(converted_sample)
+                all_samples.append(sample)
             except json.JSONDecodeError as e:
                 print(f"警告: 第{line_num}行JSON解析失败: {e}")
                 continue
@@ -85,10 +128,27 @@ def convert_natural_questions_dataset(input_file, output_file):
                 print(f"警告: 第{line_num}行处理失败: {e}")
                 continue
     
+    print(f"总共读取 {len(all_samples)} 个样本")
+    
+    # 如果指定了最大样本数，随机选择
+    if max_samples and len(all_samples) > max_samples:
+        random.seed(42)  # 设置随机种子以确保可重现性
+        all_samples = random.sample(all_samples, max_samples)
+        print(f"随机选择了 {len(all_samples)} 个样本")
+    
+    # 转换样本
+    converted_samples = []
+    for sample in all_samples:
+        try:
+            converted_sample = convert_natural_questions_sample(sample)
+            converted_samples.append(converted_sample)
+        except Exception as e:
+            print(f"警告: 样本处理失败: {e}")
+            continue
+    
     # 写入转换后的数据
     with open(output_file, 'w', encoding='utf-8') as f:
-        for sample in converted_samples:
-            f.write(json.dumps(sample, ensure_ascii=False) + '\n')
+        json.dump(converted_samples, f, ensure_ascii=False, indent=2)
     
     print(f"转换完成: {len(converted_samples)} 个样本")
 
@@ -105,22 +165,16 @@ def main():
     # 创建输出目录
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 转换训练集和验证集
-    datasets = {
-        "train.json": "train_converted.json",
-        "validation.json": "validation_converted.json"
-    }
+    # 只转换验证集，限制1000条
+    input_file = input_dir / "validation.json"
+    output_file = output_dir / "validation_converted_1k.json"
     
-    for input_name, output_name in datasets.items():
-        input_file = input_dir / input_name
-        output_file = output_dir / output_name
-        
-        if input_file.exists():
-            convert_natural_questions_dataset(input_file, output_file)
-        else:
-            print(f"警告: 输入文件不存在: {input_file}")
+    if input_file.exists():
+        convert_natural_questions_dataset(input_file, output_file, max_samples=1000)
+    else:
+        print(f"警告: 输入文件不存在: {input_file}")
     
-    print("Natural Questions数据集转换完成！")
+    print("Natural Questions验证集转换完成！")
 
 
 if __name__ == "__main__":

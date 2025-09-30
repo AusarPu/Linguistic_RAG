@@ -82,12 +82,12 @@ class KnowledgeBase:
         required_files_paths = [
             Path(FAISS_INDEX_CHUNKS_SAVE_PATH),
             Path(INDEXED_CHUNKS_METADATA_SAVE_PATH),
-            Path(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH),
+            # Path(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH),  # 这个文件是可选的
             Path(PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH),
             Path(BM25_INDEX_SAVE_PATH),
             Path(FAISS_INDEX_QUESTIONS_SAVE_PATH),
             Path(QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH),
-            Path(ALL_QUESTION_TEXTS_SAVE_PATH) # 这个是可选的
+            # Path(ALL_QUESTION_TEXTS_SAVE_PATH) # 这个是可选的
         ]
 
         missing = [p.name for p in required_files_paths if not p.is_file()]
@@ -116,11 +116,15 @@ class KnowledgeBase:
         }
         logger.info(f"Built chunk_id_to_metadata_map with {len(self.chunk_id_to_metadata_map)} entries.")
 
-        # 2. 加载关键词短语稀疏权重映射
-        logger.info(f"Loading phrase sparse weights map from '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}'...")
-        with open(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH, "rb") as f:
-            self.phrase_to_sparse_weights_map = pickle.load(f)
-        logger.info(f"Loaded sparse weights for {len(self.phrase_to_sparse_weights_map)} unique phrases.")
+        # 2. 加载关键词短语稀疏权重映射（如果存在）
+        if Path(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH).exists():
+            logger.info(f"Loading phrase sparse weights map from '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}'...")
+            with open(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH, "rb") as f:
+                self.phrase_to_sparse_weights_map = pickle.load(f)
+            logger.info(f"Loaded sparse weights for {len(self.phrase_to_sparse_weights_map)} unique phrases.")
+        else:
+            logger.warning(f"Phrase sparse weights map not found at '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}', skipping...")
+            self.phrase_to_sparse_weights_map = {}
 
         # 2.5. 加载关键词短语稠密向量映射
         logger.info(f"Loading phrase dense embeddings map from '{PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH}'...")
