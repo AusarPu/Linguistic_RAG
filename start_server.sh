@@ -16,10 +16,13 @@ LOG_DIR="$PROJECT_ROOT/logs"
 PYTHON_CMD="python3" # 或你的 python 命令
 
 REWRITER_LOG="$LOG_DIR/vllm_rewriter.log"
+FILTERED_LOG="$LOG_DIR/vllm_filtered.log"
+FILTER_PROCESS_LOG="$LOG_DIR/filter_process.log"
 
 EMBEDDING_LOG="$LOG_DIR/vllm_embedding.log"
 PID_DIR="$PROJECT_ROOT/pids" # 定义 PID_DIR
 REWRITER_PID_FILE="$PID_DIR/vllm_rewriter.pid"
+FILTER_PID_FILE="$PID_DIR/filter.pid"
 
 EMBEDDING_PID_FILE="$PID_DIR/vllm_embedding.pid"
 
@@ -78,6 +81,15 @@ echo "    配置读取完成。"
 # --- 清理函数 ---
 cleanup() {
     echo ">>> 收到退出信号，正在清理后台进程..."
+    
+    # 停止日志过滤器
+    if [ -f "$FILTER_PID_FILE" ]; then
+        FILTER_PID=$(cat "$FILTER_PID_FILE")
+        echo "    停止日志过滤器 (PID: $FILTER_PID)..."
+        kill "$FILTER_PID" &> /dev/null || echo "    日志过滤器进程 $FILTER_PID 可能已停止。"
+        rm -f "$FILTER_PID_FILE"
+    fi
+    
     if [ -f "$REWRITER_PID_FILE" ]; then
         REWRITER_PID=$(cat "$REWRITER_PID_FILE")
         echo "    停止 Rewriter (PID: $REWRITER_PID)..."
@@ -137,6 +149,18 @@ else
     echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_LOG"
     echo "    等待 Rewriter 服务启动 (约30-60秒)..."
     sleep 5
+    
+    # 启动日志过滤器
+    echo ">>> 启动 vLLM 日志过滤器..."
+    nohup $PYTHON_CMD "$PROJECT_ROOT/filter_vllm_logs.py" \
+        --input "$REWRITER_LOG" \
+        --output "$FILTERED_LOG" \
+        --max-lines 500 \
+        --interval 30 \
+        > "$FILTER_PROCESS_LOG" 2>&1 &
+    FILTER_PID=$!
+    echo $FILTER_PID > "$FILTER_PID_FILE"
+    echo "    日志过滤器 PID: $FILTER_PID，过滤后日志: $FILTERED_LOG"
 fi
 
 
