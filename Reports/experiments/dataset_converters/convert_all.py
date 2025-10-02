@@ -2,28 +2,45 @@
 """
 数据集批量转换脚本
 运行所有数据集的格式转换，将它们转换为统一格式
+支持命令行参数指定数据条数，自动过滤没有答案的数据
 """
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
 
-def run_converter(script_name):
+def run_converter(script_name, dataset_name, max_samples=None, filter_no_answer=True):
     """
-    运行单个转换脚本
+    运行单个转换脚本，只转换验证集
     
     Args:
         script_name: 转换脚本名称
+        dataset_name: 数据集名称（用于输出文件命名）
+        max_samples: 最大样本数量，None表示不限制
+        filter_no_answer: 是否过滤没有答案的数据
     """
     script_path = Path(__file__).parent / script_name
     
     print(f"\n{'='*60}")
     print(f"运行转换脚本: {script_name}")
+    print(f"数据集: {dataset_name} (仅验证集)")
+    if max_samples:
+        print(f"最大样本数: {max_samples}")
+    if filter_no_answer:
+        print("过滤模式: 丢弃没有答案的数据")
     print(f"{'='*60}")
     
     try:
+        # 构建命令行参数
+        cmd = [sys.executable, str(script_path)]
+        if max_samples:
+            cmd.extend(['--max-samples', str(max_samples)])
+        if filter_no_answer:
+            cmd.append('--filter-no-answer')
+        
         result = subprocess.run(
-            [sys.executable, str(script_path)],
+            cmd,
             capture_output=True,
             text=True,
             encoding='utf-8'
@@ -37,34 +54,111 @@ def run_converter(script_name):
         
         if result.returncode == 0:
             print(f"✅ {script_name} 转换成功")
+            # 转换成功后，移动和重命名文件
+            move_and_rename_output(dataset_name)
         else:
             print(f"❌ {script_name} 转换失败，退出码: {result.returncode}")
             
     except Exception as e:
         print(f"❌ 运行 {script_name} 时发生异常: {e}")
 
+def move_and_rename_output(dataset_name):
+    """
+    移动和重命名转换后的验证集文件到新的命名格式
+    
+    Args:
+        dataset_name: 数据集名称
+    """
+    base_dir = Path("/home/pushihao/RAG/Reports/experiments")
+    
+    # 原文件路径（各数据集的输出目录不同）
+    if dataset_name == "natural_questions":
+        old_file = base_dir / "datasets" / "converted" / "natural_questions" / "validation_converted.json"
+    else:
+        old_file = base_dir / "datasets" / "converted" / dataset_name / "validation_converted.json"
+    
+    # 新文件路径
+    new_dir = base_dir / "dataset_converters" / "converted"
+    new_dir.mkdir(parents=True, exist_ok=True)
+    new_file = new_dir / f"{dataset_name}_validation_kb_chunks.json"
+    
+    try:
+        if old_file.exists():
+            # 移动并重命名文件
+            old_file.rename(new_file)
+            print(f"✅ 文件已移动到: {new_file}")
+        else:
+            print(f"⚠️  原文件不存在: {old_file}")
+    except Exception as e:
+        print(f"❌ 移动文件时发生错误: {e}")
+
+def parse_args():
+    """
+    解析命令行参数
+    """
+    parser = argparse.ArgumentParser(
+        description="批量转换数据集格式",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例用法:
+  python convert_all.py                    # 转换所有数据，不限制数量
+  python convert_all.py --max-samples 1000 # 每个数据集最多转换1000条
+  python convert_all.py --max-samples 10000 --no-filter  # 转换10000条，不过滤无答案数据
+        """
+    )
+    
+    parser.add_argument(
+        '--max-samples', 
+        type=int, 
+        default=None,
+        help='每个数据集的最大样本数量（默认：不限制）'
+    )
+    
+    parser.add_argument(
+        '--no-filter',
+        action='store_true',
+        help='不过滤没有答案的数据（默认：过滤）'
+    )
+    
+    return parser.parse_args()
+
+
 def main():
     """
-    主函数：批量运行所有数据集转换脚本
+    主函数：批量运行所有数据集转换脚本（仅验证集）
     """
-    print("开始批量转换数据集格式...")
+    args = parse_args()
+    
+    print("开始批量转换数据集格式（仅验证集）...")
     print(f"目标格式: {{id, question, answer, context}}")
     
-    # 定义所有转换脚本
+    if args.max_samples:
+        print(f"每个数据集最大样本数: {args.max_samples}")
+    else:
+        print("样本数量: 不限制")
+        
+    filter_no_answer = not args.no_filter
+    if filter_no_answer:
+        print("数据过滤: 启用（丢弃没有答案的数据）")
+    else:
+        print("数据过滤: 禁用")
+    
+    # 定义所有转换脚本和对应的数据集名称
     converters = [
-        "convert_hotpotqa.py",
-        "convert_msmarco.py", 
-        "convert_natural_questions.py",
-        "convert_triviaqa.py"
+        ("convert_hotpotqa.py", "hotpotqa"),
+        ("convert_msmarco.py", "ms_marco"), 
+        ("convert_natural_questions.py", "natural_questions"),
+        ("convert_triviaqa.py", "triviaqa")
     ]
     
     # 运行所有转换脚本
-    for converter in converters:
-        run_converter(converter)
+    for script_name, dataset_name in converters:
+        run_converter(script_name, dataset_name, args.max_samples, filter_no_answer)
     
     print(f"\n{'='*60}")
     print("所有数据集转换完成！")
-    print(f"转换后的数据保存在: /home/pushihao/RAG/Reports/experiments/datasets/converted/")
+    print(f"转换后的验证集保存在: /home/pushihao/RAG/Reports/experiments/dataset_converters/converted/")
+    print("文件命名格式: {dataset_name}_validation_kb_chunks.json")
     print(f"{'='*60}")
 
 if __name__ == "__main__":

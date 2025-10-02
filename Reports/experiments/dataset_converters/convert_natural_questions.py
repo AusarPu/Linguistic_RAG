@@ -4,6 +4,7 @@ Natural Questions数据集格式转换脚本
 将Natural Questions数据集转换为统一格式：{id, question, answer, context}
 """
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -99,7 +100,7 @@ def convert_natural_questions_sample(sample):
     }
 
 
-def convert_natural_questions_dataset(input_file, output_file, max_samples=None):
+def convert_natural_questions_dataset(input_file, output_file, max_samples=None, filter_no_answer=True):
     """
     转换整个Natural Questions数据集文件
     
@@ -107,12 +108,15 @@ def convert_natural_questions_dataset(input_file, output_file, max_samples=None)
         input_file: 输入文件路径
         output_file: 输出文件路径
         max_samples: 最大样本数量，None表示不限制
+        filter_no_answer: 是否过滤没有答案的数据
     """
     import random
     
     print(f"正在转换 {input_file} -> {output_file}")
     if max_samples:
         print(f"限制样本数量: {max_samples}")
+    if filter_no_answer:
+        print("过滤模式: 丢弃没有答案的数据")
     
     # 首先读取所有样本
     all_samples = []
@@ -130,21 +134,34 @@ def convert_natural_questions_dataset(input_file, output_file, max_samples=None)
     
     print(f"总共读取 {len(all_samples)} 个样本")
     
-    # 如果指定了最大样本数，随机选择
-    if max_samples and len(all_samples) > max_samples:
-        random.seed(42)  # 设置随机种子以确保可重现性
-        all_samples = random.sample(all_samples, max_samples)
-        print(f"随机选择了 {len(all_samples)} 个样本")
-    
-    # 转换样本
+    # 转换样本并过滤
     converted_samples = []
+    processed_count = 0
+    filtered_count = 0
+    
     for sample in all_samples:
         try:
             converted_sample = convert_natural_questions_sample(sample)
+            
+            # 检查是否需要过滤没有答案的数据
+            if filter_no_answer and (not converted_sample["answer"] or converted_sample["answer"].strip() == ""):
+                filtered_count += 1
+                continue
+                
             converted_samples.append(converted_sample)
+            processed_count += 1
+            
+            # 如果达到最大样本数，停止处理
+            if max_samples and processed_count >= max_samples:
+                break
+                
         except Exception as e:
             print(f"警告: 样本处理失败: {e}")
             continue
+    
+    print(f"成功转换 {len(converted_samples)} 个样本")
+    if filter_no_answer:
+        print(f"过滤掉 {filtered_count} 个没有答案的样本")
     
     # 写入转换后的数据
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -153,10 +170,22 @@ def convert_natural_questions_dataset(input_file, output_file, max_samples=None)
     print(f"转换完成: {len(converted_samples)} 个样本")
 
 
+def parse_args():
+    """
+    解析命令行参数
+    """
+    parser = argparse.ArgumentParser(description="转换Natural Questions数据集")
+    parser.add_argument('--max-samples', type=int, default=None, help='最大样本数量')
+    parser.add_argument('--filter-no-answer', action='store_true', help='过滤没有答案的数据')
+    return parser.parse_args()
+
+
 def main():
     """
     主函数：转换Natural Questions数据集
     """
+    args = parse_args()
+    
     # 设置路径
     base_dir = Path("/home/pushihao/RAG/Reports/experiments")
     input_dir = base_dir / "datasets" / "natural_questions"
@@ -165,12 +194,19 @@ def main():
     # 创建输出目录
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 只转换验证集，限制1000条
+    # 转换验证集
     input_file = input_dir / "validation.json"
-    output_file = output_dir / "validation_converted_1k.json"
+    
+    # 使用统一的输出文件名
+    output_file = output_dir / "validation_converted.json"
     
     if input_file.exists():
-        convert_natural_questions_dataset(input_file, output_file, max_samples=1000)
+        convert_natural_questions_dataset(
+            input_file, 
+            output_file, 
+            max_samples=args.max_samples,
+            filter_no_answer=args.filter_no_answer
+        )
     else:
         print(f"警告: 输入文件不存在: {input_file}")
     

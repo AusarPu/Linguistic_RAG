@@ -39,24 +39,24 @@ logger = logging.getLogger(__name__)
 # 数据集配置
 DATASETS = {
     'triviaqa': {
-        'input_file': 'triviaqa/validation_kb_chunks_1k.json',
-        'optimized_file': 'triviaqa/validation_kb_chunks_1k_optimized.json',
-        'enhanced_file': 'triviaqa/validation_kb_chunks_1k_enhanced.json'
+        'input_file': 'triviaqa/validation_kb_chunks.json',
+        'optimized_file': 'triviaqa/validation_kb_chunks_optimized.json',
+        'enhanced_file': 'triviaqa/validation_kb_chunks_enhanced.json'
     },
     'hotpotqa': {
-        'input_file': 'hotpotqa/validation_kb_chunks_1k.json',
-        'optimized_file': 'hotpotqa/validation_kb_chunks_1k_optimized.json',
-        'enhanced_file': 'hotpotqa/validation_kb_chunks_1k_enhanced.json'
+        'input_file': 'hotpotqa/validation_kb_chunks.json',
+        'optimized_file': 'hotpotqa/validation_kb_chunks_optimized.json',
+        'enhanced_file': 'hotpotqa/validation_kb_chunks_enhanced.json'
     },
     'ms_marco': {
-        'input_file': 'ms_marco/validation_kb_chunks_1k.json',
-        'optimized_file': 'ms_marco/validation_kb_chunks_1k_optimized.json',
-        'enhanced_file': 'ms_marco/validation_kb_chunks_1k_enhanced.json'
+        'input_file': 'ms_marco/validation_kb_chunks.json',
+        'optimized_file': 'ms_marco/validation_kb_chunks_optimized.json',
+        'enhanced_file': 'ms_marco/validation_kb_chunks_enhanced.json'
     },
     'natural_questions': {
-        'input_file': 'natural_questions/validation_kb_chunks_1k.json',
-        'optimized_file': 'natural_questions/validation_kb_chunks_1k_optimized.json',
-        'enhanced_file': 'natural_questions/validation_kb_chunks_1k_enhanced.json'
+        'input_file': 'natural_questions/validation_kb_chunks.json',
+        'optimized_file': 'natural_questions/validation_kb_chunks_optimized.json',
+        'enhanced_file': 'natural_questions/validation_kb_chunks_enhanced.json'
     }
 }
 
