@@ -35,30 +35,30 @@ def get_output_filename(is_sample: bool = False) -> str:
 
 DATASETS = {
     "hotpotqa": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/hotpotqa/validation_converted_1k.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/hotpotqa_enhanced",
+        "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/hotpotqa_validation_kb_chunks.json",
+        "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/hotpotqa",
         "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/hotpotqa"
     },
     "ms_marco": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/ms_marco/validation_converted_1k.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/msmarco_enhanced",
+        "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/ms_marco_validation_kb_chunks.json",
+        "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/ms_marco",
         "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/ms_marco"
     },
     "natural_questions": {
         # 使用1k子集，确保评估只针对构建索引用到的1000条问题
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/natural_questions/validation_converted_1k.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/nq_enhanced",
+        "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/natural_questions_validation_kb_chunks.json",
+        "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/natural_questions",
         "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/natural_questions"
     },
     "triviaqa": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/dataset_converters/converted/triviaqa/validation_converted_1k.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/dataset_indexs/triviaqa_enhanced",
+        "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/triviaqa_validation_kb_chunks.json",
+        "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/triviaqa",
         "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/triviaqa"
     }
 }
 
 # 并发配置
-DEFAULT_BATCH_SIZE = 3  # 默认批处理大小
+DEFAULT_BATCH_SIZE = 10  # 默认批处理大小
 DEFAULT_MAX_QUESTIONS = 20  # 默认不限制问题数量（按数据集配置与文件决定）
 
 # 线程锁用于保护共享资源
