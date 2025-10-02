@@ -96,7 +96,7 @@ def chunk_dataset(dataset_name: str, dataset_items: list,
         # 使用 preprocess_documents.py 中的分块功能
         chunks = generate_document_chunks_langchain(
             full_document_text=full_text,
-            doc_name=f"{dataset_name}_item_{idx}",
+            doc_name= item.get('id', f"item_{idx}"),
             char_chunk_size=chunk_size,
             char_overlap=chunk_overlap,
             char_min_chunk_length=min_chunk_length,
@@ -105,7 +105,6 @@ def chunk_dataset(dataset_name: str, dataset_items: list,
         
         # 为每个分块添加原始数据集信息
         for chunk in chunks:
-            chunk['original_item_id'] = item.get('id', f"item_{idx}")
             chunk['dataset_name'] = dataset_name
             chunk['question'] = item.get('question', '')
             chunk['answer'] = item.get('answer', '')
