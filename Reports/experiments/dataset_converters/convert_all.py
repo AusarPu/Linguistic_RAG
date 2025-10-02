@@ -10,6 +10,38 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 统一配置
+DATASET_CONFIG = {
+    "output_dir": "/home/pushihao/RAG/Reports/experiments/datasets/converted",
+    "filename_template": "{dataset_name}_validation_kb_chunks.json",
+    "datasets": {
+        "hotpotqa": {
+            "script": "convert_hotpotqa.py",
+            "name": "hotpotqa"
+        },
+        "ms_marco": {
+            "script": "convert_msmarco.py", 
+            "name": "ms_marco"
+        },
+        "natural_questions": {
+            "script": "convert_natural_questions.py",
+            "name": "natural_questions"
+        },
+        "triviaqa": {
+            "script": "convert_triviaqa.py",
+            "name": "triviaqa"
+        }
+    }
+}
+
+def get_output_dir():
+    """获取统一的输出目录"""
+    return DATASET_CONFIG["output_dir"]
+
+def get_output_filename(dataset_name):
+    """根据数据集名称生成输出文件名"""
+    return DATASET_CONFIG["filename_template"].format(dataset_name=dataset_name)
+
 def run_converter(script_name, dataset_name, max_samples=None, filter_no_answer=True):
     """
     运行单个转换脚本，只转换验证集
@@ -54,43 +86,11 @@ def run_converter(script_name, dataset_name, max_samples=None, filter_no_answer=
         
         if result.returncode == 0:
             print(f"✅ {script_name} 转换成功")
-            # 转换成功后，移动和重命名文件
-            move_and_rename_output(dataset_name)
         else:
             print(f"❌ {script_name} 转换失败，退出码: {result.returncode}")
             
     except Exception as e:
         print(f"❌ 运行 {script_name} 时发生异常: {e}")
-
-def move_and_rename_output(dataset_name):
-    """
-    移动和重命名转换后的验证集文件到新的命名格式
-    
-    Args:
-        dataset_name: 数据集名称
-    """
-    base_dir = Path("/home/pushihao/RAG/Reports/experiments")
-    
-    # 原文件路径（各数据集的输出目录不同）
-    if dataset_name == "natural_questions":
-        old_file = base_dir / "datasets" / "converted" / "natural_questions" / "validation_converted.json"
-    else:
-        old_file = base_dir / "datasets" / "converted" / dataset_name / "validation_converted.json"
-    
-    # 新文件路径
-    new_dir = base_dir / "dataset_converters" / "converted"
-    new_dir.mkdir(parents=True, exist_ok=True)
-    new_file = new_dir / f"{dataset_name}_validation_kb_chunks.json"
-    
-    try:
-        if old_file.exists():
-            # 移动并重命名文件
-            old_file.rename(new_file)
-            print(f"✅ 文件已移动到: {new_file}")
-        else:
-            print(f"⚠️  原文件不存在: {old_file}")
-    except Exception as e:
-        print(f"❌ 移动文件时发生错误: {e}")
 
 def parse_args():
     """
@@ -143,13 +143,8 @@ def main():
     else:
         print("数据过滤: 禁用")
     
-    # 定义所有转换脚本和对应的数据集名称
-    converters = [
-        ("convert_hotpotqa.py", "hotpotqa"),
-        ("convert_msmarco.py", "ms_marco"), 
-        ("convert_natural_questions.py", "natural_questions"),
-        ("convert_triviaqa.py", "triviaqa")
-    ]
+    # 使用统一配置中的数据集信息
+    converters = [(config["script"], config["name"]) for config in DATASET_CONFIG["datasets"].values()]
     
     # 运行所有转换脚本
     for script_name, dataset_name in converters:
@@ -157,8 +152,8 @@ def main():
     
     print(f"\n{'='*60}")
     print("所有数据集转换完成！")
-    print(f"转换后的验证集保存在: /home/pushihao/RAG/Reports/experiments/dataset_converters/converted/")
-    print("文件命名格式: {dataset_name}_validation_kb_chunks.json")
+    print(f"转换后的验证集保存在: {get_output_dir()}")
+    print(f"文件命名格式: {DATASET_CONFIG['filename_template']}")
     print(f"{'='*60}")
 
 if __name__ == "__main__":

@@ -10,6 +10,12 @@ import os
 from pathlib import Path
 import re
 import html
+import sys
+
+# 导入统一配置
+sys.path.append(str(Path(__file__).parent))
+from convert_all import get_output_dir, get_output_filename
+
 try:
     from bs4 import BeautifulSoup  # 可选依赖
 except ImportError:
@@ -189,16 +195,16 @@ def main():
     # 设置路径
     base_dir = Path("/home/pushihao/RAG/Reports/experiments")
     input_dir = base_dir / "datasets" / "natural_questions"
-    output_dir = base_dir / "dataset_converters" / "converted" / "natural_questions"
     
-    # 创建输出目录
+    # 使用统一配置的输出目录
+    output_dir = Path(get_output_dir())
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # 转换验证集
     input_file = input_dir / "validation.json"
     
-    # 使用统一的输出文件名
-    output_file = output_dir / "validation_converted.json"
+    # 使用统一配置的文件名
+    output_file = output_dir / get_output_filename("natural_questions")
     
     if input_file.exists():
         convert_natural_questions_dataset(

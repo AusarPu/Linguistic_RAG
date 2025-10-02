@@ -8,6 +8,11 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
+
+# 导入统一配置
+sys.path.append(str(Path(__file__).parent))
+from convert_all import get_output_dir, get_output_filename
 
 def convert_msmarco_sample(sample):
     """
@@ -134,34 +139,28 @@ def main():
     # 设置路径
     base_dir = Path("/home/pushihao/RAG/Reports/experiments")
     input_dir = base_dir / "datasets" / "ms_marco"  # 修正目录名
-    output_dir = base_dir / "dataset_converters" / "converted" / "msmarco"
     
-    # 创建输出目录
+    # 使用统一配置的输出目录
+    output_dir = Path(get_output_dir())
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 转换数据集
-    datasets = {
-        "train": "train.json",
-        "validation": "validation.json"
-    }
+    # 转换验证集
+    input_file = input_dir / "validation.json"
     
-    for split, filename in datasets.items():
-        input_file = input_dir / filename
-        
-        # 使用统一的输出文件名
-        output_file = output_dir / f"{split}_converted.json"
-        
-        if input_file.exists():
-            convert_msmarco_dataset(
-                input_file, 
-                output_file, 
-                max_samples=args.max_samples,
-                filter_no_answer=args.filter_no_answer
-            )
-        else:
-            print(f"警告: 输入文件不存在: {input_file}")
+    # 使用统一配置的文件名
+    output_file = output_dir / get_output_filename("ms_marco")
     
-    print("MS MARCO数据集转换完成！")
+    if input_file.exists():
+        convert_msmarco_dataset(
+            input_file, 
+            output_file, 
+            max_samples=args.max_samples,
+            filter_no_answer=args.filter_no_answer
+        )
+    else:
+        print(f"警告: 输入文件不存在: {input_file}")
+    
+    print("MS MARCO验证集转换完成！")
 
 if __name__ == "__main__":
     main()
