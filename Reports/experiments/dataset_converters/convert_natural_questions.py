@@ -116,8 +116,6 @@ def convert_natural_questions_dataset(input_file, output_file, max_samples=None,
         max_samples: 最大样本数量，None表示不限制
         filter_no_answer: 是否过滤没有答案的数据
     """
-    import random
-    
     print(f"正在转换 {input_file} -> {output_file}")
     if max_samples:
         print(f"限制样本数量: {max_samples}")
@@ -140,34 +138,25 @@ def convert_natural_questions_dataset(input_file, output_file, max_samples=None,
     
     print(f"总共读取 {len(all_samples)} 个样本")
     
-    # 转换样本并过滤
-    converted_samples = []
-    processed_count = 0
-    filtered_count = 0
+    # 导入补充数据函数
+    from convert_all import supplement_data_to_target
     
-    for sample in all_samples:
-        try:
-            converted_sample = convert_natural_questions_sample(sample)
-            
-            # 检查是否需要过滤没有答案的数据
-            if filter_no_answer and (not converted_sample["answer"] or converted_sample["answer"].strip() == ""):
-                filtered_count += 1
-                continue
-                
-            converted_samples.append(converted_sample)
-            processed_count += 1
-            
-            # 如果达到最大样本数，停止处理
-            if max_samples and processed_count >= max_samples:
-                break
-                
-        except Exception as e:
-            print(f"警告: 样本处理失败: {e}")
-            continue
+    # 使用新的补充逻辑
+    converted_samples, stats = supplement_data_to_target(
+        all_samples, 
+        convert_natural_questions_sample, 
+        max_samples, 
+        filter_no_answer
+    )
     
-    print(f"成功转换 {len(converted_samples)} 个样本")
+    # 输出统计信息
+    print(f"处理了 {stats['total_processed']} 个样本")
+    print(f"成功转换 {stats['converted_count']} 个样本")
     if filter_no_answer:
-        print(f"过滤掉 {filtered_count} 个没有答案的样本")
+        print(f"过滤掉 {stats['filtered_count']} 个没有答案的样本")
+    if stats.get('supplemented') and stats['converted_count'] < stats.get('target_count', 0):
+        shortage = stats['target_count'] - stats['converted_count']
+        print(f"注意: 数据不足，缺少 {shortage} 个样本")
     
     # 写入转换后的数据
     with open(output_file, 'w', encoding='utf-8') as f:

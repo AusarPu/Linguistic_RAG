@@ -34,39 +34,25 @@ HF_MIRROR_ENDPOINT = "https://hf-mirror.com"
 MODEL_ROOT_DIR = "/home/pushihao/RAG/models" # <--- 修改为你希望存放模型的本地根目录
 
 # 3. 配置要下载的模型列表
+LLM_MODEL_NAME = "Qwen/QwQ-32B"
+EMBED_MODEL_NAME = "BAAI/bge-large-zh-v1.5"
+
 models_to_download = {
-    # --- 基础 LLM (用于生成器) ---
-    # 假设生成器仍然使用之前从 ModelScope 下载的非量化模型
-    "base_llm_generator": {
+    # --- LLM (用于重写器和生成器) ---
+    "llm": {
         "source": "modelscope",        # <--- 指定来源: "modelscope" 或 "huggingface"
-        "model_id": "Qwen/QwQ-32B", # <--- !! 确认或替换为你生成器用的基础模型 ID !!
-        "target_dir": os.path.join(MODEL_ROOT_DIR,"Qwen/QwQ-32B"),
+        "model_id": LLM_MODEL_NAME, # <--- LLM模型ID
+        "target_dir": os.path.join(MODEL_ROOT_DIR, LLM_MODEL_NAME),  # 自动使用模型名作为目录
         # "revision": "v1.0.0"       # 可选：指定版本
-    },
-    # --- 量化 LLM (用于重写器) ---
-    "quantized_llm_rewriter": {
-        "source": "modelscope",         # <--- 指定来源: "huggingface"
-        "model_id": "Qwen/Qwen3-32B", # <--- 使用你找到的 HF ID
-        # 为这个模型指定一个明确的本地存放目录 (会在 MODEL_ROOT_DIR 下创建)
-        "target_dir": os.path.join(MODEL_ROOT_DIR,"Qwen/Qwen3-30B-A3B") #<--- 可以修改目录名
     },
     # --- 嵌入模型 ---
     "embedding": {
         "source": "modelscope",        # <--- 指定来源
-        "model_id": "BAAI/bge-large-zh-v1.5", # <--- 嵌入模型
-        "target_dir": os.path.join(MODEL_ROOT_DIR,"BAAI/bge-large-zh-v1.5")
-    },
-    # --- LoRA 适配器 (用于重写) ---
-    # LoRA 通常体积较小，可以手动下载或用 git clone
-    "rewriter_lora": {
-        "source": "manual",           # <--- 标记为手动处理
-        "model_id": "N/A",            # 无需 Hub ID
-        # 指定 LoRA 文件最终应该存放的目录
-        "target_dir": os.path.join(MODEL_ROOT_DIR, "rewriter_lora") #<--- 修改为你存放 LoRA 的目录
+        "model_id": EMBED_MODEL_NAME, # <--- 嵌入模型
+        "target_dir": os.path.join(MODEL_ROOT_DIR, EMBED_MODEL_NAME)  # 自动使用模型名作为目录
     }
 }
 # --- 结束用户配置 ---
-
 
 def download_hf_model(model_name, config):
     """使用 huggingface_hub 从 Hugging Face Hub 下载模型"""

@@ -62,42 +62,34 @@ def convert_hotpotqa_dataset(input_file, output_file, max_samples=None, filter_n
         print("过滤模式: 丢弃没有答案的数据")
     
     # HotpotQA 使用 JSONL 格式（每行一个 JSON 对象）
-    data = []
+    all_samples = []
     with open(input_file, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if line:
-                data.append(json.loads(line))
+                all_samples.append(json.loads(line))
     
-    print(f"总共读取 {len(data)} 个样本")
+    print(f"总共读取 {len(all_samples)} 个样本")
     
-    converted_samples = []
-    processed_count = 0
-    filtered_count = 0
+    # 导入补充数据函数
+    from convert_all import supplement_data_to_target
     
-    for sample in data:
-        try:
-            converted_sample = convert_hotpotqa_sample(sample)
-            
-            # 检查是否需要过滤没有答案的数据
-            if filter_no_answer and (not converted_sample["answer"] or converted_sample["answer"].strip() == ""):
-                filtered_count += 1
-                continue
-                
-            converted_samples.append(converted_sample)
-            processed_count += 1
-            
-            # 如果达到最大样本数，停止处理
-            if max_samples and processed_count >= max_samples:
-                break
-                
-        except Exception as e:
-            print(f"警告: 样本处理失败: {e}")
-            continue
+    # 使用新的补充逻辑
+    converted_samples, stats = supplement_data_to_target(
+        all_samples, 
+        convert_hotpotqa_sample, 
+        max_samples, 
+        filter_no_answer
+    )
     
-    print(f"成功转换 {len(converted_samples)} 个样本")
+    # 输出统计信息
+    print(f"处理了 {stats['total_processed']} 个样本")
+    print(f"成功转换 {stats['converted_count']} 个样本")
     if filter_no_answer:
-        print(f"过滤掉 {filtered_count} 个没有答案的样本")
+        print(f"过滤掉 {stats['filtered_count']} 个没有答案的样本")
+    if stats.get('supplemented') and stats['converted_count'] < stats.get('target_count', 0):
+        shortage = stats['target_count'] - stats['converted_count']
+        print(f"注意: 数据不足，缺少 {shortage} 个样本")
     
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(converted_samples, f, ensure_ascii=False, indent=2)

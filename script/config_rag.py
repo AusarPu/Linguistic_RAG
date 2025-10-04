@@ -112,7 +112,8 @@ GENERATOR_RAG_CONFIG = {
     "temperature": 0.7,       # 可以略微降低温度，使其更忠实于上下文
     "top_p": 0.95,
     "repetition_penalty": 1.1,
-    "stop": None
+    "stop": None,
+    "chat_template_kwargs": {"enable_thinking": False}
 }
 # -----------------
 
@@ -124,6 +125,10 @@ VLLM_REQUEST_TIMEOUT_GENERATION = 300.0     # 为生成答案设置更长的超�
 VLLM_REQUEST_TIMEOUT_SINGLE = 60*5          # 超时B：单个块优化超时
 VLLM_REQUEST_TIMEOUT_TOTAL = 3600*8         # 超时A：整体流程超时(8小时)
 OPTIMIZATION_BATCH_SIZE = 1000                # 分批处理大小
+
+# --- 并发控制配置 ---
+MAX_CONCURRENT_REQUESTS = 400                # 最大文本块并发请求
+METADATA_MAX_CONCURRENT_REQUESTS = 1000       # 元数据生成的最大并发请求数
 
 # --- 日志配置函数 (方便在其他地方统一设置) ---
 def setup_logging():

@@ -39,7 +39,6 @@ Gradio_UI/app.log
 Reports/datasets/preparation_results.json
 
 Reports/experiments/datasets/
-Reports/docs/
 Reports/experiments/test.py
 Reports/experiments/dataset_kb/kb
 Reports/experiments/dataset_kb/small_size_kb

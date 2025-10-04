@@ -106,7 +106,7 @@ async def generate_rewritten_query_async(
                 "schema": rewrite_output.model_json_schema()
             }
         },
-        extra_body={"enable_thinking": True},
+        chat_template_kwargs={"enable_thinking": False},
         )
         return completion
 
@@ -167,7 +167,7 @@ def generate_rewritten_query(
             "schema": rewrite_output.model_json_schema()
         }
     },
-    extra_body={"enable_thinking": True},
+    chat_template_kwargs={"enable_thinking": False},
     )
 
     logger.info(f"[{time.time():.3f}] ASYNC 查询重写完成 (总耗时: {time.time() - func_start_time:.3f}s)。")

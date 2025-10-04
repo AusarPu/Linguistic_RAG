@@ -6,8 +6,8 @@
 # 脚本配置
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADVANCED_EVAL_SCRIPT="$SCRIPT_DIR/evaluation/advanced_evaluation.py"
-RESULTS_DIR="$SCRIPT_DIR/rag_evaluation_results"
-OUTPUT_DIR="$SCRIPT_DIR/advanced_evaluation_results"
+RESULTS_DIR="/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results"
+OUTPUT_DIR="/home/pushihao/RAG/Reports/experiments/datasets/advanced_evaluation_results"
 
 # 颜色输出
 RED='\033[0;31m'

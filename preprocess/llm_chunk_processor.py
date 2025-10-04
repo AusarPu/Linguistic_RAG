@@ -7,8 +7,9 @@ import asyncio
 import aiohttp  # 用于异步HTTP请求
 import json
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from collections import defaultdict, deque
+from pydantic import BaseModel
 
 # 将项目根目录添加到 sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,6 +20,18 @@ from script import config_rag as config
 config.setup_logging()
 logger = logging.getLogger(__name__)
 
+# --- Pydantic 模型定义 ---
+class MetadataOutput(BaseModel):
+    """元数据生成的结构化输出模型"""
+    is_meaningful: bool
+    reason_if_not_meaningful: str
+    keyword_summaries: List[str]
+    generated_questions: List[str]
+
+class OptimizationOutput(BaseModel):
+    """文本优化的结构化输出模型"""
+    optimized_chunk_B_text: str
+
 # --- VLLM 服务和模型配置 (从 config.py 导入) ---
 VLLM_OPTIMIZER_API_URL = config.GENERATOR_API_URL
 OPTIMIZER_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
@@ -28,13 +41,17 @@ VLLM_REQUEST_TIMEOUT_SINGLE = config.VLLM_REQUEST_TIMEOUT_SINGLE
 VLLM_REQUEST_TIMEOUT_TOTAL = config.VLLM_REQUEST_TIMEOUT_TOTAL
 OPTIMIZATION_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
 
+# --- 并发控制配置 (从 config.py 导入) ---
+MAX_CONCURRENT_REQUESTS = config.MAX_CONCURRENT_REQUESTS
+METADATA_MAX_CONCURRENT_REQUESTS = config.METADATA_MAX_CONCURRENT_REQUESTS
+
 # --- 元数据生成配置 ---
 VLLM_METADATA_API_URL = config.GENERATOR_API_URL
 METADATA_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
 METADATA_GENERATION_CONFIG = {
     "temperature": 0.6,  # 对于信息提取和遵循指令，较低的温度可能更好
     "max_tokens": 10240,  # 需要足够容纳关键词、问题和JSON结构
-    # "response_format": {"type": "json_object"} # 如果VLLM和模型支持，强烈建议使用
+    "chat_template_kwargs": {"enable_thinking": False}
 }
 METADATA_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
 
@@ -215,10 +232,18 @@ def get_optimization_prompt_template(language: str) -> str:
         return """
 你是一位专业的中文文本编辑。你的任务是基于其前文（块A）和后文（块C）来优化中间的文本块（块B）。
 目标是确保块B在语义上连贯、完整，并且其与块A或块C的边界处没有句子被不自然地切断。
-请只进行必要的最小调整，例如，如果一个句子明显在块A的末尾和块B的开头之间被切断，你可以将属于块B的句子片段从块A的末尾移入块B的开头，或者将属于块A的句子片段从块B的开头移回块A的末尾，以确保块B以一个完整的句子开始和结束（如果上下文允许）。
-同样地，处理块B和块C之间的边界。
-不要添加任何新的、源于外部的信息，也不要对块B的内容进行实质性的重写或总结。优化后的块B应忠于原文的意义和风格，并且长度应与原始块B大致相似。
-但是注意，你可以改写你认为的由OCR识别错误的部分，并进行格式优化，把格式不清楚的部分，都用markdown格式转写一遍
+
+优化要求：
+1. **边界处理**：如果一个句子明显在块A的末尾和块B的开头之间被切断，你可以将属于块B的句子片段从块A的末尾移入块B的开头，或者将属于块A的句子片段从块B的开头移回块A的末尾，以确保块B以一个完整的句子开始和结束（如果上下文允许）。同样地，处理块B和块C之间的边界。
+
+2. **代词消歧和实体替换**：仔细分析块B中的代词（如"它"、"这"、"那"、"其"、"该"等），结合块A的上下文信息，将模糊的代词替换为具体的实体或概念。例如：
+   - 如果块A提到"人工智能技术"，而块B中出现"它在各个领域都有应用"，应将"它"替换为"人工智能技术"
+   - 如果块A提到"这项研究"，而块B中出现"它的结果显示"，应将"它"替换为"这项研究"
+   - 确保替换后的文本更加明确和易于理解，避免指代不清的问题
+
+3. **格式和错误修正**：你可以改写你认为的由OCR识别错误的部分，并进行格式优化，把格式不清楚的部分，都用markdown格式转写一遍
+
+注意：不要添加任何新的、源于外部的信息，也不要对块B的内容进行实质性的重写或总结。优化后的块B应忠于原文的意义和风格，并且长度应与原始块B大致相似。
 
 块A (前文内容，如果块B是文档的第一个块，则此部分内容为 "None" 或非常简短):
 ```
@@ -246,10 +271,18 @@ def get_optimization_prompt_template(language: str) -> str:
         return """
 You are a professional English text editor. Your task is to optimize the middle text chunk (Chunk B) based on its preceding context (Chunk A) and following context (Chunk C).
 The goal is to ensure that Chunk B is semantically coherent and complete, and that there are no sentences unnaturally cut off at the boundaries between Chunk B and Chunk A or Chunk C.
-Please make only necessary minimal adjustments. For example, if a sentence is clearly cut off between the end of Chunk A and the beginning of Chunk B, you can move the sentence fragment belonging to Chunk B from the end of Chunk A to the beginning of Chunk B, or move the sentence fragment belonging to Chunk A from the beginning of Chunk B back to the end of Chunk A, to ensure that Chunk B starts and ends with complete sentences (if the context allows).
-Similarly, handle the boundary between Chunk B and Chunk C.
-Do not add any new information from external sources, nor substantially rewrite or summarize the content of Chunk B. The optimized Chunk B should remain faithful to the original meaning and style, and its length should be roughly similar to the original Chunk B.
-However, note that you can rewrite parts that you believe are OCR recognition errors, and perform format optimization, converting unclear formatting parts to markdown format.
+
+Optimization Requirements:
+1. **Boundary Handling**: If a sentence is clearly cut off between the end of Chunk A and the beginning of Chunk B, you can move the sentence fragment belonging to Chunk B from the end of Chunk A to the beginning of Chunk B, or move the sentence fragment belonging to Chunk A from the beginning of Chunk B back to the end of Chunk A, to ensure that Chunk B starts and ends with complete sentences (if the context allows). Similarly, handle the boundary between Chunk B and Chunk C.
+
+2. **Pronoun Resolution and Entity Replacement**: Carefully analyze pronouns in Chunk B (such as "it", "this", "that", "its", "the", etc.), and combine with context information from Chunk A to replace ambiguous pronouns with specific entities or concepts. For example:
+   - If Chunk A mentions "artificial intelligence technology" and Chunk B contains "it has applications in various fields", replace "it" with "artificial intelligence technology"
+   - If Chunk A mentions "this research" and Chunk B contains "its results show", replace "its" with "this research's"
+   - Ensure that the replaced text is more explicit and easier to understand, avoiding unclear references
+
+3. **Format and Error Correction**: You can rewrite parts that you believe are OCR recognition errors, and perform format optimization, converting unclear formatting parts to markdown format.
+
+Note: Do not add any new information from external sources, nor substantially rewrite or summarize the content of Chunk B. The optimized Chunk B should remain faithful to the original meaning and style, and its length should be roughly similar to the original Chunk B.
 
 Chunk A (preceding content, if Chunk B is the first chunk of the document, this part will be "None" or very brief):
 ```
@@ -305,13 +338,15 @@ Ensure that the value of the "optimized_chunk_B_text" field is a JSON-compliant 
 """
 
 
-async def generate_metadata_for_chunk_via_vllm(text_chunk_content, chunk_id=None, max_retries=3):
+async def generate_metadata_for_chunk_via_vllm(text_chunk_content, chunk_id=None, max_retries=3, semaphore=None):
     """
     异步调用VLLM API为单个文本块生成元数据（关键词摘要和相关问题）。
     
     Args:
         text_chunk_content (str): 文本块内容
+        chunk_id (str, optional): 文本块ID
         max_retries (int): 最大重试次数，默认为3
+        semaphore (asyncio.Semaphore, optional): 用于控制并发的信号量
     
     Returns:
         dict: 包含状态和数据的字典
@@ -329,6 +364,18 @@ async def generate_metadata_for_chunk_via_vllm(text_chunk_content, chunk_id=None
             }
         }
     
+    # 如果提供了信号量，使用它来控制并发
+    if semaphore:
+        async with semaphore:
+            return await _generate_metadata_for_chunk_via_vllm_impl(text_chunk_content, chunk_id, max_retries)
+    else:
+        return await _generate_metadata_for_chunk_via_vllm_impl(text_chunk_content, chunk_id, max_retries)
+
+
+async def _generate_metadata_for_chunk_via_vllm_impl(text_chunk_content, chunk_id=None, max_retries=3):
+    """
+    实际的元数据生成实现函数
+    """
     # 检测文本语言
     detected_language = detect_text_language(text_chunk_content)
     
@@ -345,6 +392,13 @@ async def generate_metadata_for_chunk_via_vllm(text_chunk_content, chunk_id=None
         "messages": [
             {"role": "user", "content": prompt}
         ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "metadata_output",
+                "schema": MetadataOutput.model_json_schema()
+            }
+        },
         **METADATA_GENERATION_CONFIG
     }
     
@@ -360,22 +414,37 @@ async def generate_metadata_for_chunk_via_vllm(text_chunk_content, chunk_id=None
                         
                         # 提取LLM生成的内容
                         if 'choices' in response_data and len(response_data['choices']) > 0:
-                            content = response_data['choices'][0]['message']['content'].strip()
+                            message = response_data['choices'][0]['message']
+                            content = message.get('content') or ''
+                            reasoning_content = message.get('reasoning_content') or ''
+                            
+                            # 优先使用reasoning_content，如果为空则使用content
+                            json_content = reasoning_content.strip() if reasoning_content else content.strip()
+                            
+                            if not json_content:
+                                raise ValueError("API响应中content和reasoning_content都为空")
                             
                             try:
-                                # 尝试解析JSON
-                                metadata = json.loads(content)
+                                # 清理可能的格式问题
+                                clean_content = json_content.strip()
                                 
-                                # 验证必需字段
-                                required_fields = ['is_meaningful', 'reason_if_not_meaningful', 'keyword_summaries', 'generated_questions']
-                                if all(field in metadata for field in required_fields):
-                                    return {'status': 'success', 'data': metadata}
-                                else:
-                                    missing_fields = [field for field in required_fields if field not in metadata]
-                                    raise ValueError(f"响应缺少必需字段: {missing_fields}")
+                                # 处理可能的重复JSON开始标记
+                                if clean_content.startswith('{\n{'):
+                                    # 移除第一个多余的开括号
+                                    clean_content = clean_content[2:]
+                                elif clean_content.startswith('{{'):
+                                    # 移除第一个多余的开括号
+                                    clean_content = clean_content[1:]
+                                
+                                # 使用Pydantic模型解析JSON响应
+                                validated_metadata = MetadataOutput.model_validate_json(clean_content)
+                                
+                                return {'status': 'success', 'data': validated_metadata.model_dump()}
                                     
                             except json.JSONDecodeError as e:
-                                raise ValueError(f"无法解析JSON响应: {e}, 内容: {content[:200]}...")
+                                raise ValueError(f"无法解析JSON响应: {e}, 内容: {json_content[:200]}...")
+                            except Exception as e:
+                                raise ValueError(f"数据验证失败: {e}, 内容: {json_content[:200]}...")
                         else:
                             raise ValueError("API响应格式异常：缺少choices字段")
                     else:
@@ -421,11 +490,31 @@ async def optimize_chunk_b_via_vllm(
         text_c: Optional[str],
         session: aiohttp.ClientSession,  # 传入 session 以复用连接
         request_id: str = "N/A",  # 用于日志追踪
-        max_retries: int = 3  # 添加重试参数
+        max_retries: int = 3,  # 添加重试参数
+        semaphore: Optional[asyncio.Semaphore] = None  # 添加信号量参数
 ) -> Dict[str, Any]:
     """
     使用 VLLM API 异步地优化中心块 B。
     这是你在上一步测试并使其工作的函数。
+    """
+    # 如果提供了信号量，使用它来控制并发
+    if semaphore:
+        async with semaphore:
+            return await _optimize_chunk_b_via_vllm_impl(text_a, text_b, text_c, session, request_id, max_retries)
+    else:
+        return await _optimize_chunk_b_via_vllm_impl(text_a, text_b, text_c, session, request_id, max_retries)
+
+
+async def _optimize_chunk_b_via_vllm_impl(
+        text_a: Optional[str],
+        text_b: str,
+        text_c: Optional[str],
+        session: aiohttp.ClientSession,
+        request_id: str = "N/A",
+        max_retries: int = 3
+) -> Dict[str, Any]:
+    """
+    优化块B的实际实现函数
     """
     func_start_time = time.time()
     # logger.info(f"[{func_start_time:.3f}] [ReqID: {request_id}] 开始优化块B (首50字符): '{text_b[:50]}...'") # 日志移到调用处
@@ -449,6 +538,13 @@ async def optimize_chunk_b_via_vllm(
     payload = {
         "model": OPTIMIZER_MODEL_NAME,
         "messages": api_messages,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "optimization_output",
+                "schema": OptimizationOutput.model_json_schema()
+            }
+        },
         **{k: v for k, v in OPTIMIZER_GENERATION_CONFIG.items() if v is not None},
         "stream": False,
     }
@@ -469,43 +565,34 @@ async def optimize_chunk_b_via_vllm(
 
                 # 处理reasoning模式的响应结构
                 message = response_data["choices"][0].get("message", {})
-                message_content = message.get("content")
-                
-                # 如果content为空，尝试使用reasoning_content
-                if not message_content:
-                    message_content = message.get("reasoning_content")
+                message_content = message.get("reasoning_content") or message.get("content")
                     
                 if not message_content:
                     logger.warning(f"[{time.time():.3f}] [ReqID: {request_id}] API响应的 message content 和 reasoning_content 都为空。")
                     return {"status": "api_error", "reason": "empty_content"}
 
                 try:
-                    # 清理markdown格式的JSON
+                    # 清理可能的格式问题
                     clean_content = message_content.strip()
-                    if clean_content.startswith("```json"):
-                        # 移除markdown代码块标记
-                        clean_content = clean_content[7:]  # 移除开头的```json
-                        if clean_content.endswith("```"):
-                            clean_content = clean_content[:-3]  # 移除结尾的```
-                        clean_content = clean_content.strip()
-                    elif clean_content.startswith("```"):
-                        # 处理其他代码块格式
-                        lines = clean_content.split('\n')
-                        if len(lines) > 2 and lines[-1].strip() == "```":
-                            clean_content = '\n'.join(lines[1:-1]).strip()
                     
-                    # 移除多余的换行符
-                    clean_content = clean_content.strip('\n ')
+                    # 处理可能的重复JSON开始标记
+                    if clean_content.startswith('{\n{'):
+                        # 移除第一个多余的开括号
+                        clean_content = clean_content[2:]
+                    elif clean_content.startswith('{{'):
+                        # 移除第一个多余的开括号
+                        clean_content = clean_content[1:]
                     
-                    parsed_json_output = json.loads(clean_content)
-                    optimized_text = parsed_json_output.get("optimized_chunk_B_text")
+                    # 使用Pydantic模型解析JSON响应
+                    parsed_output = OptimizationOutput.model_validate_json(clean_content)
+                    optimized_text = parsed_output.optimized_chunk_B_text
 
-                    if optimized_text is not None and isinstance(optimized_text, str):
+                    if optimized_text and isinstance(optimized_text, str):
                         return {"status": "success", "text": optimized_text.strip()}
                     else:
                         logger.warning(
-                            f"[{time.time():.3f}] [ReqID: {request_id}] API响应JSON中 'optimized_chunk_B_text' 缺失或非字符串。Parsed: {parsed_json_output}")
-                        return {"status": "api_error", "reason": "missing_key"}
+                            f"[{time.time():.3f}] [ReqID: {request_id}] 优化文本为空或非字符串类型。")
+                        return {"status": "api_error", "reason": "empty_optimized_text"}
 
                 except json.JSONDecodeError as e:
                     # logger.error(...) # 日志记录移到调用处处理
@@ -538,12 +625,13 @@ async def optimize_chunk_b_via_vllm(
 
 
 
-async def process_metadata_batch(chunks_batch):
+async def process_metadata_batch(chunks_batch, semaphore=None):
     """
     批量处理文本块的元数据生成。
     
     Args:
         chunks_batch (list): 文本块列表
+        semaphore (asyncio.Semaphore, optional): 用于控制并发的信号量
     
     Returns:
         tuple: (成功数量, 有意义数量, 无意义数量, 失败数量, 处理结果列表)
@@ -566,7 +654,7 @@ async def process_metadata_batch(chunks_batch):
             tasks.append(empty_result())
         else:
             chunk_id = chunk.get('chunk_id', '未知')
-            tasks.append(generate_metadata_for_chunk_via_vllm(text_content, chunk_id))
+            tasks.append(generate_metadata_for_chunk_via_vllm(text_content, chunk_id, semaphore=semaphore))
     
     # 并发执行所有任务
     try:
@@ -630,6 +718,10 @@ async def refine_all_chunks_with_llm(
     并将优化后的块保存到新的JSON文件中。
     此版本包含一个针对单个文档内块的重试队列，用于处理API解析错误。
     """
+    # 创建信号量控制并发
+    optimization_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    logger.warning(f"创建文本块优化信号量，最大并发数: {MAX_CONCURRENT_REQUESTS}")
+    
     try:
         with open(input_chunks_json_path, 'r', encoding='utf-8') as f:
             all_initial_chunks = json.load(f)
@@ -673,8 +765,8 @@ async def refine_all_chunks_with_llm(
     # single_timeout = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT_SINGLE)  # 注释掉，改为请求级别设置
     # 优化连接器配置以支持高并发
     connector = aiohttp.TCPConnector(
-        limit=500,                # 减少连接池大小，避免连接过多
-        limit_per_host=500,        # 每个主机的连接限制
+        limit=1000,                # 减少连接池大小，避免连接过多
+        limit_per_host=1000,        # 每个主机的连接限制
         ttl_dns_cache=300,        # DNS缓存时间
         use_dns_cache=True,       # 启用DNS缓存
         keepalive_timeout=30,     # 连接保持时间
@@ -727,7 +819,8 @@ async def refine_all_chunks_with_llm(
                     task_info['chunk_b']['text'],
                     task_info['chunk_c']['text'],
                     session,
-                    request_id=request_id
+                    request_id=request_id,
+                    semaphore=optimization_semaphore
                 )
                 batch_tasks.append((task_coro, task_info))
                 total_llm_calls += 1
@@ -805,7 +898,8 @@ async def refine_all_chunks_with_llm(
                         task_info['chunk_b']['text'],
                         task_info['chunk_c']['text'],
                         session,
-                        request_id=request_id
+                        request_id=request_id,
+                        semaphore=optimization_semaphore
                     )
                     retry_batch_tasks.append((task_coro, task_info))
                 
@@ -890,6 +984,10 @@ async def enhance_chunks_with_llm_metadata(input_chunks_json_path, output_chunks
     import time
     import os
     
+    # 创建信号量控制并发
+    metadata_semaphore = asyncio.Semaphore(METADATA_MAX_CONCURRENT_REQUESTS)
+    logging.warning(f"创建元数据生成信号量，最大并发数: {METADATA_MAX_CONCURRENT_REQUESTS}")
+    
     # 加载初始文本块
     logging.warning(f"正在加载初始文本块: {input_chunks_json_path}")
     with open(input_chunks_json_path, 'r', encoding='utf-8') as f:
@@ -924,8 +1022,8 @@ async def enhance_chunks_with_llm_metadata(input_chunks_json_path, output_chunks
         
         logging.warning(f"处理批次 {batch_start//METADATA_BATCH_SIZE + 1}: 块 {batch_start+1}-{batch_end} (共 {len(current_batch)} 个)")
         
-        # 处理当前批次
-        batch_success, batch_meaningful, batch_not_meaningful, batch_failed, batch_enhanced = await process_metadata_batch(current_batch)
+        # 处理当前批次，传递信号量
+        batch_success, batch_meaningful, batch_not_meaningful, batch_failed, batch_enhanced = await process_metadata_batch(current_batch, semaphore=metadata_semaphore)
         
         # 更新统计信息
         total_success += batch_success
