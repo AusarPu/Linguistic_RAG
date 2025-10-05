@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Dict
 
 # 添加项目根目录到路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.append("/home/pushihao/RAG")
 from preprocess.build_core_indexes import build_all_search_indexes
 from script.config_rag import *
 

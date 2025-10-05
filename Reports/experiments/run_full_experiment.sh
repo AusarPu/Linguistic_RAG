@@ -155,10 +155,7 @@ run_enhance() {
     print_info "========== 阶段3: 数据增强 =========="
     
     local cmd="python3 $SCRIPT_DIR/dataset_enhance/enhance_datasets.py $enhance_mode"
-    if [ -n "$max_samples" ] && [ "$max_samples" -lt 1000 ]; then
-        # 如果样本量较小，启用测试限制
-        cmd="$cmd --test-limit $max_samples"
-    fi
+
     if [ "$verbose" = true ]; then
         cmd="$cmd --verbose"
     fi
@@ -203,7 +200,8 @@ run_evaluation() {
     
     print_info "========== 阶段5: RAG评估 =========="
     
-    local cmd="python3 $SCRIPT_DIR/evaluation/evaluate_datasets.py --dataset all --max-questions $max_samples --batch-size $batch_size $ablation_args"
+    # 切换到项目根目录执行评估脚本，确保路径和环境一致
+    local cmd="cd $PROJECT_ROOT && python3 $SCRIPT_DIR/evaluation/evaluate_datasets.py --dataset all --max-questions $max_samples --batch-size $batch_size $ablation_args"
     
     print_info "执行命令: $cmd"
     if eval $cmd; then

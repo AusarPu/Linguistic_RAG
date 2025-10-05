@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 # 添加项目根目录到路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.append("/home/pushihao/RAG")
 
 # 导入配置和处理器
 from script import config_rag as config
