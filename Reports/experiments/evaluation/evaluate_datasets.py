@@ -37,23 +37,23 @@ DATASETS = {
     "hotpotqa": {
         "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/hotpotqa_validation_kb_chunks.json",
         "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/hotpotqa",
-        "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/hotpotqa"
+        "output_dir": "/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results/hotpotqa"
     },
     "ms_marco": {
         "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/ms_marco_validation_kb_chunks.json",
         "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/ms_marco",
-        "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/ms_marco"
+        "output_dir": "/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results/ms_marco"
     },
     "natural_questions": {
         # 使用1k子集，确保评估只针对构建索引用到的1000条问题
         "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/natural_questions_validation_kb_chunks.json",
         "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/natural_questions",
-        "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/natural_questions"
+        "output_dir": "/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results/natural_questions"
     },
     "triviaqa": {
         "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/triviaqa_validation_kb_chunks.json",
         "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/triviaqa",
-        "output_dir": "/home/pushihao/RAG/Reports/experiments/rag_evaluation_results/triviaqa"
+        "output_dir": "/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results/triviaqa"
     }
 }
 

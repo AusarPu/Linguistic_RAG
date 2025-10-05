@@ -765,11 +765,8 @@ async def refine_all_chunks_with_llm(
     # single_timeout = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT_SINGLE)  # 注释掉，改为请求级别设置
     # 优化连接器配置以支持高并发
     connector = aiohttp.TCPConnector(
-        limit=1000,                # 减少连接池大小，避免连接过多
-        limit_per_host=1000,        # 每个主机的连接限制
-        ttl_dns_cache=300,        # DNS缓存时间
-        use_dns_cache=True,       # 启用DNS缓存
-        keepalive_timeout=30,     # 连接保持时间
+        limit=2000,                # 减少连接池大小，避免连接过多
+        limit_per_host=2000,        # 每个主机的连接限制
         enable_cleanup_closed=True, # 启用清理已关闭的连接
     )
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -1052,7 +1049,7 @@ async def enhance_chunks_with_llm_metadata(input_chunks_json_path, output_chunks
     logging.critical(f"元数据生成完成！")
     logging.critical(f"总处理时间: {processing_time:.2f} 秒")
     logging.critical(f"总块数: {len(initial_chunks)}, 成功: {total_success}, 有意义: {total_meaningful}, 无意义: {total_not_meaningful}, 失败: {total_failed}")
-    logging.critical(f"最终保留的有意义块数: {len(all_enhanced_chunks)}")
+    logging.critical(f"最终保留的有m义n数torlen(all_enhapood_chunks)")
     
     # 将临时文件移动到最终位置
     if os.path.exists(temp_output_path):
