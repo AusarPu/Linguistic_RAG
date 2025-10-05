@@ -107,15 +107,6 @@ REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "stop": None,
 }
 
-# 新增：专门为 RAG 流程中答案生成步骤的配置 (可以基于 GENERATION_CONFIG 修改)
-GENERATOR_RAG_CONFIG = {
-    "max_tokens": 10240,       # RAG回答通常不需要像通用聊天那么长
-    "temperature": 0.7,       # 可以略微降低温度，使其更忠实于上下文
-    "top_p": 0.95,
-    "repetition_penalty": 1.1,
-    "stop": None,
-    "chat_template_kwargs": {"enable_thinking": False}
-}
 # -----------------
 
 # --- VLLM 请求超时配置 (新增或统一) ---
@@ -125,7 +116,7 @@ VLLM_REQUEST_TIMEOUT_GENERATION = 60*10     # 为生成答案设置更长的超�
 # --- 块优化专用超时配置 ---
 VLLM_REQUEST_TIMEOUT_SINGLE = 60*5          # 超时B：单个块优化超时
 VLLM_REQUEST_TIMEOUT_TOTAL = 3600*8         # 超时A：整体流程超时(8小时)
-OPTIMIZATION_BATCH_SIZE = 2000                # 分批处理大小
+OPTIMIZATION_BATCH_SIZE = 1000                # 分批处理大小
 
 # --- 并发控制配置 ---
 MAX_CONCURRENT_REQUESTS = 600                # 最大文本块并发请求

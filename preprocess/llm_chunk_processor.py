@@ -35,7 +35,15 @@ class OptimizationOutput(BaseModel):
 # --- VLLM 服务和模型配置 (从 config.py 导入) ---
 VLLM_OPTIMIZER_API_URL = config.GENERATOR_API_URL
 OPTIMIZER_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
-OPTIMIZER_GENERATION_CONFIG = config.GENERATOR_RAG_CONFIG
+OPTIMIZER_GENERATION_CONFIG = {
+    "max_tokens": 10240,
+    "temperature": 0.7, 
+    "top_p": 0.95,
+    "repetition_penalty": 1.1,
+    "stop": None,
+    "chat_template_kwargs": {"enable_thinking": True}
+}
+
 # 使用config.py中的新超时配置
 VLLM_REQUEST_TIMEOUT_SINGLE = config.VLLM_REQUEST_TIMEOUT_SINGLE
 VLLM_REQUEST_TIMEOUT_TOTAL = config.VLLM_REQUEST_TIMEOUT_TOTAL
@@ -51,9 +59,37 @@ METADATA_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
 METADATA_GENERATION_CONFIG = {
     "temperature": 0.6,  # 对于信息提取和遵循指令，较低的温度可能更好
     "max_tokens": 10240,  # 需要足够容纳关键词、问题和JSON结构
-    "chat_template_kwargs": {"enable_thinking": False}
+    "chat_template_kwargs": {"enable_thinking": True}
 }
 METADATA_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
+
+# --- VLLM响应内容解析功能 ---
+def extract_content_from_vllm_response(message: dict, generation_config: dict) -> str:
+    """
+    根据配置从VLLM API响应中提取内容
+    
+    Args:
+        message (dict): VLLM API响应中的message对象
+        generation_config (dict): 生成配置，包含chat_template_kwargs
+    
+    Returns:
+        str: 提取的内容
+    """
+    # 获取chat_template_kwargs配置
+    chat_template_kwargs = generation_config.get("chat_template_kwargs", {})
+    enable_thinking = chat_template_kwargs.get("enable_thinking", True)
+    
+    # 获取两种可能的内容
+    content = message.get("content", "")
+    reasoning_content = message.get("reasoning_content", "")
+    
+    if enable_thinking:
+        # 如果启用thinking模式，优先使用content，如果为空则使用reasoning_content
+        return content.strip() if content else reasoning_content.strip()
+    else:
+        # 如果禁用thinking模式，使用reasoning_content
+        return reasoning_content.strip() if reasoning_content else content.strip()
+
 
 # --- 语言检测功能 ---
 def detect_text_language(text: str) -> str:
@@ -415,11 +451,9 @@ async def _generate_metadata_for_chunk_via_vllm_impl(text_chunk_content, chunk_i
                         # 提取LLM生成的内容
                         if 'choices' in response_data and len(response_data['choices']) > 0:
                             message = response_data['choices'][0]['message']
-                            content = message.get('content') or ''
-                            reasoning_content = message.get('reasoning_content') or ''
                             
-                            # 优先使用reasoning_content，如果为空则使用content
-                            json_content = reasoning_content.strip() if reasoning_content else content.strip()
+                            # 使用通用函数提取内容
+                            json_content = extract_content_from_vllm_response(message, METADATA_GENERATION_CONFIG)
                             
                             if not json_content:
                                 raise ValueError("API响应中content和reasoning_content都为空")
@@ -565,7 +599,9 @@ async def _optimize_chunk_b_via_vllm_impl(
 
                 # 处理reasoning模式的响应结构
                 message = response_data["choices"][0].get("message", {})
-                message_content = message.get("reasoning_content") or message.get("content")
+                
+                # 使用通用函数提取内容
+                message_content = extract_content_from_vllm_response(message, OPTIMIZER_GENERATION_CONFIG)
                     
                 if not message_content:
                     logger.warning(f"[{time.time():.3f}] [ReqID: {request_id}] API响应的 message content 和 reasoning_content 都为空。")
