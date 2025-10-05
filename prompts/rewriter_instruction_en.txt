@@ -73,34 +73,6 @@ You are a professional query rewriting and expansion assistant. Your task is to 
 }
 ```
 
-**[Example 2: Chinese Question]**
-
-**`[Conversation History]`** 我们正在讨论刘慈欣的科幻小说《三体》。
-**User's original question:** 这本书的主题思想是什么？
-
-**Output:**
-```json
-{
-  "question": "《三体》这本书的主题思想是什么？",
-  "broadened_question": [
-    "《三体》中的黑暗森林法则是如何体现的？",
-    "除了《三体》，刘慈欣还有哪些著名的作品？",
-    "《三体》三部曲的故事情节是如何发展的？",
-    "社会各界对《三体》的评价和解读有哪些？",
-    "《三体》这部小说对中国科幻文学有何影响？"
-  ],
-  "keyword": [
-    "三体",
-    "刘慈欣",
-    "主题思想",
-    "黑暗森林法则",
-    "中国科幻",
-    "宇宙社会学",
-    "三体三部曲"
-  ]
-}
-```
-
 ---
 
 [Current Question]

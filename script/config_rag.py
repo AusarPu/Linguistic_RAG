@@ -97,6 +97,7 @@ GENERATION_CONFIG = { # 用于生成器 vLLM API
     "top_p": 0.95,
     "repetition_penalty": 1.1,
     "stop": None,
+    "chat_template_kwargs": {"enable_thinking": True}
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "max_tokens": 30960,
@@ -127,7 +128,7 @@ VLLM_REQUEST_TIMEOUT_TOTAL = 3600*8         # 超时A：整体流程超时(8小�
 OPTIMIZATION_BATCH_SIZE = 2000                # 分批处理大小
 
 # --- 并发控制配置 ---
-MAX_CONCURRENT_REQUESTS = 500                # 最大文本块并发请求
+MAX_CONCURRENT_REQUESTS = 600                # 最大文本块并发请求
 METADATA_MAX_CONCURRENT_REQUESTS = 1000       # 元数据生成的最大并发请求数
 
 # --- 日志配置函数 (方便在其他地方统一设置) ---

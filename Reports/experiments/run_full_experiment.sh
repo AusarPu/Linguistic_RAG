@@ -232,6 +232,19 @@ run_advanced_evaluation() {
     print_info "执行命令: $cmd"
     if eval $cmd; then
         print_success "高级评估分析完成"
+        
+        # 运行评估结果分析脚本
+        print_info "生成评估报告..."
+        local analysis_cmd="python3 $SCRIPT_DIR/evaluation/evaluate_results.py"
+        
+        print_info "执行命令: $analysis_cmd"
+        if eval $analysis_cmd; then
+            print_success "评估报告生成完成"
+            print_info "报告位置: $SCRIPT_DIR/advanced_evaluation_results/"
+        else
+            print_warning "评估报告生成失败，但高级评估已完成"
+        fi
+        
         return 0
     else
         print_error "高级评估分析失败"
