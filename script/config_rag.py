@@ -118,8 +118,8 @@ GENERATOR_RAG_CONFIG = {
 # -----------------
 
 # --- VLLM 请求超时配置 (新增或统一) ---
-VLLM_REQUEST_TIMEOUT = 120.0                 # 通用请求超时 (例如用于 Rewriter, Embedding)
-VLLM_REQUEST_TIMEOUT_GENERATION = 300.0     # 为生成答案设置更长的超时时间
+VLLM_REQUEST_TIMEOUT = 60*10                 # 通用请求超时 (例如用于 Rewriter, Embedding)
+VLLM_REQUEST_TIMEOUT_GENERATION = 60*10     # 为生成答案设置更长的超时时间
 
 # --- 块优化专用超时配置 ---
 VLLM_REQUEST_TIMEOUT_SINGLE = 60*5          # 超时B：单个块优化超时

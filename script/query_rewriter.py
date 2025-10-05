@@ -4,21 +4,97 @@ import asyncio
 from aiohttp import client
 from openai import OpenAI
 from pydantic import BaseModel
-from .config_rag import MAX_HISTORY,REWRITER_INSTRUCTION_FILE
+from .config_rag import MAX_HISTORY,REWRITER_INSTRUCTION_FILE,REWRITER_GENERATION_CONFIG
 import json
+import re
+import os
 
 logger = logging.getLogger(__name__)
 
-
-with open(REWRITER_INSTRUCTION_FILE, "r", encoding="utf-8") as f:
-    # 将模板内容存储在一个全局（模块级）变量中
-    _USR_INPUT_FORMAT = """
-    [对话历史]
-    {context}
-    [当前问题]
-    {question}
+# --- 语言检测功能 ---
+def detect_text_language(text: str) -> str:
     """
-    _SYS_PROMPT = "\n".join(f.read().split("\n")[:-2])  # 去掉最后两行
+    简单的语言检测功能，基于文本特征判断主要语言
+    
+    Args:
+        text (str): 待检测的文本
+    
+    Returns:
+        str: 检测到的语言代码 ('zh', 'en', 'mixed')
+    """
+    if not text or not text.strip():
+        return 'en'  # 默认英文
+    
+    # 统计中文字符数量
+    chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+    # 统计英文字符数量（字母）
+    english_chars = len(re.findall(r'[a-zA-Z]', text))
+    # 总字符数（排除空格和标点）
+    total_chars = chinese_chars + english_chars
+    
+    if total_chars == 0:
+        return 'en'  # 默认英文
+    
+    chinese_ratio = chinese_chars / total_chars
+    english_ratio = english_chars / total_chars
+    
+    # 判断语言
+    if chinese_ratio > 0.3:  # 中文字符占比超过30%
+        if english_ratio > 0.2:  # 英文字符也占一定比例
+            return 'mixed'
+        else:
+            return 'zh'
+    else:
+        return 'en'
+
+# --- 动态提示词加载功能 ---
+def get_rewriter_instruction(language: str) -> str:
+    """
+    根据检测到的语言返回相应的重写指令模板
+    
+    Args:
+        language (str): 语言代码 ('zh', 'en', 'mixed')
+    
+    Returns:
+        str: 对应语言的指令模板内容
+    """
+    # 获取prompts目录路径
+    prompts_dir = os.path.dirname(REWRITER_INSTRUCTION_FILE)
+    
+    if language == 'en':
+        # 使用英文版本的指令文件
+        instruction_file = os.path.join(prompts_dir, "rewriter_instruction_en.txt")
+    else:
+        # 对于中文和混合语言，使用中文版本
+        instruction_file = REWRITER_INSTRUCTION_FILE
+    
+    try:
+        with open(instruction_file, "r", encoding="utf-8") as f:
+            content = f.read()
+            # 去掉最后两行（如果存在）
+            lines = content.split("\n")
+            if len(lines) >= 2:
+                return "\n".join(lines[:-2])
+            else:
+                return content
+    except FileNotFoundError:
+        logger.warning(f"指令文件 {instruction_file} 未找到，使用默认中文版本")
+        # 如果英文文件不存在，回退到中文版本
+        with open(REWRITER_INSTRUCTION_FILE, "r", encoding="utf-8") as f:
+            content = f.read()
+            lines = content.split("\n")
+            if len(lines) >= 2:
+                return "\n".join(lines[:-2])
+            else:
+                return content
+
+# 移除原来的全局变量定义，改为动态加载
+_USR_INPUT_FORMAT = """
+[对话历史]
+{context}
+[当前问题]
+{question}
+"""
 
 
 def get_client_and_model():
@@ -75,28 +151,40 @@ async def generate_rewritten_query_async(
     func_start_time = time.time() # 函数计时
     logger.info(f"[{func_start_time:.3f}] 开始查询重写: '{user_input}'")
 
-    # 1. 准备对话历史
+    # 1. 检测用户输入的语言
+    detected_language = detect_text_language(user_input)
+    logger.debug(f"检测到的语言: {detected_language}")
+    
+    # 2. 根据语言获取相应的系统提示词
+    sys_prompt = get_rewriter_instruction(detected_language)
+    logger.debug(f"使用的系统提示词语言版本: {detected_language}")
+
+    # 3. 准备对话历史
     raw_rewrite_history = messages[-(MAX_HISTORY * 2):]
     filtered_history = [msg for msg in raw_rewrite_history if msg.get("role") in ["user", "assistant"]]
     logger.debug(f"使用最近 {len(filtered_history)} 条消息作为重写上下文。")
 
-    # 2. 格式化对话历史
+    # 4. 格式化对话历史
     formatted_history = format_chat_history(filtered_history)
     logger.debug(f"格式化后的对话历史: {formatted_history}")
 
-    # 3. 格式化用户输入并加上指示
+    # 5. 格式化用户输入并加上指示
     formatted_user_input = _USR_INPUT_FORMAT.format(
         context=formatted_history,
         question=user_input
     )
 
-    # 4. 异步发送给vLLM格式化后的消息
+    # 6. 异步发送给vLLM格式化后的消息
     def _sync_call():
         client, model_id = get_client_and_model()
+        # 将vLLM特有参数放入extra_body中
+        extra_body = {k: v for k, v in REWRITER_GENERATION_CONFIG.items() 
+                     if k not in ["max_tokens", "temperature", "top_p", "stop"]}
+        
         completion = client.chat.completions.create(
         model=model_id,
         messages=[
-            {"role": "system", "content": _SYS_PROMPT},
+            {"role": "system", "content": sys_prompt},
             {"role": "user", "content": formatted_user_input},
         ],
         response_format={
@@ -106,6 +194,12 @@ async def generate_rewritten_query_async(
                 "schema": rewrite_output.model_json_schema()
             }
         },
+        # 使用OpenAI兼容的参数
+        max_tokens=REWRITER_GENERATION_CONFIG.get("max_tokens", 30960),
+        temperature=REWRITER_GENERATION_CONFIG.get("temperature", 0.2),
+        top_p=REWRITER_GENERATION_CONFIG.get("top_p", 0.95),
+        stop=REWRITER_GENERATION_CONFIG.get("stop"),
+        extra_body=extra_body  # vLLM特有参数放在extra_body中
         )
         return completion
 
@@ -136,36 +230,54 @@ def generate_rewritten_query(
     func_start_time = time.time() # 函数计时
     logger.info(f"[{func_start_time:.3f}] 开始查询重写: '{user_input}'")
 
-    # 1. 准备对话历史
+    # 1. 检测用户输入的语言
+    detected_language = detect_text_language(user_input)
+    logger.debug(f"检测到的语言: {detected_language}")
+    
+    # 2. 根据语言获取相应的系统提示词
+    sys_prompt = get_rewriter_instruction(detected_language)
+    logger.debug(f"使用的系统提示词语言版本: {detected_language}")
+
+    # 3. 准备对话历史
     raw_rewrite_history = messages[-(MAX_HISTORY * 2):]
     filtered_history = [msg for msg in raw_rewrite_history if msg.get("role") in ["user", "assistant"]]
     logger.debug(f"使用最近 {len(filtered_history)} 条消息作为重写上下文。")
 
-    # 2. 格式化对话历史
+    # 4. 格式化对话历史
     formatted_history = format_chat_history(filtered_history)
     logger.debug(f"格式化后的对话历史: {formatted_history}")
 
-    # 3. 格式化用户输入并加上指示
+    # 5. 格式化用户输入并加上指示
     formatted_user_input = _USR_INPUT_FORMAT.format(
         context=formatted_history,
         question=user_input
     )
 
-    # 4. 发送给vLLM格式化后的消息
+    # 6. 发送给vLLM格式化后的消息
     client, model_id = get_client_and_model()
+    # 将vLLM特有参数放入extra_body中
+    extra_body = {k: v for k, v in REWRITER_GENERATION_CONFIG.items() 
+                 if k not in ["max_tokens", "temperature", "top_p", "stop"]}
+    
     completion = client.chat.completions.create(
-    model=model_id,
-    messages=[
-        {"role": "system", "content": _SYS_PROMPT},
-        {"role": "user", "content": formatted_user_input},
-    ],
-    response_format={
-        "type": "json_schema",
-        "json_schema": {
-            "name": "rewrite_output",
-            "schema": rewrite_output.model_json_schema()
-        }
-    },
+        model=model_id,
+        messages=[
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": formatted_user_input},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "rewrite_output",
+                "schema": rewrite_output.model_json_schema()
+            }
+        },
+        # 使用OpenAI兼容的参数
+        max_tokens=REWRITER_GENERATION_CONFIG.get("max_tokens", 30960),
+        temperature=REWRITER_GENERATION_CONFIG.get("temperature", 0.2),
+        top_p=REWRITER_GENERATION_CONFIG.get("top_p", 0.95),
+        stop=REWRITER_GENERATION_CONFIG.get("stop"),
+        extra_body=extra_body  # vLLM特有参数放在extra_body中
     )
 
     logger.info(f"[{time.time():.3f}] ASYNC 查询重写完成 (总耗时: {time.time() - func_start_time:.3f}s)。")

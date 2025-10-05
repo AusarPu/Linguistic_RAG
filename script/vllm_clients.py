@@ -13,7 +13,7 @@ from .config_rag import (
     VLLM_REQUEST_TIMEOUT,  # 通用请求超时
     GENERATOR_API_URL,
     GENERATOR_MODEL_NAME_FOR_API,
-    GENERATOR_RAG_CONFIG,
+    GENERATION_CONFIG,
     VLLM_REQUEST_TIMEOUT_GENERATION,
     EMBEDDING_API_URL,
     EMBEDDING_MODEL_NAME_FOR_API
@@ -124,7 +124,7 @@ async def call_generator_vllm_stream(
         {"type": "error", "message": "..."}
         {"type": "stream_end", "reason": "..."}
     """
-    effective_generation_config = GENERATOR_RAG_CONFIG.copy()  # 从config获取基础RAG配置
+    effective_generation_config = GENERATION_CONFIG.copy()  # 从config获取基础RAG配置
     if generation_config:  # 如果调用时传入了特定配置，则更新/覆盖
         effective_generation_config.update(generation_config)
 
