@@ -64,7 +64,12 @@ DEFAULT_MAX_QUESTIONS = 20  # 默认不限制问题数量（按数据集配置�
 # 线程锁用于保护共享资源
 result_lock = threading.Lock()
 
-async def process_single_question(question: str, kb_instance: KnowledgeBase, question_id: str = "") -> Dict[str, Any]:
+async def process_single_question(question: str, kb_instance: KnowledgeBase, question_id: str = "",
+                                use_query_rewriter: bool = True,
+                                use_dense_chunks: bool = True,
+                                use_dense_keywords: bool = True,
+                                use_dense_questions: bool = True,
+                                use_usefulness_judger: bool = True) -> Dict[str, Any]:
     """
     处理单个问题，返回结果
     """
@@ -79,7 +84,12 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
         async for event in execute_rag_flow(
             user_query=question,
             chat_history_openai=[],  # 空的聊天历史
-            kb_instance=kb_instance
+            kb_instance=kb_instance,
+            use_query_rewriter=use_query_rewriter,
+            use_dense_chunks=use_dense_chunks,
+            use_dense_keywords=use_dense_keywords,
+            use_dense_questions=use_dense_questions,
+            use_usefulness_judger=use_usefulness_judger
         ):
             # 收集查询重写结果
             if event.get("type") == "rewritten_query_result":
@@ -127,7 +137,12 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
         "has_reasoning": bool(reasoning_text.strip())
     }
 
-async def process_questions_batch(questions_batch: List[Dict[str, Any]], kb_instance: KnowledgeBase, batch_id: int) -> List[Dict[str, Any]]:
+async def process_questions_batch(questions_batch: List[Dict[str, Any]], kb_instance: KnowledgeBase, batch_id: int,
+                                use_query_rewriter: bool = True,
+                                use_dense_chunks: bool = True,
+                                use_dense_keywords: bool = True,
+                                use_dense_questions: bool = True,
+                                use_usefulness_judger: bool = True) -> List[Dict[str, Any]]:
     """
     并发处理一批问题
     """
@@ -142,7 +157,10 @@ async def process_questions_batch(questions_batch: List[Dict[str, Any]], kb_inst
             continue
         
         question_id = f"batch_{batch_id}_q_{i+1}"
-        task = process_single_question(question, kb_instance, question_id)
+        task = process_single_question(question, kb_instance, question_id, 
+                                     use_query_rewriter, use_dense_chunks, 
+                                     use_dense_keywords, use_dense_questions, 
+                                     use_usefulness_judger)
         tasks.append((task, item))
     
     # 并发执行所有任务
@@ -175,7 +193,12 @@ async def process_questions_batch(questions_batch: List[Dict[str, Any]], kb_inst
 async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str], 
                                     batch_size: int = DEFAULT_BATCH_SIZE, 
                                     max_questions: int = None,
-                                    is_sample: bool = False) -> None:
+                                    is_sample: bool = False,
+                                    use_query_rewriter: bool = True,
+                                    use_dense_chunks: bool = True,
+                                    use_dense_keywords: bool = True,
+                                    use_dense_questions: bool = True,
+                                    use_usefulness_judger: bool = True) -> None:
     """
     并发评估单个数据集
     """
@@ -250,7 +273,16 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
             logger.info(f"处理批次 {batch_num}/{total_batches}")
             
             # 并发处理当前批次
-            batch_results = await process_questions_batch(batch_questions, kb_instance, batch_num)
+            batch_results = await process_questions_batch(
+                batch_questions, 
+                kb_instance, 
+                batch_num,
+                use_query_rewriter,
+                use_dense_chunks,
+                use_dense_keywords,
+                use_dense_questions,
+                use_usefulness_judger
+            )
             all_results.extend(batch_results)
             
             # 每处理完一个批次就保存结果（防止数据丢失）
@@ -279,7 +311,12 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
 async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple], 
                                          batch_size: int = DEFAULT_BATCH_SIZE,
                                          max_questions: int = None,
-                                         dataset_concurrent: bool = False) -> None:
+                                         dataset_concurrent: bool = False,
+                                         use_query_rewriter: bool = True,
+                                         use_dense_chunks: bool = True,
+                                         use_dense_keywords: bool = True,
+                                         use_dense_questions: bool = True,
+                                         use_usefulness_judger: bool = True) -> None:
     """
     评估所有数据集，支持数据集级别的并发
     """
@@ -290,7 +327,9 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
         # 数据集级别并发处理
         logger.info(f"开始并发评估所有数据集，批大小: {batch_size}")
         tasks = [
-            evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample)
+            evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample,
+                                      use_query_rewriter, use_dense_chunks, use_dense_keywords, 
+                                      use_dense_questions, use_usefulness_judger)
             for dataset_name, config in datasets_to_process
         ]
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -299,7 +338,9 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
         logger.info(f"开始串行评估数据集（问题并发），批大小: {batch_size}")
         for dataset_name, config in datasets_to_process:
             try:
-                await evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample)
+                await evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample,
+                                                use_query_rewriter, use_dense_chunks, use_dense_keywords, 
+                                                use_dense_questions, use_usefulness_judger)
             except Exception as e:
                 logger.error(f"数据集 {dataset_name} 评估失败: {str(e)}")
                 continue
@@ -320,6 +361,18 @@ async def main():
     parser.add_argument("--dataset-concurrent", action="store_true", 
                        help="启用数据集级别的并发处理（默认：串行处理数据集）")
     
+    # 消融实验参数
+    parser.add_argument("--no-query-rewriter", action="store_true", 
+                       help="禁用查询重写模块")
+    parser.add_argument("--no-dense-chunks", action="store_true", 
+                       help="禁用密集块检索路径")
+    parser.add_argument("--no-dense-keywords", action="store_true", 
+                       help="禁用密集关键字检索路径")
+    parser.add_argument("--no-dense-questions", action="store_true", 
+                       help="禁用密集问题检索路径")
+    parser.add_argument("--no-usefulness-judger", action="store_true", 
+                       help="禁用有用性判断模块")
+    
     args = parser.parse_args()
     
     if args.dataset == "all":
@@ -333,13 +386,32 @@ async def main():
     logger.info(f"最大问题数: {args.max_questions}")
     logger.info(f"数据集并发: {'是' if args.dataset_concurrent else '否'}")
     
+    # 消融实验配置
+    use_query_rewriter = not args.no_query_rewriter
+    use_dense_chunks = not args.no_dense_chunks
+    use_dense_keywords = not args.no_dense_keywords
+    use_dense_questions = not args.no_dense_questions
+    use_usefulness_judger = not args.no_usefulness_judger
+    
+    logger.info(f"消融实验配置:")
+    logger.info(f"  查询重写: {'启用' if use_query_rewriter else '禁用'}")
+    logger.info(f"  密集块检索: {'启用' if use_dense_chunks else '禁用'}")
+    logger.info(f"  密集关键字检索: {'启用' if use_dense_keywords else '禁用'}")
+    logger.info(f"  密集问题检索: {'启用' if use_dense_questions else '禁用'}")
+    logger.info(f"  有用性判断: {'启用' if use_usefulness_judger else '禁用'}")
+    
     start_time = time.time()
     
     await evaluate_all_datasets_concurrent(
         datasets_to_process, 
         args.batch_size, 
         args.max_questions,
-        args.dataset_concurrent
+        args.dataset_concurrent,
+        use_query_rewriter,
+        use_dense_chunks,
+        use_dense_keywords,
+        use_dense_questions,
+        use_usefulness_judger
     )
     
     total_time = time.time() - start_time

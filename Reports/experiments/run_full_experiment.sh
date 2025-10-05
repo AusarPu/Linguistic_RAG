@@ -47,6 +47,13 @@ show_help() {
     echo "  --batch-size        评估批处理大小（默认：10）"
     echo "  --verbose           启用详细日志输出"
     echo ""
+    echo "消融实验选项（用于evaluation阶段）:"
+    echo "  --no-query-rewriter     禁用查询重写模块"
+    echo "  --no-dense-chunks       禁用密集块检索路径"
+    echo "  --no-dense-keywords     禁用密集关键字检索路径"
+    echo "  --no-dense-questions    禁用密集问题检索路径"
+    echo "  --no-usefulness-judger  禁用有用性判断模块"
+    echo ""
     echo "参数:"
     echo "  样本量              每个数据集的最大样本数量（必需）"
     echo ""
@@ -63,6 +70,11 @@ show_help() {
     echo "  $0 --skip-stage converter 1000    # 跳过converter阶段"
     echo "  $0 --test --verbose 100           # 测试模式，详细日志，100个样本"
     echo "  $0 --enhance-mode optimize 500    # 仅优化模式，500个样本"
+    echo ""
+    echo "消融实验示例:"
+    echo "  $0 --no-query-rewriter 100        # 禁用查询重写，测试其影响"
+    echo "  $0 --no-usefulness-judger 100     # 禁用有用性判断，测试其影响"
+    echo "  $0 --no-dense-chunks --no-dense-keywords 100  # 仅使用问题检索路径"
 }
 
 # 检查依赖
@@ -187,10 +199,11 @@ run_index() {
 run_evaluation() {
     local max_samples=$1
     local batch_size=$2
+    local ablation_args=$3
     
     print_info "========== 阶段5: RAG评估 =========="
     
-    local cmd="python3 $SCRIPT_DIR/evaluation/evaluate_datasets.py --dataset all --max-questions $max_samples --batch-size $batch_size"
+    local cmd="python3 $SCRIPT_DIR/evaluation/evaluate_datasets.py --dataset all --max-questions $max_samples --batch-size $batch_size $ablation_args"
     
     print_info "执行命令: $cmd"
     if eval $cmd; then
@@ -237,6 +250,7 @@ main() {
     local enhance_mode="pipeline"
     local batch_size=10
     local verbose=false
+    local ablation_args=""
     
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
@@ -275,6 +289,26 @@ main() {
                 ;;
             --verbose)
                 verbose=true
+                shift
+                ;;
+            --no-query-rewriter)
+                ablation_args="$ablation_args --no-query-rewriter"
+                shift
+                ;;
+            --no-dense-chunks)
+                ablation_args="$ablation_args --no-dense-chunks"
+                shift
+                ;;
+            --no-dense-keywords)
+                ablation_args="$ablation_args --no-dense-keywords"
+                shift
+                ;;
+            --no-dense-questions)
+                ablation_args="$ablation_args --no-dense-questions"
+                shift
+                ;;
+            --no-usefulness-judger)
+                ablation_args="$ablation_args --no-usefulness-judger"
                 shift
                 ;;
             -*)
@@ -357,7 +391,7 @@ main() {
                 fi
                 ;;
             evaluation)
-                if ! run_evaluation "$max_samples" "$batch_size"; then
+                if ! run_evaluation "$max_samples" "$batch_size" "$ablation_args"; then
                     failed_stages+=("$stage")
                 fi
                 ;;

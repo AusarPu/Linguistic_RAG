@@ -29,6 +29,11 @@ async def execute_rag_flow(
         user_query: str,
         chat_history_openai: List[Dict[str, str]],
         kb_instance: KnowledgeBase,
+        use_query_rewriter: bool = True,
+        use_dense_chunks: bool = True,
+        use_dense_keywords: bool = True,
+        use_dense_questions: bool = True,
+        use_usefulness_judger: bool = True,
         # 你也可以将 reranker_client_fn, generator_client_fn 作为参数传入，以增加灵活性
         # 或者让它们直接从本模块或 vllm_clients.py 导入
 ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -50,42 +55,66 @@ async def execute_rag_flow(
     yield _build_status_event("pipeline_start", "RAG流程启动")
 
     # 1. 查询重写
-    yield _build_status_event("query_rewriting", "步骤1: 正在进行查询重构...")
-    rewritten_query = await generate_rewritten_query_async(messages=chat_history_openai, user_input=user_query)
-    _QUESTION = rewritten_query["question"]
-    _BROADENED_QUESTION = rewritten_query["broadened_question"]
-    _KEYWORD = rewritten_query["keyword"]
+    if use_query_rewriter:
+        yield _build_status_event("query_rewriting", "步骤1: 正在进行查询重构...")
+        rewritten_query = await generate_rewritten_query_async(messages=chat_history_openai, user_input=user_query)
+        _QUESTION = rewritten_query["question"]
+        _BROADENED_QUESTION = rewritten_query["broadened_question"]
+        _KEYWORD = rewritten_query["keyword"]
 
-    yield {"type": "rewritten_query_result", "original_query": user_query, "rewritten_text": rewritten_query}
-    logger.info(
-        f"[{flow_request_id}] RAG Flow STAGE: Query Rewriting complete. Rewritten: '{rewritten_query}'")
+        yield {"type": "rewritten_query_result", "original_query": user_query, "rewritten_text": rewritten_query}
+        logger.info(
+            f"[{flow_request_id}] RAG Flow STAGE: Query Rewriting complete. Rewritten: '{rewritten_query}'")
+    else:
+        yield _build_status_event("query_rewriting", "步骤1: 跳过查询重构（消融实验）")
+        # 不进行查询重写，直接使用原始查询
+        _QUESTION = user_query
+        _BROADENED_QUESTION = []
+        _KEYWORD = []
+        
+        yield {"type": "rewritten_query_result", "original_query": user_query, "rewritten_text": {"question": user_query, "broadened_question": [], "keyword": []}}
+        logger.info(f"[{flow_request_id}] RAG Flow STAGE: Query Rewriting skipped (ablation study)")
 
     # 2. 多路并行召回
     yield _build_status_event("retrieval_start", "步骤2: 开始多路并行召回...")
     retrieval_start_time = time.time()
 
-    # 创建三个异步任务
-    tasks = [
-        asyncio.to_thread(kb_instance.search_dense_chunks, 
-                         [_QUESTION] + _BROADENED_QUESTION,
-                         DENSE_CHUNK_RETRIEVAL_TOP_K, 
-                         DENSE_CHUNK_THRESHOLD),
-        asyncio.to_thread(kb_instance.search_dense_keywords,
-                         _KEYWORD + _BROADENED_QUESTION,
-                         SPARSE_KEYWORD_RETRIEVAL_TOP_K,
-                         SPARSE_KEYWORD_THRESHOLD),
-        asyncio.to_thread(kb_instance.search_dense_questions,
-                         [_QUESTION] + _BROADENED_QUESTION,
-                         DENSE_QUESTION_RETRIEVAL_TOP_K,
-                         DENSE_QUESTION_THRESHOLD)
-    ]
+    # 创建检索任务列表，根据消融实验参数决定启用哪些检索路径
+    tasks = []
+    retrieval_paths_display_names = []
     
-    # 并行执行所有任务
-    full_text_chunks, keyword_chunks, question_chunks = await asyncio.gather(*tasks)
+    if use_dense_chunks:
+        tasks.append(asyncio.to_thread(kb_instance.search_dense_chunks, 
+                                     [_QUESTION] + _BROADENED_QUESTION,
+                                     DENSE_CHUNK_RETRIEVAL_TOP_K, 
+                                     DENSE_CHUNK_THRESHOLD))
+        retrieval_paths_display_names.append("文本召回")
+    
+    if use_dense_keywords:
+        tasks.append(asyncio.to_thread(kb_instance.search_dense_keywords,
+                                     _KEYWORD + _BROADENED_QUESTION,
+                                     SPARSE_KEYWORD_RETRIEVAL_TOP_K,
+                                     SPARSE_KEYWORD_THRESHOLD))
+        retrieval_paths_display_names.append("关键词召回")
+    
+    if use_dense_questions:
+        tasks.append(asyncio.to_thread(kb_instance.search_dense_questions,
+                                     [_QUESTION] + _BROADENED_QUESTION,
+                                     DENSE_QUESTION_RETRIEVAL_TOP_K,
+                                     DENSE_QUESTION_THRESHOLD))
+        retrieval_paths_display_names.append("问题召回")
+    
+    # 如果所有检索路径都被禁用，返回错误
+    if not tasks:
+        yield _build_status_event("no_retrieval_paths", "所有检索路径都被禁用，无法进行检索。")
+        yield {"type": "content_delta", "text": "错误：所有检索路径都被禁用，无法进行检索。"}
+        yield {"type": "pipeline_end", "reason": "no_retrieval_paths_enabled"}
+        return
+    
+    # 并行执行启用的检索任务
+    retrieval_outputs = await asyncio.gather(*tasks)
 
     all_retrieved_chunks_map: Dict[str, Dict[str, Any]] = {}
-    retrieval_paths_display_names = ["文本召回", "关键词召回","问题召回", ]
-    retrieval_outputs = [full_text_chunks, keyword_chunks, question_chunks]
 
     for i, res_or_exc in enumerate(retrieval_outputs):
         path_name = retrieval_paths_display_names[i]
@@ -124,41 +153,50 @@ async def execute_rag_flow(
         return
 
     # 3. 并发判断知识块的有用性
-    yield _build_status_event("usefulness_judging", "步骤3: 正在判断知识块的相关性...")
-    usefulness_start_time = time.time()
+    if use_usefulness_judger:
+        yield _build_status_event("usefulness_judging", "步骤3: 正在判断知识块的相关性...")
+        usefulness_start_time = time.time()
 
-    # 创建判断任务列表 - 使用异步版本
-    judge_tasks = []
-    for chunk in candidate_chunks_for_reranker:
-        task = asyncio.create_task(
-            judge_knowledge_usefulness_async(
-                questions=[_QUESTION]+_BROADENED_QUESTION,
-                knowledge_content=chunk.get("text", "")
+        # 创建判断任务列表 - 使用异步版本
+        judge_tasks = []
+        for chunk in candidate_chunks_for_reranker:
+            task = asyncio.create_task(
+                judge_knowledge_usefulness_async(
+                    questions=[_QUESTION]+_BROADENED_QUESTION,
+                    knowledge_content=chunk.get("text", "")
+                )
             )
-        )
-        judge_tasks.append((chunk, task))
+            judge_tasks.append((chunk, task))
 
-    # 等待所有判断任务完成
-    useful_chunks = []
-    for chunk, task in judge_tasks:
-        try:
-            result = await task
-            if result == "useful":
-                useful_chunks.append(chunk)
-        except Exception as e:
-            logger.error(f"[{flow_request_id}] 判断知识块有用性时发生错误: {str(e)}")
+        # 等待所有判断任务完成
+        useful_chunks = []
+        for chunk, task in judge_tasks:
+            try:
+                result = await task
+                if result == "useful":
+                    useful_chunks.append(chunk)
+            except Exception as e:
+                logger.error(f"[{flow_request_id}] 判断知识块有用性时发生错误: {str(e)}")
 
-    usefulness_duration = time.time() - usefulness_start_time
-    logger.info(
-        f"[{flow_request_id}] RAG Flow STAGE: Usefulness judging complete. {len(useful_chunks)}/{len(candidate_chunks_for_reranker)} chunks kept. Duration: {usefulness_duration:.3f}s")
+        usefulness_duration = time.time() - usefulness_start_time
+        logger.info(
+            f"[{flow_request_id}] RAG Flow STAGE: Usefulness judging complete. {len(useful_chunks)}/{len(candidate_chunks_for_reranker)} chunks kept. Duration: {usefulness_duration:.3f}s")
 
-    # 更新候选chunks列表
-    candidate_chunks_for_reranker = useful_chunks
+        # 更新候选chunks列表
+        candidate_chunks_for_reranker = useful_chunks
+    else:
+        yield _build_status_event("usefulness_judging", "步骤3: 跳过有用性判断（消融实验）")
+        logger.info(f"[{flow_request_id}] RAG Flow STAGE: Usefulness judging skipped (ablation study)")
 
     if not candidate_chunks_for_reranker:
-        yield _build_status_event("no_context_found_after_usefulness", "筛选后未找到有用的上下文信息。")
-        yield {"type": "content_delta", "text": "抱歉，我没有找到与您问题直接相关的有用信息。"}
-        yield {"type": "pipeline_end", "reason": "no_context_found_after_usefulness"}
+        if use_usefulness_judger:
+            yield _build_status_event("no_context_found_after_usefulness", "筛选后未找到有用的上下文信息。")
+            yield {"type": "content_delta", "text": "抱歉，我没有找到与您问题直接相关的有用信息。"}
+            yield {"type": "pipeline_end", "reason": "no_context_found_after_usefulness"}
+        else:
+            yield _build_status_event("no_context_found_after_retrieval", "未能从知识库中找到与查询相关的上下文信息。")
+            yield {"type": "content_delta", "text": "抱歉，我没有找到与您问题相关的直接信息。"}
+            yield {"type": "pipeline_end", "reason": "no_context_found_after_retrieval"}
         return
 
     preview_for_ui_useful = [{"id": c.get("chunk_id"),
