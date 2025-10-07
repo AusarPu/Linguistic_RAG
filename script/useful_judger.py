@@ -57,7 +57,7 @@ async def judge_knowledge_usefulness_async(
             {"role": "system", "content": _SYS_PROMPT},
             {"role": "user", "content": formatted_user_input},
         ],
-        extra_body={"guided_choice": ["useful", "useless"]},
+        extra_body={"guided_choice": ["useful", "useless"], "enable_thinking": True},
         )
         return completion
 

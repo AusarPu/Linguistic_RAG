@@ -15,7 +15,9 @@ from .vllm_clients import call_generator_vllm_stream
 from .config_rag import (
     # 检索参数
     DENSE_CHUNK_RETRIEVAL_TOP_K, DENSE_QUESTION_RETRIEVAL_TOP_K, SPARSE_KEYWORD_RETRIEVAL_TOP_K,
-    DENSE_CHUNK_THRESHOLD, DENSE_QUESTION_THRESHOLD, SPARSE_KEYWORD_THRESHOLD,GENERATOR_SYSTEM_PROMPT_FILE,
+    DENSE_CHUNK_THRESHOLD, DENSE_QUESTION_THRESHOLD, SPARSE_KEYWORD_THRESHOLD, GENERATOR_SYSTEM_PROMPT_FILE,
+    # 软保留策略参数
+    SOFT_KEEP_MIN_CHUNKS, SOFT_KEEP_RATIO
 )
 
 logger = logging.getLogger(__name__)
@@ -152,6 +154,9 @@ async def execute_rag_flow(
         yield {"type": "pipeline_end", "reason": "no_context_found_after_retrieval"}
         return
 
+    # 在进行有用性判断之前，保存原始候选用于软保留回退
+    original_candidates_for_soft_keep = list(candidate_chunks_for_reranker)
+
     # 3. 并发判断知识块的有用性
     if use_usefulness_judger:
         yield _build_status_event("usefulness_judging", "步骤3: 正在判断知识块的相关性...")
@@ -184,6 +189,45 @@ async def execute_rag_flow(
 
         # 更新候选chunks列表
         candidate_chunks_for_reranker = useful_chunks
+
+        # --- 软保留策略：当筛后数量过少时，保留一部分高分原始候选，避免证据链断裂 ---
+        try:
+            soft_keep_target = max(SOFT_KEEP_MIN_CHUNKS, int(len(original_candidates_for_soft_keep) * SOFT_KEEP_RATIO))
+        except Exception:
+            soft_keep_target = SOFT_KEEP_MIN_CHUNKS
+
+        if len(candidate_chunks_for_reranker) < soft_keep_target:
+            # 计算综合分数：考虑各召回路径分数与顶层retrieval_score
+            def _combined_score(c):
+                scores = []
+                rp = c.get("retrieved_from_paths", {})
+                if isinstance(rp, dict):
+                    for s in rp.values():
+                        if isinstance(s, (int, float)):
+                            scores.append(float(s))
+                s_top = c.get("retrieval_score")
+                if isinstance(s_top, (int, float)):
+                    scores.append(float(s_top))
+                return max(scores) if scores else 0.0
+
+            kept_ids = {c.get("chunk_id") for c in candidate_chunks_for_reranker}
+            fallback_pool = [c for c in original_candidates_for_soft_keep if c.get("chunk_id") not in kept_ids]
+            fallback_sorted = sorted(fallback_pool, key=_combined_score, reverse=True)
+
+            need = max(0, soft_keep_target - len(candidate_chunks_for_reranker))
+            additional = []
+            for c in fallback_sorted[:need]:
+                cc = dict(c)
+                cc["soft_kept"] = True
+                additional.append(cc)
+
+            if additional:
+                candidate_chunks_for_reranker = candidate_chunks_for_reranker + additional
+                yield _build_status_event(
+                    "soft_keep_applied",
+                    f"启用软保留策略，额外保留 {len(additional)} 个上下文。",
+                    {"target": soft_keep_target}
+                )
     else:
         yield _build_status_event("usefulness_judging", "步骤3: 跳过有用性判断（消融实验）")
         logger.info(f"[{flow_request_id}] RAG Flow STAGE: Usefulness judging skipped (ablation study)")
@@ -199,6 +243,11 @@ async def execute_rag_flow(
             yield {"type": "pipeline_end", "reason": "no_context_found_after_retrieval"}
         return
 
+    # 输出软保留的摘要信息（如果有）
+    soft_kept_count = sum(1 for c in candidate_chunks_for_reranker if c.get("soft_kept"))
+    if soft_kept_count:
+        yield {"type": "soft_keep_summary", "added": soft_kept_count}
+
     preview_for_ui_useful = [{"id": c.get("chunk_id"),
                          "text_preview": c.get("text", ""),
                          "text": c.get("text", ""),  # 保留完整文本
@@ -207,6 +256,7 @@ async def execute_rag_flow(
                          "author": c.get("author", "未知"),  # 保留作者
                          "chunk_id": c.get("chunk_id"),  # 保留块ID
                          "from_paths": list(c.get("retrieved_from_paths", {}).keys()),
+                         "soft_kept": bool(c.get("soft_kept", False)),  # 标记是否为软保留补充
                          } for c in candidate_chunks_for_reranker]
     
     # 构建知识库内容作为tool role消息

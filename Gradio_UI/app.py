@@ -38,7 +38,8 @@ def load_resources():
             logger.info("知识库实例加载成功。")
         except Exception as e:
             logger.error(f"知识库实例化失败: {e}", exc_info=True)
-            raise RuntimeError(f"无法加载KnowledgeBase: {e}") from e
+            # 不阻断 UI 启动；保持 kb_instance=None，后续交互时提示用户
+            logger.warning("知识库加载失败，应用仍将启动但无法检索。")
     else:
         logger.info("知识库实例已存在，跳过加载。")
 
@@ -71,12 +72,15 @@ def format_retrieved_chunks(chunks: List[Dict]) -> str:
     for i, chunk in enumerate(chunks, 1):
         # 完整显示知识块内容，不截断
         chunk_content = chunk.get('text', '')
+        soft_keep_flag = chunk.get('soft_kept', False)
+        soft_keep_badge = " （软保留）" if soft_keep_flag else ""
         chunk_info = f"""**片段 {i}**
 - **文档**: {chunk.get('doc_name', '未知')}
 - **作者**: {chunk.get('author', '未知')}
 - **页码**: {chunk.get('page_number', '未知')}
 - **来源路径**: {', '.join(chunk.get('from_paths', []))}
 - **块ID**: {chunk.get('chunk_id', '未知')}
+ - **标记**: {'软保留' if soft_keep_flag else '判定为有用'}
 
 **完整内容**:
 ```
@@ -174,6 +178,10 @@ async def chat_with_rag(
                 current_retrieved_chunks = chunks
                 knowledge_ready = True  # 标记知识库内容准备好
                 logger.info(f"检索结果更新: 获得 {len(chunks)} 个知识块")
+                # 如果后端有软保留摘要事件，追加到阶段信息中
+                soft_kept_count = sum(1 for c in chunks if c.get("soft_kept"))
+                if soft_kept_count:
+                    current_stage = format_stage_info("usefulness_judging", f"已应用软保留，补充 {soft_kept_count} 个片段")
                 
                 # 更新聊天历史中的助手回复
                 if chat_history and chat_history[-1].get("role") == "assistant":
@@ -204,6 +212,17 @@ async def chat_with_rag(
                 if chat_history and chat_history[-1].get("role") == "assistant":
                     chat_history[-1]["content"] = format_chat_message_with_thinking(current_thinking_content, current_response_content)
                 
+                knowledge_display_content = format_retrieved_chunks(current_retrieved_chunks) if knowledge_ready else "🔍 正在检索知识库..."
+                yield chat_history, openai_history, current_stage, knowledge_display_content
+
+            # 处理软保留摘要事件
+            elif event_type == "soft_keep_summary":
+                added = event.get("added", 0)
+                current_stage = format_stage_info("usefulness_judging", f"已应用软保留，补充 {added} 个片段")
+                logger.info(f"软保留摘要: 补充 {added} 个片段")
+                # 更新聊天历史中的助手回复
+                if chat_history and chat_history[-1].get("role") == "assistant":
+                    chat_history[-1]["content"] = format_chat_message_with_thinking(current_thinking_content, current_response_content)
                 knowledge_display_content = format_retrieved_chunks(current_retrieved_chunks) if knowledge_ready else "🔍 正在检索知识库..."
                 yield chat_history, openai_history, current_stage, knowledge_display_content
             

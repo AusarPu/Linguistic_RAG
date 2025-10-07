@@ -58,7 +58,7 @@ DATASETS = {
 }
 
 # 并发配置
-DEFAULT_BATCH_SIZE = 10  # 默认批处理大小
+DEFAULT_BATCH_SIZE = 5  # 默认批处理大小
 DEFAULT_MAX_QUESTIONS = 20  # 默认不限制问题数量（按数据集配置与文件决定）
 
 # 线程锁用于保护共享资源

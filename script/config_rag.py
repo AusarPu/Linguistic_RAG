@@ -87,12 +87,12 @@ EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH # 用于发送给 Embedding 
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATOR_SYSTEM_PROMPT_FILE = os.path.join(_CONFIG_DIR, "../prompts/generator_system_prompt.txt")
 REWRITER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/rewriter_instruction.txt")
-USEFUL_JUDGER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/useful_judge.txt")
+USEFUL_JUDGER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/useful_judge_v2.txt")
 # -------------------------
 
 # --- 生成参数配置 ---
 GENERATION_CONFIG = { # 用于生成器 vLLM API
-    "max_tokens": 30960,
+    "max_tokens": 20000,
     "temperature": 0.9,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
@@ -100,7 +100,7 @@ GENERATION_CONFIG = { # 用于生成器 vLLM API
     "chat_template_kwargs": {"enable_thinking": True}
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
-    "max_tokens": 30960,
+    "max_tokens": 20000,
     "temperature": 0.2,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
@@ -121,6 +121,11 @@ OPTIMIZATION_BATCH_SIZE = 1000                # 分批处理大小
 # --- 并发控制配置 ---
 MAX_CONCURRENT_REQUESTS = 600                # 最大文本块并发请求
 METADATA_MAX_CONCURRENT_REQUESTS = 1000       # 元数据生成的最大并发请求数
+
+# --- 有用性判断软保留策略 ---
+# 在多跳或不确定场景，避免过度过滤导致证据链断裂
+SOFT_KEEP_MIN_CHUNKS = 6                      # 至少保留的上下文块数（含判定为useful者）
+SOFT_KEEP_RATIO = 0.3                         # 至少保留原候选的比例（含判定为useful者）
 
 # --- 日志配置函数 (方便在其他地方统一设置) ---
 def setup_logging():
