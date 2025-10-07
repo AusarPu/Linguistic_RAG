@@ -28,8 +28,8 @@ BM25_SEMANTIC_FUSION_ALPHA = 0.3  # BM25权重，语义搜索权重为(1-alpha)
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
-VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-30B-A3B-FP8"
-EMBEDDING_MODEL_PATH = "./models/Qwen/Qwen3-Embedding-8B"
+VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-4B"
+EMBEDDING_MODEL_PATH = "./models/Qwen/Qwen3-Embedding-0.6B"
 VLLM_REWRITER_LORA_LOCAL_PATH = ""              
 
 # --- 知识库和处理数据路径 ---

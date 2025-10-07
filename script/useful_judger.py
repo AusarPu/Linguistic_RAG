@@ -57,7 +57,7 @@ async def judge_knowledge_usefulness_async(
             {"role": "system", "content": _SYS_PROMPT},
             {"role": "user", "content": formatted_user_input},
         ],
-        extra_body={"guided_choice": ["useful", "useless"], "enable_thinking": True},
+        extra_body={"guided_choice": ["useful", "useless"]},
         )
         return completion
 
@@ -101,7 +101,7 @@ def judge_knowledge_usefulness(
         {"role": "system", "content": _SYS_PROMPT},
         {"role": "user", "content": formatted_user_input},
     ],
-    extra_body={"guided_choice": ["useful", "useless"], "enable_thinking": True},
+    extra_body={"guided_choice": ["useful", "useless"]},
     )
 
     logger.info(f"[{time.time():.3f}] 判断完成 (总耗时: {time.time() - func_start_time:.3f}s)。")

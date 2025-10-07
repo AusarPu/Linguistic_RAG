@@ -41,7 +41,7 @@ OPTIMIZER_GENERATION_CONFIG = {
     "top_p": 0.95,
     "repetition_penalty": 1.1,
     "stop": None,
-    "chat_template_kwargs": {"enable_thinking": True}
+    "chat_template_kwargs": {"enable_thinking": False}
 }
 
 # 使用config.py中的新超时配置
@@ -59,14 +59,14 @@ METADATA_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
 METADATA_GENERATION_CONFIG = {
     "temperature": 0.6,  # 对于信息提取和遵循指令，较低的温度可能更好
     "max_tokens": 10240,  # 需要足够容纳关键词、问题和JSON结构
-    "chat_template_kwargs": {"enable_thinking": True}
+    "chat_template_kwargs": {"enable_thinking": False}
 }
 METADATA_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
 
 # --- VLLM响应内容解析功能 ---
 def extract_content_from_vllm_response(message: dict, generation_config: dict) -> str:
     """
-    根据配置从VLLM API响应中提取内容
+    根据配置从VLLM API响应中提取内容，并移除可能存在的markdown代码块标记
     
     Args:
         message (dict): VLLM API响应中的message对象
@@ -85,10 +85,37 @@ def extract_content_from_vllm_response(message: dict, generation_config: dict) -
     
     if enable_thinking:
         # 如果启用thinking模式，优先使用content，如果为空则使用reasoning_content
-        return content.strip() if content else reasoning_content.strip()
+        raw_content = content.strip() if content else reasoning_content.strip()
     else:
         # 如果禁用thinking模式，使用reasoning_content
-        return reasoning_content.strip() if reasoning_content else content.strip()
+        raw_content = reasoning_content.strip() if reasoning_content else content.strip()
+    
+    # 移除可能存在的markdown代码块标记
+    cleaned_content = remove_markdown_code_blocks(raw_content)
+    
+    return cleaned_content
+
+
+def remove_markdown_code_blocks(text: str) -> str:
+    """
+    检测并移除markdown代码块标记（如```json、```等）
+    
+    Args:
+        text (str): 原始文本
+    
+    Returns:
+        str: 移除markdown标记后的文本
+    """
+    if not text:
+        return text
+    
+    # 移除开头的markdown代码块标记（如```json、```等）
+    text = re.sub(r'^```[a-zA-Z]*\s*\n?', '', text, flags=re.MULTILINE)
+    
+    # 移除结尾的markdown代码块标记（```）
+    text = re.sub(r'\n?```\s*$', '', text, flags=re.MULTILINE)
+    
+    return text.strip()
 
 
 # --- 语言检测功能 ---
@@ -167,7 +194,8 @@ def get_metadata_prompt_template(language: str) -> str:
 - "keyword_summaries": 一个包含所提取/生成的关键词摘要字符串的列表。如果 "is_meaningful" 为 false，此列表必须为空。
 - "generated_questions": 一个包含所生成的问句字符串的列表。如果 "is_meaningful" 为 false，此列表必须为空。
 
-确保JSON格式正确，所有字符串值内部的特殊字符（如换行符、双引号）都已正确转义。不要包含任何其他解释或对话。
+**重要：请直接返回纯JSON格式，不要使用任何markdown代码块标记（如```json或```），不要添加任何解释文字。**
+确保JSON格式正确，所有字符串值内部的特殊字符（如换行符、双引号）都已正确转义。
 
 文本块标识符：{chunk_id}
 
@@ -204,7 +232,8 @@ Please return your results in strict JSON format, containing the following field
 - "keyword_summaries": A list containing extracted/generated keyword summary strings. If "is_meaningful" is false, this list must be empty.
 - "generated_questions": A list containing generated question strings. If "is_meaningful" is false, this list must be empty.
 
-Ensure correct JSON format, all special characters within string values (such as newlines, double quotes) are properly escaped. Do not include any other explanations or conversations.
+**Important: Please return pure JSON format directly, do not use any markdown code block markers (such as ```json or ```), and do not add any explanatory text.**
+Ensure correct JSON format, all special characters within string values (such as newlines, double quotes) are properly escaped.
 
 Text chunk identifier: {chunk_id}
 
@@ -297,6 +326,7 @@ def get_optimization_prompt_template(language: str) -> str:
 ```
 
 请严格按照以下JSON格式返回优化后的块B的文本。
+**重要：请直接返回纯JSON格式，不要使用任何markdown代码块标记（如```json或```），不要添加任何解释文字。**
 确保 "optimized_chunk_B_text" 字段的值是一个符合JSON规范的字符串，这意味着字符串内部的特殊字符（如换行符、双引号、反斜杠等）都需要被正确转义（例如，换行符应表示为 \\n，双引号应表示为 \\"，反斜杠应表示为 \\\\）。
 {{
   "optimized_chunk_B_text": "这里是优化后的块B的文本内容..."
@@ -336,6 +366,7 @@ Chunk C (following content, if Chunk B is the last chunk of the document, this p
 ```
 
 Please return the optimized Chunk B text strictly in the following JSON format.
+**Important: Please return pure JSON format directly, do not use any markdown code block markers (such as ```json or ```), and do not add any explanatory text.**
 Ensure that the value of the "optimized_chunk_B_text" field is a JSON-compliant string, which means that special characters within the string (such as newlines, double quotes, backslashes, etc.) need to be properly escaped (for example, newlines should be represented as \\n, double quotes as \\", backslashes as \\\\).
 {{
   "optimized_chunk_B_text": "Here is the optimized text content of Chunk B..."

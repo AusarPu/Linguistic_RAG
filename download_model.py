@@ -34,20 +34,20 @@ HF_MIRROR_ENDPOINT = "https://hf-mirror.com"
 MODEL_ROOT_DIR = "/home/pushihao/RAG/models" # <--- 修改为你希望存放模型的本地根目录
 
 # 3. 配置要下载的模型列表
-LLM_MODEL_NAME = "Qwen/QwQ-32B"
-EMBED_MODEL_NAME = "BAAI/bge-large-zh-v1.5"
+LLM_MODEL_NAME = "Qwen/Qwen3-4B"
+EMBED_MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 
 models_to_download = {
     # --- LLM (用于重写器和生成器) ---
     "llm": {
-        "source": "modelscope",        # <--- 指定来源: "modelscope" 或 "huggingface"
+        "source": "huggingface",        # <--- 指定来源: "modelscope" 或 "huggingface"
         "model_id": LLM_MODEL_NAME, # <--- LLM模型ID
         "target_dir": os.path.join(MODEL_ROOT_DIR, LLM_MODEL_NAME),  # 自动使用模型名作为目录
         # "revision": "v1.0.0"       # 可选：指定版本
     },
     # --- 嵌入模型 ---
     "embedding": {
-        "source": "modelscope",        # <--- 指定来源
+        "source": "huggingface",        # <--- 指定来源
         "model_id": EMBED_MODEL_NAME, # <--- 嵌入模型
         "target_dir": os.path.join(MODEL_ROOT_DIR, EMBED_MODEL_NAME)  # 自动使用模型名作为目录
     }

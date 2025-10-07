@@ -182,6 +182,79 @@
 
 ---
 
+## 5.5 LLM-only基线对比分析
+
+为了量化RAG系统相对于纯LLM方法的性能提升，我们进行了LLM-only基线实验（final_result_9_only_LLM），该实验使用相同的LLM模型但不提供任何外部知识检索，仅依靠模型的内在知识回答问题。
+
+### 5.5.1 整体性能对比
+
+![LLM与RAG系统整体对比](pics/llm_rag_overall_comparison.png)
+
+**图5.8 LLM-only vs RAG系统整体性能对比**
+
+实验结果显示：
+- **LLM-only基线**：总体准确率62.0%
+- **RAG系统（原版）**：总体准确率81.75%，相比LLM-only提升**+19.75%**
+- **RAG系统（优化版）**：总体准确率87.5%，相比LLM-only提升**+25.5%**
+
+这一结果清楚地证明了外部知识库对于提升问答系统性能的关键作用。
+
+### 5.5.2 数据集特定分析
+
+![LLM与RAG系统数据集对比](pics/llm_rag_dataset_comparison.png)
+
+**图5.9 LLM-only vs RAG系统数据集特定性能对比**
+
+各数据集的详细对比结果：
+
+| 数据集 | LLM-only | RAG原版 | RAG优化版 | 原版提升 | 优化版提升 |
+|--------|----------|---------|-----------|----------|------------|
+| **HotpotQA** | 41.0% | 75.0% | 89.0% | +34.0% | +48.0% |
+| **MS MARCO** | 86.0% | 89.0% | 89.0% | +3.0% | +3.0% |
+| **Natural Questions** | 57.0% | 82.0% | 86.0% | +25.0% | +29.0% |
+| **TriviaQA** | 64.0% | 81.0% | 86.0% | +17.0% | +22.0% |
+
+**关键发现**：
+
+1. **HotpotQA受益最大**：RAG系统在多跳推理任务上的优势最为显著，优化版相比LLM-only提升了48%
+2. **MS MARCO提升有限**：该数据集主要考查事实性问题，LLM的内在知识已经相当充分
+3. **知识密集型任务的价值**：Natural Questions和TriviaQA显示了外部知识库在处理知识密集型问题上的重要性
+
+### 5.5.3 外部知识的贡献分析
+
+![知识库影响分析](pics/knowledge_impact_analysis.png)
+
+**图5.10 外部知识库对性能的贡献分析**
+
+该图直观展示了外部知识库在不同数据集上的贡献：
+
+- **平均知识贡献**：+25.5%
+- **最高影响**：HotpotQA (+48.0%)
+- **最低影响**：MS MARCO (+3.0%)
+
+### 5.5.4 性能提升分解分析
+
+![RAG系统改进分析](pics/llm_rag_improvement_analysis.png)
+
+**图5.11 RAG系统相对LLM-only的改进分析**
+
+左图显示整体改进幅度，右图展示各数据集的具体提升情况。可以看出：
+
+1. **系统优化的价值**：优化版RAG相比原版RAG进一步提升了5.75%
+2. **数据集差异化效果**：不同类型的问答任务从RAG系统中获得的收益差异显著
+3. **技术路线验证**：RAG技术路线在知识密集型和推理密集型任务上具有明显优势
+
+### 5.5.5 基线对比的启示
+
+通过LLM-only基线对比，我们得出以下重要结论：
+
+1. **RAG系统的必要性**：在知识密集型问答任务中，外部知识检索是不可或缺的
+2. **任务类型的影响**：多跳推理任务（如HotpotQA）从RAG系统中获益最大
+3. **系统优化的价值**：通过改进检索策略和有用性判断，可以进一步提升RAG系统性能
+4. **技术发展方向**：未来应重点关注复杂推理任务的知识整合和利用
+
+---
+
 ## 5.6 结论与后续工作
 
 ### 主要结论：
@@ -222,6 +295,7 @@
 - **实验目录路径**：
   - `Reports/experiments/datasets/final_result_2_preprocess_think/`（基线系统）
   - `Reports/experiments/datasets/final_result_8_preprocess_think_usefulness_v2/`（优化版）
+  - `Reports/experiments/datasets/final_result_9_only_LLM/`（LLM-only基线）
   - `Reports/experiments/datasets/final_result_3_preprocess_think_no_rewriter/`（无查询重写）
   - `Reports/experiments/datasets/final_result_4_preprocess_think_no_usefulness/`（无有用性判断）
   - `Reports/experiments/datasets/final_result_5_preprocess_think_no_dense_chunks/`（无密集块检索）
