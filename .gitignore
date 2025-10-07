@@ -66,3 +66,14 @@ Reports/experiments/advanced_evaluation_results/triviaqa/advanced_sample_results
 Reports/experiments/advanced_evaluation_results/hotpotqa/advanced_sample_results.json
 Reports/experiments/advanced_evaluation_results/ms_marco/advanced_sample_results.json
 Reports/experiments/advanced_evaluation_results/natural_questions/advanced_sample_results.json
+Reports/docs/pics/best_worst_system_comparison.png
+Reports/docs/pics/dataset_specific_analysis.png
+Reports/docs/pics/experiment_design_overview.png
+Reports/docs/pics/rag_system_architecture.png
+Reports/docs/pics/real_ablation_study_comparison.png
+Reports/docs/pics/real_component_contribution.png
+Reports/docs/pics/real_comprehensive_dashboard.png
+Reports/docs/pics/real_data_visualization_report.md
+Reports/docs/pics/real_performance_heatmap.png
+Reports/docs/pics/system_ranking_analysis.png
+Reports/docs/pics/version_comparison_dashboard.png
