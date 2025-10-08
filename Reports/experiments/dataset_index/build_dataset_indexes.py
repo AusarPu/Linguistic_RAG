@@ -121,8 +121,8 @@ def build_single_dataset_index(dataset_name: str, test_mode: bool = False, test_
             question_texts_list_filename="all_question_texts.json",
             # 批处理大小
             batch_size_embed=128,
-            batch_size_phrases=2048,
-            batch_size_questions=1024
+            batch_size_phrases=256,
+            batch_size_questions=256
         )
         
         logger.info(f"========== {dataset_name} 数据集索引构建完成 ==========")

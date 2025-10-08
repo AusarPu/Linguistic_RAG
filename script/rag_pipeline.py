@@ -7,7 +7,7 @@ import json
 from typing import List, Dict, Any,AsyncGenerator, Optional
 # --- 从项目中导入 ---
 from .knowledge_base import KnowledgeBase
-from .query_rewriter import generate_rewritten_query, generate_rewritten_query_async
+from .query_rewriter import  generate_rewritten_query_async
 from .useful_judger import judge_knowledge_usefulness
 from .vllm_clients import call_generator_vllm_stream
 
@@ -17,7 +17,9 @@ from .config_rag import (
     DENSE_CHUNK_RETRIEVAL_TOP_K, DENSE_QUESTION_RETRIEVAL_TOP_K, SPARSE_KEYWORD_RETRIEVAL_TOP_K,
     DENSE_CHUNK_THRESHOLD, DENSE_QUESTION_THRESHOLD, SPARSE_KEYWORD_THRESHOLD, GENERATOR_SYSTEM_PROMPT_FILE,
     # 软保留策略参数
-    SOFT_KEEP_MIN_CHUNKS, SOFT_KEEP_RATIO
+    SOFT_KEEP_MIN_CHUNKS, SOFT_KEEP_RATIO,
+    # 有用性判断并发上限
+    USEFULNESS_MAX_CONCURRENT_REQUESTS
 )
 
 logger = logging.getLogger(__name__)
@@ -165,26 +167,28 @@ async def execute_rag_flow(
         yield _build_status_event("usefulness_judging", "步骤3: 正在判断知识块的相关性...")
         usefulness_start_time = time.time()
 
-        # 创建判断任务列表 - 使用异步版本
-        judge_tasks = []
-        for chunk in candidate_chunks_for_reranker:
-            task = asyncio.create_task(
-                judge_knowledge_usefulness(
-                    questions=[_QUESTION]+_BROADENED_QUESTION,
-                    knowledge_content=chunk.get("text", "")
-                )
-            )
-            judge_tasks.append((chunk, task))
+        # 创建判断任务列表 - 使用受限并发的异步版本
+        semaphore = asyncio.Semaphore(USEFULNESS_MAX_CONCURRENT_REQUESTS)
 
-        # 等待所有判断任务完成
+        async def _judge_chunk_usefulness(chunk_obj):
+            """包装器以限制并发"""
+            async with semaphore:
+                return await judge_knowledge_usefulness(
+                    questions=[_QUESTION] + _BROADENED_QUESTION,
+                    knowledge_content=chunk_obj.get("text", "")
+                )
+
+        judge_tasks = [asyncio.create_task(_judge_chunk_usefulness(chunk)) for chunk in candidate_chunks_for_reranker]
+
+        # 并发收集结果
+        results = await asyncio.gather(*judge_tasks, return_exceptions=True)
         useful_chunks = []
-        for chunk, task in judge_tasks:
-            try:
-                result = await task
-                if result == "useful":
-                    useful_chunks.append(chunk)
-            except Exception as e:
-                logger.error(f"[{flow_request_id}] 判断知识块有用性时发生错误: {str(e)}")
+        for chunk, result in zip(candidate_chunks_for_reranker, results):
+            if isinstance(result, Exception):
+                logger.error(f"[{flow_request_id}] 判断知识块有用性时发生错误: {str(result)}")
+                continue
+            if result == "useful":
+                useful_chunks.append(chunk)
 
         usefulness_duration = time.time() - usefulness_start_time
         logger.info(

@@ -155,8 +155,9 @@ async def call_generator_vllm_stream(
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
     request_id = f"gen-{time.time_ns() // 1000000}"  # 简单的毫秒级请求ID
 
+    start_request_time = time.time()
     try:
-        timeout_config = aiohttp.ClientTimeout(total=request_timeout, connect=10.0)  # connect timeout可以短一些
+        timeout_config = aiohttp.ClientTimeout(total=request_timeout, connect=10.0, sock_read=request_timeout)  # connect 10s, sock_read aligned
         async with aiohttp.ClientSession(timeout=timeout_config) as session:
             # 构建日志信息
             if messages:
@@ -227,7 +228,8 @@ async def call_generator_vllm_stream(
                             exc_info=False)
 
     except asyncio.TimeoutError:
-        logger.error(f"[{request_id}] [VLLM_GENERATOR_CLIENT] API请求超时 (>{request_timeout}s)。")
+        elapsed = time.time() - start_request_time
+        logger.error(f"[{request_id}] [VLLM_GENERATOR_CLIENT] API请求超时 (已耗时 {elapsed:.1f}s, >{request_timeout}s 设定)。")
         yield {"type": "error", "message": "LLM Generator 请求超时。"}
     except aiohttp.ClientConnectorError as e:  # 例如无法连接
         logger.error(f"[{request_id}] [VLLM_GENERATOR_CLIENT] 连接错误到 {api_url}: {e}")

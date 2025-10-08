@@ -5,7 +5,7 @@ import os
 import sys
 
 # --- 日志配置 (保持不变) ---
-LOG_LEVEL = logging.WARNING
+LOG_LEVEL = logging.INFO
 LOG_FORMAT = '%(asctime)s.%(msecs)03d - %(levelname)s - %(name)s - %(message)s'
 LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 # --------------------------
@@ -131,6 +131,7 @@ OPTIMIZATION_BATCH_SIZE = 1000                # 分批处理大小
 # --- 并发控制配置 ---
 MAX_CONCURRENT_REQUESTS = 1000                # 最大文本块并发请求
 METADATA_MAX_CONCURRENT_REQUESTS = 1000       # 元数据生成的最大并发请求数
+USEFULNESS_MAX_CONCURRENT_REQUESTS = 200      # 有用性判断最大并发请求数
 
 # --- 有用性判断软保留策略 ---
 # 在多跳或不确定场景，避免过度过滤导致证据链断裂
