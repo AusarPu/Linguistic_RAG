@@ -8,7 +8,7 @@ from typing import List, Dict, Any,AsyncGenerator, Optional
 # --- 从项目中导入 ---
 from .knowledge_base import KnowledgeBase
 from .query_rewriter import generate_rewritten_query, generate_rewritten_query_async
-from .useful_judger import judge_knowledge_usefulness, judge_knowledge_usefulness_async
+from .useful_judger import judge_knowledge_usefulness
 from .vllm_clients import call_generator_vllm_stream
 
 
@@ -169,7 +169,7 @@ async def execute_rag_flow(
         judge_tasks = []
         for chunk in candidate_chunks_for_reranker:
             task = asyncio.create_task(
-                judge_knowledge_usefulness_async(
+                judge_knowledge_usefulness(
                     questions=[_QUESTION]+_BROADENED_QUESTION,
                     knowledge_content=chunk.get("text", "")
                 )

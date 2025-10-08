@@ -1,15 +1,21 @@
 import logging
 import time
 import asyncio
-from openai import OpenAI
-from .config_rag import USEFUL_JUDGER_INSTRUCTION_FILE
+import aiohttp
+from openai import OpenAI  # 仅用于一次性获取模型 ID
+from .config_rag import (
+    USEFUL_JUDGER_INSTRUCTION_FILE,
+    USEFULNESS_GENERATION_CONFIG,
+    VLLM_REQUEST_TIMEOUT,
+)
+from preprocess.llm_chunk_processor import extract_content_from_vllm_response
 import json
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-
+# ---------------- 全局加载指令模板 ----------------
 with open(USEFUL_JUDGER_INSTRUCTION_FILE, "r", encoding="utf-8") as f:
-    # 将模板内容存储在一个全局（模块级）变量中
     _USR_INPUT_FORMAT = """
     [当前问题]
     {questions}
@@ -18,96 +24,89 @@ with open(USEFUL_JUDGER_INSTRUCTION_FILE, "r", encoding="utf-8") as f:
     """
     _SYS_PROMPT = f.read()
 
+# ---------------- vLLM 相关常量 ----------------
+_VLLM_BASE_URL = "http://localhost:8001/v1"
 
-def get_client_and_model():
-    client = OpenAI(base_url="http://localhost:8001/v1", api_key="-")
-    model_id = client.models.list().data[0].id
-    return client, model_id
+# 一次性获取模型 ID，避免每次请求都列模型
+try:
+    _MODEL_ID = OpenAI(base_url=_VLLM_BASE_URL, api_key="-").models.list().data[0].id
+except Exception as e:
+    logger.warning(f"获取模型 ID 失败，将使用默认值 'unknown': {e}")
+    _MODEL_ID = "unknown"
 
 
-async def judge_knowledge_usefulness_async(
+async def judge_knowledge_usefulness(
     knowledge_content: str,
-    questions: list[str]
-    ) -> str:
-    """
-    异步版本：判断知识库内容对于给定问题是否有用
+    questions: list[str],
+) -> str:
+    """异步版本：判断知识库内容对于给定问题是否有用。
 
     Args:
         knowledge_content: 知识库内容字符串
         questions: 问题列表
 
     Returns:
-        str: 返回useful或useless
+        str: "useful" 或 "useless"
     """
-    func_start_time = time.time() # 函数计时
+    func_start_time = time.time()
     logger.info(f"[{func_start_time:.3f}] 开始判断知识库内容是否有用")
 
-    # 1. 格式化用户输入并加上指示
+    # 1. 构造用户输入
     formatted_user_input = _USR_INPUT_FORMAT.format(
         knowledge_content=knowledge_content,
-        questions=questions
+        questions=questions,
     )
 
-    # 2. 异步发送给vLLM格式化后的消息
-    def _sync_call():
-        client, model_id = get_client_and_model()
-        completion = client.chat.completions.create(
-        model=model_id,
-        messages=[
+    # 2. 组装请求数据（直接走 HTTP 调用）
+    request_body = {
+        "model": _MODEL_ID,
+        "messages": [
             {"role": "system", "content": _SYS_PROMPT},
             {"role": "user", "content": formatted_user_input},
         ],
-        extra_body={"guided_choice": ["useful", "useless"]},
-        )
-        return completion
+        "guided_choice": ["useful", "useless"],
+        **USEFULNESS_GENERATION_CONFIG,
+    }
 
-    # 使用asyncio.to_thread来异步执行同步调用
-    completion = await asyncio.to_thread(_sync_call)
+    # 3. 发送请求
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT)
+    ) as session:
+        async with session.post(f"{_VLLM_BASE_URL}/chat/completions", json=request_body) as resp:
+            if resp.status != 200:
+                err_text = await resp.text()
+                raise RuntimeError(f"vLLM useful_judge API HTTP {resp.status}: {err_text[:200]}")
+            resp_json = await resp.json()
 
-    logger.info(f"[{time.time():.3f}] 判断完成 (总耗时: {time.time() - func_start_time:.3f}s)。")
+    # 4. 解析响应并提取有用性结果
+    if "choices" not in resp_json or not resp_json["choices"]:
+        raise ValueError("API响应缺少 choices 字段或为空")
 
-    response_content = completion.choices[0].message.content.strip()
-    return response_content
+    message_dict = resp_json["choices"][0]["message"]
 
-
-def judge_knowledge_usefulness(
-    knowledge_content: str,
-    questions: list[str]
-    ) -> str:
-    """
-    判断知识库内容对于给定问题是否有用
-
-    Args:
-        knowledge_content: 知识库内容字符串
-        questions: 问题列表
-
-    Returns:
-        str: 返回useful或useless
-    """
-    func_start_time = time.time() # 函数计时
-    logger.info(f"[{func_start_time:.3f}] 开始判断知识库内容是否有用")
-
-    # 1. 格式化用户输入并加上指示
-    formatted_user_input = _USR_INPUT_FORMAT.format(
-        knowledge_content=knowledge_content,
-        questions=questions
+    response_content = extract_content_from_vllm_response(
+        message_dict,
+        USEFULNESS_GENERATION_CONFIG,
     )
 
-    # 2. 发送给vLLM格式化后的消息
-    client, model_id = get_client_and_model()
-    completion = client.chat.completions.create(
-    model=model_id,
-    messages=[
-        {"role": "system", "content": _SYS_PROMPT},
-        {"role": "user", "content": formatted_user_input},
-    ],
-    extra_body={"guided_choice": ["useful", "useless"]},
+    # --- 使用 Pydantic 解析结构化输出 ---
+    class _UsefulnessOutput(BaseModel):
+        usefulness: str
+
+    usefulness_val = response_content.strip()
+    try:
+        usefulness_val = _UsefulnessOutput.model_validate_json(usefulness_val).usefulness
+    except Exception:
+        # 如果解析失败，则直接使用原始字符串
+        pass
+
+    usefulness_val = usefulness_val.lower()
+
+    logger.info(
+        f"[{time.time():.3f}] 判断完成 (总耗时: {time.time() - func_start_time:.3f}s)。 输出: {usefulness_val}"
     )
+    return usefulness_val
 
-    logger.info(f"[{time.time():.3f}] 判断完成 (总耗时: {time.time() - func_start_time:.3f}s)。")
-
-    response_content = completion.choices[0].message.content.strip()
-    return response_content
 
 
 if __name__ == "__main__":

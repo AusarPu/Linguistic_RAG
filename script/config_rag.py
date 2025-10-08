@@ -108,6 +108,14 @@ REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "repetition_penalty": 1.1,
     "stop": None,
 }
+USEFULNESS_GENERATION_CONFIG = { # 用于有用性判断 vLLM API
+    "max_tokens": 4096,
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "repetition_penalty": 1.1,
+    "stop": None,
+    "chat_template_kwargs": {"enable_thinking": True}
+}
 
 # -----------------
 
