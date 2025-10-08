@@ -37,7 +37,7 @@ class EmbeddingAPIClient:
             return query
         return f'Instruct: {task_description}\nQuery:{query}'
     
-    def encode(self, texts: Union[str, List[str]], instruct: str = "") -> Dict[str, Any]:
+    async def async_encode(self, texts: Union[str, List[str]], instruct: str = "") -> Dict[str, Any]:
         """
         编码文本为向量，兼容原BGE-M3的接口
         
@@ -96,7 +96,6 @@ class EmbeddingAPIClient:
         return {
             "dense_vecs": dense_vecs
         }
-    
 
 
 

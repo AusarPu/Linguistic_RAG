@@ -86,24 +86,27 @@ async def execute_rag_flow(
     retrieval_paths_display_names = []
     
     if use_dense_chunks:
-        tasks.append(asyncio.to_thread(kb_instance.search_dense_chunks, 
-                                     [_QUESTION] + _BROADENED_QUESTION,
-                                     DENSE_CHUNK_RETRIEVAL_TOP_K, 
-                                     DENSE_CHUNK_THRESHOLD))
+        tasks.append(kb_instance.search_dense_chunks(
+            [_QUESTION] + _BROADENED_QUESTION,
+            DENSE_CHUNK_RETRIEVAL_TOP_K,
+            DENSE_CHUNK_THRESHOLD
+        ))
         retrieval_paths_display_names.append("文本召回")
     
     if use_dense_keywords:
-        tasks.append(asyncio.to_thread(kb_instance.search_dense_keywords,
-                                     _KEYWORD + _BROADENED_QUESTION,
-                                     SPARSE_KEYWORD_RETRIEVAL_TOP_K,
-                                     SPARSE_KEYWORD_THRESHOLD))
+        tasks.append(kb_instance.search_dense_keywords(
+            _KEYWORD + _BROADENED_QUESTION,
+            SPARSE_KEYWORD_RETRIEVAL_TOP_K,
+            SPARSE_KEYWORD_THRESHOLD
+        ))
         retrieval_paths_display_names.append("关键词召回")
     
     if use_dense_questions:
-        tasks.append(asyncio.to_thread(kb_instance.search_dense_questions,
-                                     [_QUESTION] + _BROADENED_QUESTION,
-                                     DENSE_QUESTION_RETRIEVAL_TOP_K,
-                                     DENSE_QUESTION_THRESHOLD))
+        tasks.append(kb_instance.search_dense_questions(
+            [_QUESTION] + _BROADENED_QUESTION,
+            DENSE_QUESTION_RETRIEVAL_TOP_K,
+            DENSE_QUESTION_THRESHOLD
+        ))
         retrieval_paths_display_names.append("问题召回")
     
     # 如果所有检索路径都被禁用，返回错误

@@ -168,7 +168,7 @@ class KnowledgeBase:
         logger.info("All search indexes and necessary data loaded successfully.")
 
     # --- 检索方法 ---
-    def search_dense_chunks(self, query_text: Union[str, List[str]], top_k: int = DENSE_CHUNK_RETRIEVAL_TOP_K,
+    async def search_dense_chunks(self, query_text: Union[str, List[str]], top_k: int = DENSE_CHUNK_RETRIEVAL_TOP_K,
                             threshold: float = DENSE_CHUNK_THRESHOLD) -> List[Dict[str, Any]]:
         """
         使用Faiss基于块文本的稠密向量进行检索。
@@ -188,7 +188,7 @@ class KnowledgeBase:
         all_results = {}  # chunk_id -> chunk_meta 的映射，用于去重
         
         for query in queries:
-            query_output = self.embedding_model.encode(
+            query_output = await self.embedding_model.async_encode(
                 instruct="Given a question, retrieve relevant text passages that contain information to answer the question.",
                 texts=query
             )
@@ -235,7 +235,7 @@ class KnowledgeBase:
         
         return final_results
 
-    def search_dense_questions(self, query_text: Union[str, List[str]], top_k: int = DENSE_QUESTION_RETRIEVAL_TOP_K,
+    async def search_dense_questions(self, query_text: Union[str, List[str]], top_k: int = DENSE_QUESTION_RETRIEVAL_TOP_K,
                                threshold: float = DENSE_QUESTION_THRESHOLD) -> List[Dict[str, Any]]:
         """
         使用Faiss基于预生成问题的稠密向量进行检索。
@@ -255,7 +255,7 @@ class KnowledgeBase:
         chunk_id_to_best_q_match_info: Dict[str, Dict[str, Any]] = {}
         
         for query in queries:
-            query_output = self.embedding_model.encode(
+            query_output = await self.embedding_model.async_encode(
                 instruct="Given a question, retrieve similar or related questions that address the same topic or domain.",
                 texts=query
             )
@@ -309,7 +309,7 @@ class KnowledgeBase:
             f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold})")
         return final_results
 
-    def search_dense_keywords(self, query_text: Union[str, List[str]], top_k: int = SPARSE_KEYWORD_RETRIEVAL_TOP_K,
+    async def search_dense_keywords(self, query_text: Union[str, List[str]], top_k: int = SPARSE_KEYWORD_RETRIEVAL_TOP_K,
                      threshold: Optional[float] = None) -> List[Dict[str, Any]]:
         """
         使用RRF（Reciprocal Rank Fusion）融合BM25和语义搜索的方式进行关键词检索。
@@ -351,7 +351,7 @@ class KnowledgeBase:
             
             # 2. 语义检索 - 使用稠密向量检索
             embedding_chunk_rankings = {}
-            query_output = self.embedding_model.encode(
+            query_output = await self.embedding_model.async_encode(
                 instruct="Given a keyword, retrieve similar keywords",
                 texts=query
             )
