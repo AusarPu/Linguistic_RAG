@@ -62,18 +62,11 @@ def convert_2wikimultihop_dataset(input_file, output_file, max_samples=None, fil
     if filter_no_answer:
         print("过滤模式: 丢弃没有答案的数据")
     
-    # 2WikiMultiHop 使用 JSON 格式（数组）
-    with open(input_file, 'r', encoding='utf-8') as f:
-        all_samples = json.load(f)
+    # 使用流式处理，从头开始逐行读取
+    from streaming_processor import process_data_streaming
     
-    print(f"总共读取 {len(all_samples)} 个样本")
-    
-    # 导入补充数据函数
-    from convert_all import supplement_data_to_target
-    
-    # 使用新的补充逻辑
-    converted_samples, stats = supplement_data_to_target(
-        all_samples, 
+    converted_samples, stats = process_data_streaming(
+        input_file, 
         convert_2wikimultihop_sample, 
         max_samples, 
         filter_no_answer
@@ -84,9 +77,8 @@ def convert_2wikimultihop_dataset(input_file, output_file, max_samples=None, fil
     print(f"成功转换 {stats['converted_count']} 个样本")
     if filter_no_answer:
         print(f"过滤掉 {stats['filtered_count']} 个没有答案的样本")
-    if stats.get('supplemented') and stats['converted_count'] < stats.get('target_count', 0):
-        shortage = stats['target_count'] - stats['converted_count']
-        print(f"注意: 数据不足，缺少 {shortage} 个样本")
+    if stats.get('shortage'):
+        print(f"注意: 数据不足，缺少 {stats['shortage']} 个样本")
     
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(converted_samples, f, ensure_ascii=False, indent=2)

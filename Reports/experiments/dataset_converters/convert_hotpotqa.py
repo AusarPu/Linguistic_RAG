@@ -61,22 +61,11 @@ def convert_hotpotqa_dataset(input_file, output_file, max_samples=None, filter_n
     if filter_no_answer:
         print("过滤模式: 丢弃没有答案的数据")
     
-    # HotpotQA 使用 JSONL 格式（每行一个 JSON 对象）
-    all_samples = []
-    with open(input_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                all_samples.append(json.loads(line))
+    # 使用流式处理，从头开始逐行读取
+    from streaming_processor import process_data_streaming
     
-    print(f"总共读取 {len(all_samples)} 个样本")
-    
-    # 导入补充数据函数
-    from convert_all import supplement_data_to_target
-    
-    # 使用新的补充逻辑
-    converted_samples, stats = supplement_data_to_target(
-        all_samples, 
+    converted_samples, stats = process_data_streaming(
+        input_file, 
         convert_hotpotqa_sample, 
         max_samples, 
         filter_no_answer
@@ -87,9 +76,8 @@ def convert_hotpotqa_dataset(input_file, output_file, max_samples=None, filter_n
     print(f"成功转换 {stats['converted_count']} 个样本")
     if filter_no_answer:
         print(f"过滤掉 {stats['filtered_count']} 个没有答案的样本")
-    if stats.get('supplemented') and stats['converted_count'] < stats.get('target_count', 0):
-        shortage = stats['target_count'] - stats['converted_count']
-        print(f"注意: 数据不足，缺少 {shortage} 个样本")
+    if stats.get('shortage'):
+        print(f"注意: 数据不足，缺少 {stats['shortage']} 个样本")
     
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(converted_samples, f, ensure_ascii=False, indent=2)
@@ -120,6 +108,8 @@ def main():
     output_dir = Path(get_output_dir())
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # 转换训练集
+    input_file = input_dir / "train.json"
     # 转换验证集
     input_file = input_dir / "validation.json"
     
@@ -136,7 +126,7 @@ def main():
     else:
         print(f"警告: 输入文件不存在: {input_file}")
     
-    print("HotpotQA验证集转换完成！")
+    print("HotpotQA训练集转换完成！")
 
 if __name__ == "__main__":
     main()

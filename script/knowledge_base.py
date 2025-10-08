@@ -21,6 +21,7 @@ from .config_rag import (
     FAISS_INDEX_QUESTIONS_SAVE_PATH,
     QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH,
     ALL_QUESTION_TEXTS_SAVE_PATH,  # 用于加载问题文本的路径
+    CHUNK_BM25_INDEX_SAVE_PATH,
 
     DENSE_CHUNK_RETRIEVAL_TOP_K,
     DENSE_QUESTION_RETRIEVAL_TOP_K,
@@ -59,7 +60,7 @@ class KnowledgeBase:
         self.indexed_chunks_metadata: List[Dict[str, Any]] = []
         self.chunk_id_to_metadata_map: Dict[str, Dict[str, Any]] = {}
 
-        self.phrase_to_sparse_weights_map: Dict[str, Dict[int, float]] = {}
+        # self.phrase_to_sparse_weights_map: Dict[str, Dict[int, float]] = {}
         self.phrase_to_dense_embeddings_map: Dict[str, np.ndarray] = {}
         
         # BM25索引
@@ -116,32 +117,19 @@ class KnowledgeBase:
         }
         logger.info(f"Built chunk_id_to_metadata_map with {len(self.chunk_id_to_metadata_map)} entries.")
 
-        # 2. 加载关键词短语稀疏权重映射（如果存在）
-        if Path(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH).exists():
-            logger.info(f"Loading phrase sparse weights map from '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}'...")
-            with open(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH, "rb") as f:
-                self.phrase_to_sparse_weights_map = pickle.load(f)
-            logger.info(f"Loaded sparse weights for {len(self.phrase_to_sparse_weights_map)} unique phrases.")
-        else:
-            logger.warning(f"Phrase sparse weights map not found at '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}', skipping...")
-            self.phrase_to_sparse_weights_map = {}
+        # # 2. 加载关键词短语稀疏权重映射（如果存在）
+        # if Path(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH).exists():
+        #     logger.info(f"Loading phrase sparse weights map from '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}'...")
+        #     with open(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH, "rb") as f:
+        #         self.phrase_to_sparse_weights_map = pickle.load(f)
+        #     logger.info(f"Loaded sparse weights for {len(self.phrase_to_sparse_weights_map)} unique phrases.")
+        # else:
+        #     logger.warning(f"Phrase sparse weights map not found at '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}', skipping...")
+        #     self.phrase_to_sparse_weights_map = {}
 
-        # 2.5. 加载关键词短语稠密向量映射
-        logger.info(f"Loading phrase dense embeddings map from '{PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH}'...")
-        with open(PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH, "rb") as f:
-            self.phrase_to_dense_embeddings_map = pickle.load(f)
-        logger.info(f"Loaded dense embeddings for {len(self.phrase_to_dense_embeddings_map)} unique phrases.")
-
-        # 2. 加载BM25索引
-        logger.info(f"Loading BM25 index from '{BM25_INDEX_SAVE_PATH}'...")
-        with open(BM25_INDEX_SAVE_PATH, "rb") as f:
-            bm25_data = pickle.load(f)
-            self.bm25_index = bm25_data["bm25_model"]
-            self.bm25_phrase_list = bm25_data["phrase_list"]
-        logger.info(f"Loaded BM25 index with {len(self.bm25_phrase_list)} phrases.")
         
         # 2.1. 加载文本块BM25索引
-        chunk_bm25_path = "/home/pushihao/RAG/processed_knowledge_base/chunk_bm25_index.pkl"
+        chunk_bm25_path = CHUNK_BM25_INDEX_SAVE_PATH
         logger.info(f"Loading chunk BM25 index from '{chunk_bm25_path}'...")
         with open(chunk_bm25_path, "rb") as f:
             chunk_bm25_data = pickle.load(f)
@@ -364,7 +352,7 @@ class KnowledgeBase:
             # 2. 语义检索 - 使用稠密向量检索
             embedding_chunk_rankings = {}
             query_output = self.embedding_model.encode(
-                instruct="Given a question, retrieve relevant text passages that contain information to answer the question.",
+                instruct="Given a keyword, retrieve similar keywords",
                 texts=query
             )
             query_vector = query_output.get("dense_vecs")

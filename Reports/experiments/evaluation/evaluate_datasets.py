@@ -113,8 +113,11 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
                 break
                 
     except Exception as e:
-        logger.error(f"处理问题 {question_id} 时出错: {str(e)}")
-        system_answer = f"处理错误: {str(e)}"
+        # 使用 logger.exception 记录完整的堆栈信息，便于调试空错误消息问题
+        logger.exception(f"处理问题 {question_id} 时出错", exc_info=True)
+        import traceback
+        tb_text = traceback.format_exc()
+        system_answer = f"处理错误: {str(e) or type(e).__name__}. Traceback: {tb_text}"
         pipeline_end_reason = "error"
     
     # 如果system_answer为空，根据pipeline_end_reason提供默认回答

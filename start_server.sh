@@ -50,6 +50,7 @@ REWRITER_GPU_ID=$(read_config VLLM_REWRITER_GPU_ID)
 REWRITER_GPU_MEM_UTILIZATION=$(read_config VLLM_REWRITER_MEM_UTILIZATION)
 REWRITER_MAX_LORA_RANK=$(read_config VLLM_MAX_LORA_RANK)
 REWRITER_TENSOR_PARALLEL_SIZE=$(read_config VLLM_REWRITER_TENSOR_PARALLEL_SIZE)
+EMBEDDING_TENSOR_PARALLEL_SIZE=$(read_config VLLM_EMBEDDING_TENSOR_PARALLEL_SIZE)
 if [ -z "$REWRITER_TENSOR_PARALLEL_SIZE" ]; then REWRITER_TENSOR_PARALLEL_SIZE=2; fi # 默认值
 
 
@@ -133,9 +134,9 @@ else
         --disable-log-requests
         --max-model-len 40960
         --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
-        --max_num_seqs 2048
+        --max_num_seqs 1024
         --quantization fp8
-        --enable-reasoning --reasoning-parser deepseek_r1
+        --reasoning-parser deepseek_r1
         # --rope-scaling '{"rope_type": "yarn", "factor": 2.0, "original_max_position_embeddings": 32768}' \
     )
 
@@ -147,8 +148,8 @@ else
     # 使用 nohup 和正确的变量展开来启动服务
     (export CUDA_VISIBLE_DEVICES=${REWRITER_GPU_ID}; nohup "${REWRITER_CMD_ARRAY[@]}" > "$REWRITER_LOG" 2>&1 & echo $! > "$REWRITER_PID_FILE")
     echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_LOG"
-    echo "    等待 Rewriter 服务启动 (约30-60秒)..."
-    sleep 5
+    echo "    等待 Rewriter 服务启动 ..."
+    sleep 60
     
     # 启动日志过滤器
     echo ">>> 启动 vLLM 日志过滤器..."
@@ -174,6 +175,7 @@ else
     echo "    端口: $EMBEDDING_PORT"
     echo "    分配 GPU: ${EMBEDDING_GPU_ID:-默认所有可见GPU}"
     echo "    显存限制: ${EMBEDDING_MEM_UTILIZATION:-默认}"
+    echo "    张量并行数: ${EMBEDDING_TENSOR_PARALLEL_SIZE}"
 
     # 使用 bash 数组来安全地构建命令
     EMBEDDING_CMD_ARRAY=(
@@ -181,8 +183,10 @@ else
         --port "$EMBEDDING_PORT"
         --trust-remote-code
         --disable-log-requests
-        --max-model-len 8192
-        --max_num_seqs 1024
+        --max-model-len 2048
+        --max_num_seqs 128
+        --quantization fp8
+        --tensor-parallel-size "$EMBEDDING_TENSOR_PARALLEL_SIZE"
     )
 
     # 有条件地添加内存参数
@@ -193,8 +197,8 @@ else
     # 使用 nohup 和正确的变量展开来启动服务
     (export CUDA_VISIBLE_DEVICES=${EMBEDDING_GPU_ID}; nohup "${EMBEDDING_CMD_ARRAY[@]}" > "$EMBEDDING_LOG" 2>&1 & echo $! > "$EMBEDDING_PID_FILE")
     echo "    Embedding 服务 PID: $(cat "$EMBEDDING_PID_FILE")，日志: $EMBEDDING_LOG"
-    echo "    等待 Embedding 服务启动 (约30-60秒)..."
-    sleep 5
+    echo "    等待 Embedding 服务启动 ..."
+    sleep 2
 fi
 
 echo ">>> vLLM 服务启动完成。"

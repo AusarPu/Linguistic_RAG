@@ -122,28 +122,11 @@ def convert_natural_questions_dataset(input_file, output_file, max_samples=None,
     if filter_no_answer:
         print("过滤模式: 丢弃没有答案的数据")
     
-    # 首先读取所有样本
-    all_samples = []
-    with open(input_file, 'r', encoding='utf-8') as f:
-        for line_num, line in enumerate(f, 1):
-            try:
-                sample = json.loads(line.strip())
-                all_samples.append(sample)
-            except json.JSONDecodeError as e:
-                print(f"警告: 第{line_num}行JSON解析失败: {e}")
-                continue
-            except Exception as e:
-                print(f"警告: 第{line_num}行处理失败: {e}")
-                continue
+    # 使用流式处理，从头开始逐行读取
+    from streaming_processor import process_data_streaming
     
-    print(f"总共读取 {len(all_samples)} 个样本")
-    
-    # 导入补充数据函数
-    from convert_all import supplement_data_to_target
-    
-    # 使用新的补充逻辑
-    converted_samples, stats = supplement_data_to_target(
-        all_samples, 
+    converted_samples, stats = process_data_streaming(
+        input_file, 
         convert_natural_questions_sample, 
         max_samples, 
         filter_no_answer
@@ -154,9 +137,8 @@ def convert_natural_questions_dataset(input_file, output_file, max_samples=None,
     print(f"成功转换 {stats['converted_count']} 个样本")
     if filter_no_answer:
         print(f"过滤掉 {stats['filtered_count']} 个没有答案的样本")
-    if stats.get('supplemented') and stats['converted_count'] < stats.get('target_count', 0):
-        shortage = stats['target_count'] - stats['converted_count']
-        print(f"注意: 数据不足，缺少 {shortage} 个样本")
+    if stats.get('shortage'):
+        print(f"注意: 数据不足，缺少 {stats['shortage']} 个样本")
     
     # 写入转换后的数据
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -189,6 +171,8 @@ def main():
     output_dir = Path(get_output_dir())
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # 转换训练集
+    # input_file = input_dir / "train.json"
     # 转换验证集
     input_file = input_dir / "validation.json"
     
@@ -205,7 +189,7 @@ def main():
     else:
         print(f"警告: 输入文件不存在: {input_file}")
     
-    print("Natural Questions验证集转换完成！")
+    print("Natural Questions训练集转换完成！")
 
 
 if __name__ == "__main__":

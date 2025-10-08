@@ -111,8 +111,8 @@ def build_all_search_indexes(
     question_to_chunk_id_map_filename: str,
     question_texts_list_filename: str,
     batch_size_embed: int = 128,
-    batch_size_phrases: int = 2048,
-    batch_size_questions: int = 1024 # 为问题编码新增批大小
+    batch_size_phrases: int = 256,
+    batch_size_questions: int = 256
 ):
     """
     构建核心的搜索索引：

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # vLLM API配置
 VLLM_API_URL = "http://localhost:8001/v1/chat/completions"
-EVALUATION_MODEL = "./models/Qwen/Qwen3-30B-A3B-FP8"
+EVALUATION_MODEL = config.VLLM_BASE_MODEL_LOCAL_PATH
 
 # 答案评估提示词模板
 ANSWER_EVALUATION_PROMPT = """你是一个专业的问答评估专家。请评估系统回答是否正确回答了用户问题。
