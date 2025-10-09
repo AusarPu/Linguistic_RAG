@@ -190,6 +190,9 @@ async def call_generator_vllm_stream(
                         chunk_data = json.loads(data_str)
                         delta = chunk_data.get("choices", [{}])[0].get("delta", {})
 
+                        # 添加详细的调试日志
+                        logger.debug(f"收到delta: {delta}")
+
                         emitted_in_this_delta = False
                         reasoning_text_fragment = delta.get("reasoning_content")
                         if reasoning_text_fragment is not None and isinstance(reasoning_text_fragment, str):
@@ -204,6 +207,9 @@ async def call_generator_vllm_stream(
                             # 只有当它实际有内容时，我们才认为 "emitted_in_this_delta" 为 True（用于调试日志）
                             if final_answer_text_fragment:
                                 emitted_in_this_delta = True
+                        elif "content" in delta:
+                            # content字段存在但为空，也记录一下
+                            logger.debug(f"收到空的content字段: {delta}")
 
                                 # 检查是否有其他意外的、或者需要处理的字段，例如 tool_calls
                         finish_reason = chunk_data.get("choices", [{}])[0].get("finish_reason")
