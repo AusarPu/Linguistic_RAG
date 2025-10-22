@@ -78,6 +78,7 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
     reasoning_text = ""
     rewritten_query = {}
     pipeline_end_reason = ""
+    events = []  # 新增：收集所有事件
     
     try:
         # 执行RAG流程
@@ -107,11 +108,19 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
             elif event.get("type") == "reasoning_delta":
                 reasoning_text += event.get("text", "")
             
+            # 使用最终整合答案事件，避免仅依赖流式片段
+            elif event.get("type") == "final_answer_complete":
+                final_text = event.get("full_text", "")
+                if final_text:
+                    system_answer = final_text
+            
             # 流程结束
             elif event.get("type") == "pipeline_end":
                 pipeline_end_reason = event.get("reason", "completed")
+                # 如果系统回答为空，则将reason部分写入系统回答
+                if not system_answer.strip():
+                    system_answer = reasoning_text
                 break
-                
     except Exception as e:
         # 使用 logger.exception 记录完整的堆栈信息，便于调试空错误消息问题
         logger.exception(f"处理问题 {question_id} 时出错", exc_info=True)
