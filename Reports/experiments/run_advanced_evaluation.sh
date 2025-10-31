@@ -143,7 +143,9 @@ run_evaluation() {
     local output_file="$OUTPUT_DIR/$dataset_name/advanced_${eval_type}_results.json"
     
     # 构建命令
-    local cmd="python3 \"$ADVANCED_EVAL_SCRIPT\" \"$input_file\" \"$output_file\""
+    local csv_output_file="$OUTPUT_DIR/$dataset_name/ragas_${eval_type}_metrics.csv"
+    local summary_csv="$OUTPUT_DIR/ragas_summary.csv"
+    local cmd="python3 \"$ADVANCED_EVAL_SCRIPT\" \"$input_file\" \"$output_file\" --csv-output-file \"$csv_output_file\" --summary-csv \"$summary_csv\""
     
     # 添加限制参数
     if [ -n "$limit" ] && [ "$limit" -gt 0 ]; then
@@ -263,6 +265,12 @@ main() {
     
     # 创建输出目录
     mkdir -p "$OUTPUT_DIR"
+    # 清理历史的汇总CSV，避免重复累计
+    local summary_csv="$OUTPUT_DIR/ragas_summary.csv"
+    if [ -f "$summary_csv" ]; then
+        print_warning "检测到历史汇总CSV，已清理: $summary_csv"
+        rm -f "$summary_csv"
+    fi
     
     # 运行评估
     local success_count=0

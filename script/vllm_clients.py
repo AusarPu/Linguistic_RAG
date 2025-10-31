@@ -39,14 +39,14 @@ class EmbeddingAPIClient:
     
     async def async_encode(self, texts: Union[str, List[str]], instruct: str = "") -> Dict[str, Any]:
         """
-        编码文本为向量，兼容原BGE-M3的接口
+        编码文本为向量
         
         Args:
             texts: 单个文本或文本列表
             instruct: 指令文本
             
         Returns:
-            包含dense_vecs的字典，格式兼容BGE-M3
+            包含dense_vecs的字典
         """
         # 确保输入是列表格式
         if isinstance(texts, str):
@@ -92,7 +92,7 @@ class EmbeddingAPIClient:
         if is_single:
             dense_vecs = dense_vecs[0]
         
-        # 返回兼容BGE-M3格式的结果
+        # 返回结果
         return {
             "dense_vecs": dense_vecs
         }

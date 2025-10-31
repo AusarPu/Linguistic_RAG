@@ -12,6 +12,20 @@ import aiohttp
 import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+import pandas as pd
+
+# Ragas & wrappers
+from ragas import evaluate as ragas_evaluate
+from ragas.metrics import (
+    faithfulness,
+    answer_relevancy,
+    context_precision,
+    context_recall,
+)
+from datasets import Dataset
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from ragas.llms import LangchainLLMWrapper
+from ragas.embeddings import LangchainEmbeddingsWrapper
 
 # 添加项目根目录到路径
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -54,6 +68,188 @@ ANSWER_EVALUATION_PROMPT = """你是一个专业的问答评估专家。请评�
 - 如果系统回答包含正确信息但表述方式不同，仍可判定为正确
 - confidence表示你对这个判断的信心程度（0.0-1.0）
 """
+
+# === Ragas 集成辅助逻辑 ===
+def _get_dataset_name_from_path(input_file: str) -> str:
+    """从输入文件路径中推断数据集名称"""
+    try:
+        p = Path(input_file)
+        # 期望结构: .../rag_evaluation_results/<dataset>/<file>.json
+        return p.parent.name
+    except Exception:
+        return "unknown"
+
+def _init_kb_for_dataset(dataset_name: str):
+    """为指定数据集初始化 KnowledgeBase（通过动态设置 config 路径）"""
+    # 动态指向该数据集的索引目录
+    index_dir = f"/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/{dataset_name}"
+    import importlib
+    from script import config_rag as config_module
+    config_module.FAISS_INDEX_CHUNKS_SAVE_PATH = os.path.join(index_dir, "faiss_index_chunks_ip.idx")
+    config_module.INDEXED_CHUNKS_METADATA_SAVE_PATH = os.path.join(index_dir, "indexed_chunks_metadata.json")
+    config_module.PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH = os.path.join(index_dir, "phrase_dense_embeddings_map.pkl")
+    config_module.BM25_INDEX_SAVE_PATH = os.path.join(index_dir, "phrase_bm25_index.pkl")
+    config_module.FAISS_INDEX_QUESTIONS_SAVE_PATH = os.path.join(index_dir, "faiss_index_questions_ip.idx")
+    config_module.QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH = os.path.join(index_dir, "question_index_to_chunk_id_map.json")
+    config_module.ALL_QUESTION_TEXTS_SAVE_PATH = os.path.join(index_dir, "all_question_texts.json")
+    config_module.CHUNK_BM25_INDEX_SAVE_PATH = os.path.join(index_dir, "chunk_bm25_index.pkl")
+
+    # 重新导入知识库以应用新的路径设置
+    import script.knowledge_base
+    importlib.reload(script.knowledge_base)
+    from script.knowledge_base import KnowledgeBase
+    return KnowledgeBase()
+
+def _prepare_ragas_dataset(results: List[Dict[str, Any]], kb) -> Dataset:
+    """将评估结果转换为 Ragas 数据集（问题、上下文、答案、参考答案）"""
+    questions: List[str] = []
+    contexts: List[List[str]] = []
+    answers: List[str] = []
+    ground_truths: List[str] = []
+
+    # 使用 chunk_id 映射到文本
+    chunk_map = getattr(kb, "chunk_id_to_metadata_map", {})
+
+    for item in results:
+        q = item.get("question", "")
+        a = item.get("system_answer", "")
+        gt = item.get("ground_truth_answer", "")
+        chunk_ids = item.get("retrieved_chunk_ids", []) or []
+
+        ctx_texts: List[str] = []
+        for cid in chunk_ids:
+            meta = chunk_map.get(cid)
+            if meta:
+                text_val = meta.get("text") or meta.get("text_chunk_content") or ""
+                if text_val:
+                    ctx_texts.append(text_val)
+
+        questions.append(q)
+        answers.append(a)
+        ground_truths.append(gt)
+        contexts.append(ctx_texts)
+
+    return Dataset.from_dict({
+        "question": questions,
+        "contexts": contexts,
+        "answer": answers,
+        "ground_truth": ground_truths,
+    })
+
+def _get_ragas_clients():
+    """初始化 Ragas 评估所需的 LLM 与 Embeddings 客户端"""
+    # 从项目配置读取 API 地址与模型名
+    from script.config_rag import (
+        GENERATOR_API_URL,
+        GENERATOR_MODEL_NAME_FOR_API,
+        EMBEDDING_API_URL,
+        EMBEDDING_MODEL_NAME_FOR_API,
+    )
+
+    generator_base_url = GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
+    embedding_base_url = EMBEDDING_API_URL.rsplit("/embeddings", 1)[0]
+
+    llm = ChatOpenAI(
+        base_url=generator_base_url,
+        api_key="-",
+        model=GENERATOR_MODEL_NAME_FOR_API,
+        temperature=0.2,
+    )
+    embeddings = OpenAIEmbeddings(
+        base_url=embedding_base_url,
+        api_key="-",
+        model=EMBEDDING_MODEL_NAME_FOR_API,
+    )
+
+    return LangchainLLMWrapper(llm), LangchainEmbeddingsWrapper(embeddings)
+
+def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
+                        summary_csv_path: Optional[str] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+    """运行 Ragas 评估并写出 CSV（以及可选的汇总 CSV）"""
+    try:
+        with open(input_file, "r", encoding="utf-8") as f:
+            results = json.load(f)
+    except Exception as e:
+        logger.error(f"读取输入文件失败以进行Ragas评估: {e}")
+        return None
+
+    if not isinstance(results, list):
+        logger.error("输入文件格式错误：应为JSON数组")
+        return None
+
+    if limit and limit > 0:
+        results = results[:limit]
+
+    dataset_name = _get_dataset_name_from_path(input_file)
+    try:
+        kb = _init_kb_for_dataset(dataset_name)
+    except Exception as e:
+        logger.error(f"初始化知识库失败（{dataset_name}）: {e}")
+        return None
+
+    # 构建 ragas 数据集
+    hf_dataset = _prepare_ragas_dataset(results, kb)
+
+    # 初始化评估客户端
+    evaluator_llm, evaluator_embeddings = _get_ragas_clients()
+
+    # 运行评估
+    ragas_result = ragas_evaluate(
+        dataset=hf_dataset,
+        metrics=[faithfulness, answer_relevancy, context_recall, context_precision],
+        llm=evaluator_llm,
+        embeddings=evaluator_embeddings,
+    )
+
+    df = ragas_result.to_pandas()
+
+    # 写 per-dataset CSV
+    try:
+        # 默认将输出文件名设置为同目录下的 ragas_metrics.csv
+        if not csv_output_file:
+            # 如果传入的是 JSON 输出路径，替换扩展名
+            csv_output_file = os.path.join(
+                os.path.dirname(input_file),
+                "ragas_metrics.csv",
+            )
+        os.makedirs(os.path.dirname(csv_output_file), exist_ok=True)
+        df.to_csv(csv_output_file, index=False)
+        logger.info(f"Ragas评估CSV已保存: {csv_output_file}")
+    except Exception as e:
+        logger.error(f"保存Ragas评估CSV失败: {e}")
+
+    # 追加/生成根汇总 CSV
+    if summary_csv_path:
+        try:
+            summary_cols = [
+                "answer_relevancy",
+                "faithfulness",
+                "context_precision",
+                "context_recall",
+            ]
+            means = {col: float(pd.to_numeric(df[col], errors="coerce").mean()) if col in df.columns else float("nan") for col in summary_cols}
+            summary_row = {
+                "dataset": dataset_name,
+                **means,
+                "total_questions": len(df),
+            }
+
+            os.makedirs(os.path.dirname(summary_csv_path), exist_ok=True)
+            # 如果文件不存在，写入头；否则追加
+            write_header = not os.path.exists(summary_csv_path)
+            with open(summary_csv_path, "a", encoding="utf-8") as f:
+                if write_header:
+                    f.write(
+                        "dataset,answer_relevancy,faithfulness,context_precision,context_recall,total_questions\n"
+                    )
+                f.write(
+                    f"{summary_row['dataset']},{summary_row['answer_relevancy']:.6f},{summary_row['faithfulness']:.6f},{summary_row['context_precision']:.6f},{summary_row['context_recall']:.6f},{summary_row['total_questions']}\n"
+                )
+            logger.info(f"Ragas汇总CSV已更新: {summary_csv_path}")
+        except Exception as e:
+            logger.error(f"更新Ragas汇总CSV失败: {e}")
+
+    return df
 
 class AdvancedEvaluator:
     """高级评估器"""
@@ -436,8 +632,10 @@ def main():
     
     parser = argparse.ArgumentParser(description="高级RAG评估脚本")
     parser.add_argument("input_file", help="输入的评估结果文件路径")
-    parser.add_argument("output_file", help="输出的增强评估结果文件路径")
+    parser.add_argument("output_file", help="输出的增强评估结果文件路径（JSON，保留兼容性）")
     parser.add_argument("--limit", type=int, help="限制处理的结果数量（用于测试）")
+    parser.add_argument("--csv-output-file", type=str, help="Ragas评估结果CSV输出路径")
+    parser.add_argument("--summary-csv", type=str, help="Ragas汇总CSV输出路径（写在原txt目录）")
     
     args = parser.parse_args()
     
@@ -446,8 +644,22 @@ def main():
         logger.error(f"输入文件不存在: {args.input_file}")
         return
     
-    # 运行评估
-    asyncio.run(evaluate_results_file(args.input_file, args.output_file, args.limit))
+    # 运行原有高级评估（JSON，保持兼容）
+    try:
+        asyncio.run(evaluate_results_file(args.input_file, args.output_file, args.limit))
+    except Exception as e:
+        logger.error(f"原有高级评估执行失败: {e}")
+
+    # 运行Ragas评估，并导出CSV（以及可选的根汇总CSV）
+    try:
+        evaluate_with_ragas(
+            input_file=args.input_file,
+            csv_output_file=args.csv_output_file,
+            summary_csv_path=args.summary_csv,
+            limit=args.limit,
+        )
+    except Exception as e:
+        logger.error(f"Ragas评估执行失败: {e}")
 
 if __name__ == "__main__":
     main()

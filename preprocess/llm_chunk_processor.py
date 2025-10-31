@@ -36,7 +36,7 @@ class OptimizationOutput(BaseModel):
 VLLM_OPTIMIZER_API_URL = config.GENERATOR_API_URL
 OPTIMIZER_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
 OPTIMIZER_GENERATION_CONFIG = {
-    "max_tokens": 10240,
+    "max_tokens": 4096,
     "temperature": 0.7, 
     "top_p": 0.95,
     "repetition_penalty": 1.1,

@@ -15,6 +15,14 @@ fi
 LOG_DIR="$PROJECT_ROOT/logs"
 PYTHON_CMD="python3" # 或你的 python 命令
 
+# 默认并发设置（可通过环境变量覆盖）
+TOKENIZER_POOL_SIZE="${TOKENIZER_POOL_SIZE:-32}"
+MAX_PARALLEL_LOADING_WORKERS="${MAX_PARALLEL_LOADING_WORKERS:-32}"
+export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-true}
+export RAYON_NUM_THREADS=${RAYON_NUM_THREADS:-$TOKENIZER_POOL_SIZE}
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-$TOKENIZER_POOL_SIZE}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-$TOKENIZER_POOL_SIZE}
+
 REWRITER_LOG="$LOG_DIR/vllm_rewriter.log"
 FILTERED_LOG="$LOG_DIR/vllm_filtered.log"
 FILTER_PROCESS_LOG="$LOG_DIR/filter_process.log"
@@ -125,6 +133,9 @@ else
     echo "    分配 GPU: ${REWRITER_GPU_ID:-默认所有可见GPU}"
     echo "    显存限制: ${REWRITER_GPU_MEM_UTILIZATION:-默认}"
     echo "    张量并行数: ${REWRITER_TENSOR_PARALLEL_SIZE}"
+    echo "    分词池大小: ${TOKENIZER_POOL_SIZE}"
+    echo "    加载并行数: ${MAX_PARALLEL_LOADING_WORKERS}"
+    echo "    CPU线程(RAYON): ${RAYON_NUM_THREADS}"
 
     # 使用 bash 数组来安全地构建命令
     REWRITER_CMD_ARRAY=(
@@ -137,6 +148,7 @@ else
         --max_num_seqs 1024
         --quantization fp8
         --reasoning-parser deepseek_r1
+        --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"
         # --rope-scaling '{"rope_type": "yarn", "factor": 2.0, "original_max_position_embeddings": 32768}' \
     )
 
@@ -149,7 +161,7 @@ else
     (export CUDA_VISIBLE_DEVICES=${REWRITER_GPU_ID}; nohup "${REWRITER_CMD_ARRAY[@]}" > "$REWRITER_LOG" 2>&1 & echo $! > "$REWRITER_PID_FILE")
     echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_LOG"
     echo "    等待 Rewriter 服务启动 ..."
-    sleep 60
+    sleep 120
     
     # 启动日志过滤器
     echo ">>> 启动 vLLM 日志过滤器..."
@@ -176,6 +188,8 @@ else
     echo "    分配 GPU: ${EMBEDDING_GPU_ID:-默认所有可见GPU}"
     echo "    显存限制: ${EMBEDDING_MEM_UTILIZATION:-默认}"
     echo "    张量并行数: ${EMBEDDING_TENSOR_PARALLEL_SIZE}"
+    echo "    加载并行数: ${MAX_PARALLEL_LOADING_WORKERS}"
+    echo "    CPU线程(RAYON): ${RAYON_NUM_THREADS}"
 
     # 使用 bash 数组来安全地构建命令
     EMBEDDING_CMD_ARRAY=(
@@ -183,10 +197,11 @@ else
         --port "$EMBEDDING_PORT"
         --trust-remote-code
         --disable-log-requests
-        --max-model-len 2048
+        --max-model-len 4096
         --max_num_seqs 128
         --quantization fp8
         --tensor-parallel-size "$EMBEDDING_TENSOR_PARALLEL_SIZE"
+        --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"
     )
 
     # 有条件地添加内存参数
