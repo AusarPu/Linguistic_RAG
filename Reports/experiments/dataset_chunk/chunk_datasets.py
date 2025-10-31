@@ -88,7 +88,7 @@ def chunk_dataset(dataset_name: str, dataset_items: list,
     
     for idx, item in enumerate(dataset_items):
         # 提取文本内容
-        full_text = extract_text_from_dataset_item(item)
+        full_text = str(item)
         
         if not full_text.strip():
             continue
@@ -97,9 +97,9 @@ def chunk_dataset(dataset_name: str, dataset_items: list,
         chunks = generate_document_chunks_langchain(
             full_document_text=full_text,
             doc_name= item.get('id', f"item_{idx}"),
-            char_chunk_size=chunk_size,
-            char_overlap=chunk_overlap,
-            char_min_chunk_length=min_chunk_length,
+            chunk_size=chunk_size,
+            overlap=chunk_overlap,
+            min_chunk_length=min_chunk_length,
             separators=separators
         )
         

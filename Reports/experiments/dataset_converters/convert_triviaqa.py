@@ -112,10 +112,10 @@ def convert_triviaqa_dataset(input_file, output_file, max_samples=None, filter_n
     if filter_no_answer:
         print("过滤模式: 丢弃没有答案的数据")
     
-    # 使用流式处理JSON数组文件
-    from streaming_processor import process_json_array_streaming
+    # TriviaQA 验证集为 NDJSON，每行一个样本，改用逐行流式处理
+    from streaming_processor import process_data_streaming
     
-    converted_samples, stats = process_json_array_streaming(
+    converted_samples, stats = process_data_streaming(
         input_file, 
         convert_triviaqa_sample, 
         max_samples, 
@@ -123,10 +123,10 @@ def convert_triviaqa_dataset(input_file, output_file, max_samples=None, filter_n
     )
     
     # 输出统计信息
-    print(f"处理了 {stats['total_processed']} 个样本")
-    print(f"成功转换 {stats['converted_count']} 个样本")
+    print(f"处理了 {stats.get('total_processed', 0)} 个样本")
+    print(f"成功转换 {stats.get('converted_count', 0)} 个样本")
     if filter_no_answer:
-        print(f"过滤掉 {stats['filtered_count']} 个没有答案的样本")
+        print(f"过滤掉 {stats.get('filtered_count', 0)} 个没有答案的样本")
     if stats.get('shortage'):
         print(f"注意: 数据不足，缺少 {stats['shortage']} 个样本")
     

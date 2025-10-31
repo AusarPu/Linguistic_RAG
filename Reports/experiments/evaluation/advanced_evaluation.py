@@ -21,11 +21,15 @@ from ragas.metrics import (
     answer_relevancy,
     context_precision,
     context_recall,
+    answer_similarity,
+    answer_correctness,
+    context_entity_recall,
 )
 from datasets import Dataset
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
+from ragas.run_config import RunConfig
 
 # 添加项目根目录到路径
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -164,7 +168,8 @@ def _get_ragas_clients():
     return LangchainLLMWrapper(llm), LangchainEmbeddingsWrapper(embeddings)
 
 def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
-                        summary_csv_path: Optional[str] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+                        summary_csv_path: Optional[str] = None, limit: Optional[int] = None,
+                        max_workers: int = 8, timeout: int = 120, max_retries: int = 2, max_wait: int = 10) -> Optional[pd.DataFrame]:
     """运行 Ragas 评估并写出 CSV（以及可选的汇总 CSV）"""
     try:
         with open(input_file, "r", encoding="utf-8") as f:
@@ -193,12 +198,38 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
     # 初始化评估客户端
     evaluator_llm, evaluator_embeddings = _get_ragas_clients()
 
+    # 构建指标列表（直接导入的指标）
+    metrics_list = [
+        faithfulness,
+        answer_relevancy,
+        context_recall,
+        context_precision,
+        answer_similarity,
+        answer_correctness,
+        context_entity_recall,
+    ]
+
+    # 配置并发和重试运行参数
+    run_config = RunConfig(
+        timeout=timeout,
+        max_workers=max_workers,
+        max_retries=max_retries,
+        max_wait=max_wait,
+    )
+    logger.info(
+        f"Ragas运行配置: max_workers={max_workers}, timeout={timeout}s, max_retries={max_retries}, max_wait={max_wait}s"
+    )
+    logger.info(
+        "启用指标: " + ", ".join([m.name if hasattr(m, 'name') else str(m) for m in metrics_list])
+    )
+
     # 运行评估
     ragas_result = ragas_evaluate(
         dataset=hf_dataset,
-        metrics=[faithfulness, answer_relevancy, context_recall, context_precision],
+        metrics=metrics_list,
         llm=evaluator_llm,
         embeddings=evaluator_embeddings,
+        run_config=run_config,
     )
 
     df = ragas_result.to_pandas()
@@ -226,7 +257,11 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
                 "faithfulness",
                 "context_precision",
                 "context_recall",
+                "answer_similarity" if "answer_similarity" in df.columns else None,
+                "answer_correctness" if "answer_correctness" in df.columns else None,
+                "context_entity_recall" if "context_entity_recall" in df.columns else None,
             ]
+            summary_cols = [c for c in summary_cols if c]
             means = {col: float(pd.to_numeric(df[col], errors="coerce").mean()) if col in df.columns else float("nan") for col in summary_cols}
             summary_row = {
                 "dataset": dataset_name,
@@ -239,11 +274,14 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
             write_header = not os.path.exists(summary_csv_path)
             with open(summary_csv_path, "a", encoding="utf-8") as f:
                 if write_header:
-                    f.write(
-                        "dataset,answer_relevancy,faithfulness,context_precision,context_recall,total_questions\n"
-                    )
+                    # 动态写入表头
+                    header = ["dataset"] + summary_cols + ["total_questions"]
+                    f.write(",".join(header) + "\n")
                 f.write(
-                    f"{summary_row['dataset']},{summary_row['answer_relevancy']:.6f},{summary_row['faithfulness']:.6f},{summary_row['context_precision']:.6f},{summary_row['context_recall']:.6f},{summary_row['total_questions']}\n"
+                    ",".join([
+                        summary_row["dataset"],
+                        *[f"{summary_row.get(col, float('nan')):.6f}" for col in summary_cols],
+                        str(summary_row["total_questions"])]) + "\n"
                 )
             logger.info(f"Ragas汇总CSV已更新: {summary_csv_path}")
         except Exception as e:
@@ -636,6 +674,11 @@ def main():
     parser.add_argument("--limit", type=int, help="限制处理的结果数量（用于测试）")
     parser.add_argument("--csv-output-file", type=str, help="Ragas评估结果CSV输出路径")
     parser.add_argument("--summary-csv", type=str, help="Ragas汇总CSV输出路径（写在原txt目录）")
+    # Ragas加速相关参数
+    parser.add_argument("--max-workers", type=int, default=16, help="Ragas并发工作数")
+    parser.add_argument("--timeout", type=int, default=120, help="Ragas评判请求超时（秒）")
+    parser.add_argument("--max-retries", type=int, default=3, help="Ragas请求失败重试次数")
+    parser.add_argument("--max-wait", type=int, default=10, help="Ragas遇到限流时的最大等待（秒）")
     
     args = parser.parse_args()
     
@@ -657,6 +700,10 @@ def main():
             csv_output_file=args.csv_output_file,
             summary_csv_path=args.summary_csv,
             limit=args.limit,
+            max_workers=args.max_workers,
+            timeout=args.timeout,
+            max_retries=args.max_retries,
+            max_wait=args.max_wait,
         )
     except Exception as e:
         logger.error(f"Ragas评估执行失败: {e}")

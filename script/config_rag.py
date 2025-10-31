@@ -89,7 +89,7 @@ EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH # 用于发送给 Embedding 
 
 # --- Prompt 文件路径 (使用绝对路径或相对于 config.py 的路径) ---
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
-GENERATOR_SYSTEM_PROMPT_FILE = os.path.join(_CONFIG_DIR, "../prompts/generator_system_prompt.txt")
+GENERATOR_SYSTEM_PROMPT_FILE = os.path.join(_CONFIG_DIR, "../prompts/generator_system_prompt_eval.txt")
 REWRITER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/rewriter_instruction.txt")
 USEFUL_JUDGER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/useful_judge_v2.txt")
 # -------------------------
@@ -111,7 +111,7 @@ REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "stop": None,
 }
 USEFULNESS_GENERATION_CONFIG = { # 用于有用性判断 vLLM API
-    "max_tokens": 4096,
+    "max_tokens": 8192,
     "temperature": 0.6,
     "top_p": 0.95,
     "repetition_penalty": 1.1,

@@ -6,6 +6,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from script.config_rag import KNOWLEDGE_BASE_DIR,PROCESSED_DATA_DIR
+from preprocess.vllm_tokenizer import token_length_function, test_vllm_connection, get_tokenizer
 
 
 # -----------------------------------------------------------------------------
@@ -85,9 +86,9 @@ def parse_txt_to_structured_pages(full_document_text: str, doc_name: str) -> lis
 def generate_document_chunks_langchain(
         full_document_text: str,
         doc_name: str,
-        char_chunk_size: int,
-        char_overlap: int,
-        char_min_chunk_length: int,
+        chunk_size: int,
+        overlap: int,
+        min_chunk_length: int,
         separators: list = None  # 允许自定义分隔符
 ) -> list:
     """
@@ -95,6 +96,8 @@ def generate_document_chunks_langchain(
     1. 将文档文本按页码标记解析成多个页面。
     2. 使用 Langchain 的 RecursiveCharacterTextSplitter 将每一页的文本切分成更小的块。
     3. 返回包含完整元数据的最终文本块列表。
+    
+    注意：现在使用基于token的切分，而不是字符切分
     """
 
     structured_pages = parse_txt_to_structured_pages(full_document_text, doc_name)
@@ -105,9 +108,9 @@ def generate_document_chunks_langchain(
         separators = ["\n\n", "\n", "。", "！", "？", "，", "、", " ", ""]
 
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=char_chunk_size,
-        chunk_overlap=char_overlap,
-        length_function=len,
+        chunk_size=chunk_size,
+        chunk_overlap=overlap,
+        length_function=token_length_function,  # 使用基于token的长度函数
         is_separator_regex=False,
         separators=separators
     )
@@ -122,14 +125,17 @@ def generate_document_chunks_langchain(
         chunks_from_this_page_texts = text_splitter.split_text(page_text)
 
         for i, chunk_text_content in enumerate(chunks_from_this_page_texts):
-            if len(chunk_text_content.strip()) >= char_min_chunk_length:  # 确保块在去除首尾空格后仍满足最小长度
+            # 使用token长度函数检查最小长度
+            chunk_token_length = token_length_function(chunk_text_content.strip())
+            if chunk_token_length >= min_chunk_length:  # 确保块满足最小token长度
                 # 处理页码标识符，确保chunk_id的有效性
                 page_id_safe = str(page_num).replace(" ", "_").replace("/", "_").replace("\\", "_")
                 all_final_chunks_with_metadata.append({
                     "doc_name": doc_name,
                     "page_number": page_num,
                     "chunk_id": f"{doc_name}_p{page_id_safe}_c{i + 1}",  # 创建一个唯一的块 ID
-                    "text": chunk_text_content.strip()  # 存储去除首尾空格的文本
+                    "text": chunk_text_content.strip(),  # 存储去除首尾空格的文本
+                    "token_count": chunk_token_length  # 添加token数量信息
                 })
 
     return all_final_chunks_with_metadata
@@ -141,14 +147,16 @@ def generate_document_chunks_langchain(
 def process_knowledge_base(
         knowledge_base_dir: str,
         output_json_path: str,
-        char_chunk_size: int,
-        char_overlap: int,
-        char_min_chunk_length: int,
+        chunk_size: int,
+        overlap: int,
+        min_chunk_length: int,
         langchain_separators: list = None
 ):
     """
     遍历知识库目录中的所有 .txt 文件，使用 Langchain 进行切分，
     并将所有块及其元数据保存到单个JSON文件中。
+    
+    注意：现在使用基于token的切分参数
     """
     all_documents_chunks = []
 
@@ -156,9 +164,15 @@ def process_knowledge_base(
         print(f"错误：知识库目录 '{knowledge_base_dir}' 不存在或不是一个目录。")
         return
 
+    # 测试vLLM连接
+    print("测试vLLM服务连接...")
+    if not test_vllm_connection():
+        print("❌ 无法连接到vLLM服务，请确保服务在8001端口运行")
+        return
+
     print(f"开始处理知识库目录: '{knowledge_base_dir}'")
     print(
-        f"切分参数: Chunk Size (chars)={char_chunk_size}, Overlap (chars)={char_overlap}, Min Length (chars)={char_min_chunk_length}")
+        f"切分参数: Chunk Size (tokens)={chunk_size}, Overlap (tokens)={overlap}, Min Length (tokens)={min_chunk_length}")
     if langchain_separators:
         print(f"Langchain 分隔符: {langchain_separators}")
     else:
@@ -179,9 +193,9 @@ def process_knowledge_base(
                 chunks_for_this_doc = generate_document_chunks_langchain(
                     document_content,
                     filename,  # 使用文件名作为 doc_name
-                    char_chunk_size,
-                    char_overlap,
-                    char_min_chunk_length,
+                    chunk_size,
+                    overlap,
+                    min_chunk_length,
                     separators=langchain_separators
                 )
                 all_documents_chunks.extend(chunks_for_this_doc)
@@ -209,10 +223,10 @@ if __name__ == '__main__':
     OUTPUT_JSON_FILE = PROCESSED_DATA_DIR
     os.makedirs(OUTPUT_JSON_FILE, exist_ok=True)
 
-    # 文本切分参数 (基于字符)
-    TARGET_CHAR_CHUNK_SIZE = 1000  # 你可以调整在 200-400 之间
-    TARGET_CHAR_OVERLAP = 0
-    MIN_CHAR_CHUNK_LENGTH = 10  # 设定一个合适的最小块长度，避免过小的碎块
+    # 文本切分参数 (基于token)
+    TARGET_TOKEN_CHUNK_SIZE = 1000  # 默认1000 tokens
+    TARGET_TOKEN_OVERLAP = 0
+    MIN_TOKEN_CHUNK_LENGTH = 10  # 设定一个合适的最小块长度，避免过小的碎块
 
     # Langchain RecursiveCharacterTextSplitter 的分隔符
     # 你可以根据你的 OCR 文本特性调整这个列表及其顺序
@@ -224,9 +238,9 @@ if __name__ == '__main__':
     process_knowledge_base(
         KNOWLEDGE_BASE_DIRECTORY,
         OUTPUT_JSON_FILE+"processed_knowledge_base_chunks.json",
-        TARGET_CHAR_CHUNK_SIZE,
-        TARGET_CHAR_OVERLAP,
-        MIN_CHAR_CHUNK_LENGTH,
+        TARGET_TOKEN_CHUNK_SIZE,
+        TARGET_TOKEN_OVERLAP,
+        MIN_TOKEN_CHUNK_LENGTH,
         langchain_separators=LANGCHAIN_SEPARATORS
     )
 
