@@ -64,7 +64,7 @@ def extract_text_from_dataset_item(item: dict) -> str:
 
 
 def chunk_dataset(dataset_name: str, dataset_items: list, 
-                 chunk_size: int = 3000, 
+                 chunk_size: int = 1000, 
                  chunk_overlap: int = 0,
                  min_chunk_length: int = 50) -> list:
     """
@@ -82,13 +82,9 @@ def chunk_dataset(dataset_name: str, dataset_items: list,
     """
     all_chunks = []
     
-    # 自定义分隔符，适合问答数据集
-    separators = ["\n\nDocument ", "\n\nQuestion:", "\n\nAnswer:", "\n\nContext:", 
-                 "\n\n", "\n", "。", "！", "？", "，", "、", ". ", "! ", "? ", ", ", " ", ""]
-    
     for idx, item in enumerate(dataset_items):
         # 提取文本内容
-        full_text = str(item)
+        full_text = item.get('context', '')
         
         if not full_text.strip():
             continue
@@ -100,7 +96,6 @@ def chunk_dataset(dataset_name: str, dataset_items: list,
             chunk_size=chunk_size,
             overlap=chunk_overlap,
             min_chunk_length=min_chunk_length,
-            separators=separators
         )
         
         # 为每个分块添加原始数据集信息

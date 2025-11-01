@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
 """
 vLLM Tokenizer 模块
-提供基于vLLM API的tokenizer功能，用于文本切分
+提供基于vLLM API的tokenizer功能，用于文本切分。
+
+更新：
+- 新增本地 Hugging Face fast tokenizer 以进行高速 token 计数（CPU 内存，不占显存）。
+- 支持通过配置设置 CPU 线程数（默认 32），并启用并行。
+- 将 token_length_function 切换为使用本地 fast tokenizer（带 LRU 缓存）。
 """
 
+import os
 import requests
 import json
 from typing import List, Optional
 import time
+from functools import lru_cache
+from transformers import AutoTokenizer
+# 文件顶部导入处
+from script.config_rag import (
+    VLLM_BASE_MODEL_LOCAL_PATH,
+    TOKENIZER_CPU_THREADS,
+    PROJECT_ROOT_DIR,  # 新增：固定到项目根目录
+)
 
 
 class VLLMTokenizer:
@@ -89,6 +103,42 @@ class VLLMTokenizer:
 # 全局tokenizer实例
 _global_tokenizer = None
 
+# ----------------------
+# 本地 fast tokenizer 设置
+# ----------------------
+_local_hf_tokenizer = None
+
+# 启用并行并设置线程数（对 Hugging Face tokenizers 生效）
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "true")
+os.environ.setdefault("RAYON_NUM_THREADS", str(TOKENIZER_CPU_THREADS))
+
+
+def _resolve_local_model_path() -> str:
+    """解析并返回本地模型的绝对路径（始终基于项目根目录）。"""
+    return os.path.abspath(os.path.join(PROJECT_ROOT_DIR, VLLM_BASE_MODEL_LOCAL_PATH))
+
+
+def get_local_hf_tokenizer() -> AutoTokenizer:
+    """获取本地 Hugging Face fast tokenizer（仅加载分词器资产，CPU 内存）。"""
+    global _local_hf_tokenizer
+    if _local_hf_tokenizer is None:
+        source = _resolve_local_model_path()
+        _local_hf_tokenizer = AutoTokenizer.from_pretrained(
+            source,
+            use_fast=True,
+            trust_remote_code=True,
+            local_files_only=True,  # 只从本地加载
+        )
+    return _local_hf_tokenizer
+
+
+@lru_cache(maxsize=100_000)
+def fast_token_length(text: str) -> int:
+    """使用本地 fast tokenizer 计算 token 数，带 LRU 缓存。"""
+    tk = get_local_hf_tokenizer()
+    # 不添加特殊符号，保证与 vLLM 的计数接近
+    return len(tk.encode(text, add_special_tokens=False))
+
 
 def get_tokenizer() -> VLLMTokenizer:
     """获取全局tokenizer实例"""
@@ -100,7 +150,8 @@ def get_tokenizer() -> VLLMTokenizer:
 
 def token_length_function(text: str) -> int:
     """
-    基于token的长度函数，用于替换langchain中的len函数
+    基于token的长度函数，用于替换langchain中的len函数。
+    已切换为本地 fast tokenizer，实现高速计数且不依赖 vLLM。
     
     Args:
         text: 输入文本
@@ -108,9 +159,7 @@ def token_length_function(text: str) -> int:
     Returns:
         文本的token数量
     """
-    tokenizer = get_tokenizer()
-    tokens = tokenizer.tokenize(text)
-    return len(tokens)
+    return fast_token_length(text)
 
 
 def chunk_text_by_tokens(text: str, chunk_size: int, tokenizer: VLLMTokenizer, overlap: int = 0) -> List[str]:
@@ -133,7 +182,9 @@ def chunk_text_by_tokens(text: str, chunk_size: int, tokenizer: VLLMTokenizer, o
         raise ValueError("overlap必须小于chunk_size")
     
     # 获取完整文本的tokens
-    tokens = tokenizer.tokenize(text)
+    # 改为使用本地 fast tokenizer 以提升速度
+    tk = get_local_hf_tokenizer()
+    tokens = tk.encode(text, add_special_tokens=False)
     
     if not tokens:
         print("无法获取tokens，返回原文本")
@@ -152,7 +203,9 @@ def chunk_text_by_tokens(text: str, chunk_size: int, tokenizer: VLLMTokenizer, o
         chunk_tokens = tokens[start_idx:end_idx]
         
         # 将tokens转换回文本
-        chunk_text = tokenizer.detokenize(chunk_tokens)
+        # 优先使用本地 detokenize（通过 tokenizer.batch_decode）
+        # 注意：为了保持简单，这里一次仅解码当前分块
+        chunk_text = tk.decode(chunk_tokens)
         
         if chunk_text.strip():  # 只添加非空分块
             chunks.append(chunk_text)

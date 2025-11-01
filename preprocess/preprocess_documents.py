@@ -6,7 +6,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from script.config_rag import KNOWLEDGE_BASE_DIR,PROCESSED_DATA_DIR
-from preprocess.vllm_tokenizer import token_length_function, test_vllm_connection, get_tokenizer
+from preprocess.vllm_tokenizer import token_length_function, fast_token_length, test_vllm_connection, get_tokenizer
 
 
 # -----------------------------------------------------------------------------
@@ -110,7 +110,7 @@ def generate_document_chunks_langchain(
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=overlap,
-        length_function=token_length_function,  # 使用基于token的长度函数
+        length_function=fast_token_length,  # 使用本地fast tokenizer计数
         is_separator_regex=False,
         separators=separators
     )
@@ -125,8 +125,8 @@ def generate_document_chunks_langchain(
         chunks_from_this_page_texts = text_splitter.split_text(page_text)
 
         for i, chunk_text_content in enumerate(chunks_from_this_page_texts):
-            # 使用token长度函数检查最小长度
-            chunk_token_length = token_length_function(chunk_text_content.strip())
+            # 使用本地 fast tokenizer 检查最小长度
+            chunk_token_length = fast_token_length(chunk_text_content.strip())
             if chunk_token_length >= min_chunk_length:  # 确保块满足最小token长度
                 # 处理页码标识符，确保chunk_id的有效性
                 page_id_safe = str(page_num).replace(" ", "_").replace("/", "_").replace("\\", "_")
@@ -164,11 +164,14 @@ def process_knowledge_base(
         print(f"错误：知识库目录 '{knowledge_base_dir}' 不存在或不是一个目录。")
         return
 
-    # 测试vLLM连接
+    # 测试vLLM连接（不再强制依赖，仅警告并继续）
     print("测试vLLM服务连接...")
-    if not test_vllm_connection():
-        print("❌ 无法连接到vLLM服务，请确保服务在8001端口运行")
-        return
+    try:
+        ok = test_vLLM = test_vllm_connection()
+        if not ok:
+            print("⚠️ vLLM连接失败，将使用本地fast tokenizer进行计数并继续处理。")
+    except Exception as e:
+        print(f"⚠️ vLLM连接测试异常: {e}，将使用本地fast tokenizer进行计数并继续处理。")
 
     print(f"开始处理知识库目录: '{knowledge_base_dir}'")
     print(

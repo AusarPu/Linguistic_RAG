@@ -694,6 +694,8 @@ def main():
         logger.error(f"原有高级评估执行失败: {e}")
 
     # 运行Ragas评估，并导出CSV（以及可选的根汇总CSV）
+    return
+    
     try:
         evaluate_with_ragas(
             input_file=args.input_file,

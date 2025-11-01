@@ -156,8 +156,9 @@ async def generate_rewritten_query_async(
     logger.debug(f"检测到的语言: {detected_language}")
     
     # 2. 根据语言获取相应的系统提示词
-    sys_prompt = get_rewriter_instruction(detected_language)
-    logger.debug(f"使用的系统提示词语言版本: {detected_language}")
+    # sys_prompt = get_rewriter_instruction(detected_language)
+    # logger.debug(f"使用的系统提示词语言版本: {detected_language}")
+    sys_prompt = get_rewriter_instruction("en")
 
     # 3. 准备对话历史
     raw_rewrite_history = messages[-(MAX_HISTORY * 2):]
