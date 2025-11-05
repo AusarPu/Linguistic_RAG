@@ -24,7 +24,7 @@ class AdvancedEvaluationAnalyzer:
         
     def load_results(self, dataset: str) -> List[Dict]:
         """加载指定数据集的结果文件"""
-        file_path = os.path.join(self.results_dir, dataset, 'advanced_sample_results.json')
+        file_path = os.path.join(self.results_dir, dataset, 'advanced_results.json')
         if not os.path.exists(file_path):
             print(f"警告: 文件 {file_path} 不存在")
             return []

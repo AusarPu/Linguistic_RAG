@@ -28,10 +28,7 @@ from script.config_rag import PROCESSED_DATA_DIR
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 数据集配置
-def get_output_filename(is_sample: bool = False) -> str:
-    """根据是否为示例模式返回相应的文件名"""
-    return "sample_results.json" if is_sample else "evaluation_results.json"
+
 
 DATASETS = {
     "hotpotqa": {
@@ -222,7 +219,7 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
     # 创建输出目录和文件路径
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / get_output_filename(is_sample)
+    output_file = output_dir / "evaluation_results.json"
     
     # 临时设置PROCESSED_DATA_DIR为当前数据集的索引目录
     original_processed_dir = PROCESSED_DATA_DIR

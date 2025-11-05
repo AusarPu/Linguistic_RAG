@@ -26,7 +26,7 @@ def load_evaluation_results(results_dir: str) -> Dict[str, Dict]:
         dataset_dir = os.path.join(results_dir, dataset)
         
         # 加载高级评估结果
-        advanced_file = os.path.join(dataset_dir, 'advanced_sample_results.json')
+        advanced_file = os.path.join(dataset_dir, "evaluation_results.json")
         if os.path.exists(advanced_file):
             with open(advanced_file, 'r', encoding='utf-8') as f:
                 results[dataset] = json.load(f)

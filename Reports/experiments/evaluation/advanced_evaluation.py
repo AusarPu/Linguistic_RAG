@@ -21,9 +21,6 @@ from ragas.metrics import (
     answer_relevancy,
     context_precision,
     context_recall,
-    answer_similarity,
-    answer_correctness,
-    context_entity_recall,
 )
 from datasets import Dataset
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -53,6 +50,7 @@ ANSWER_EVALUATION_PROMPT = """你是一个专业的问答评估专家。请评�
 2. 系统回答的内容是否与标准答案一致或相符
 3. 系统回答是否包含了关键信息
 4. 即使表述不同，但意思相同也算正确
+5. 当标准答案为不可回答（如空、无答案、无相关证据）时，"知识库里没有答案"、"抱歉没有找到"等属于有效回答
 
 **问题：** {question}
 
@@ -68,8 +66,9 @@ ANSWER_EVALUATION_PROMPT = """你是一个专业的问答评估专家。请评�
 }}
 
 注意：
-- 如果系统回答是"未能生成有效回答"、"抱歉，我没有找到"等无效回答，则判定为错误
-- 如果系统回答包含正确信息但表述方式不同，仍可判定为正确
+- 若标准答案包含具体信息或关键事实（可回答），则"未能生成有效回答"、"抱歉没有找到"、"知识库里没有答案"等应判定为错误
+- 若标准答案为空、为"无答案/不可回答/No Answer/Not enough information/无相关证据"或明确表示无法从文档中得到答案，则上述"未找到/没有答案"类回答判定为正确
+- 判断时以ground truth是否可回答为依据，而非仅凭回答表述
 - confidence表示你对这个判断的信心程度（0.0-1.0）
 """
 
@@ -204,9 +203,6 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
         answer_relevancy,
         context_recall,
         context_precision,
-        answer_similarity,
-        answer_correctness,
-        context_entity_recall,
     ]
 
     # 配置并发和重试运行参数
@@ -257,9 +253,6 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
                 "faithfulness",
                 "context_precision",
                 "context_recall",
-                "answer_similarity" if "answer_similarity" in df.columns else None,
-                "answer_correctness" if "answer_correctness" in df.columns else None,
-                "context_entity_recall" if "context_entity_recall" in df.columns else None,
             ]
             summary_cols = [c for c in summary_cols if c]
             means = {col: float(pd.to_numeric(df[col], errors="coerce").mean()) if col in df.columns else float("nan") for col in summary_cols}
@@ -675,10 +668,10 @@ def main():
     parser.add_argument("--csv-output-file", type=str, help="Ragas评估结果CSV输出路径")
     parser.add_argument("--summary-csv", type=str, help="Ragas汇总CSV输出路径（写在原txt目录）")
     # Ragas加速相关参数
-    parser.add_argument("--max-workers", type=int, default=16, help="Ragas并发工作数")
-    parser.add_argument("--timeout", type=int, default=120, help="Ragas评判请求超时（秒）")
-    parser.add_argument("--max-retries", type=int, default=3, help="Ragas请求失败重试次数")
-    parser.add_argument("--max-wait", type=int, default=10, help="Ragas遇到限流时的最大等待（秒）")
+    parser.add_argument("--max-workers", type=int, default=10, help="Ragas并发工作数")
+    parser.add_argument("--timeout", type=int, default=180, help="Ragas评判请求超时（秒）")
+    parser.add_argument("--max-retries", type=int, default=5, help="Ragas请求失败重试次数")
+    parser.add_argument("--max-wait", type=int, default=180, help="Ragas遇到限流时的最大等待（秒）")
     
     args = parser.parse_args()
     
@@ -688,13 +681,13 @@ def main():
         return
     
     # 运行原有高级评估（JSON，保持兼容）
-    try:
-        asyncio.run(evaluate_results_file(args.input_file, args.output_file, args.limit))
-    except Exception as e:
-        logger.error(f"原有高级评估执行失败: {e}")
+    # try:
+    #     asyncio.run(evaluate_results_file(args.input_file, args.output_file, args.limit))
+    # except Exception as e:
+    #     logger.error(f"原有高级评估执行失败: {e}")
 
     # 运行Ragas评估，并导出CSV（以及可选的根汇总CSV）
-    return
+    # return
     
     try:
         evaluate_with_ragas(

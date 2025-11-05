@@ -124,11 +124,8 @@ run_evaluation() {
     
     # 确定输入文件
     local input_file
-    if [ "$eval_type" = "sample" ]; then
-        input_file="$RESULTS_DIR/$dataset_name/sample_results.json"
-    else
-        input_file="$RESULTS_DIR/$dataset_name/full_results.json"
-    fi
+    input_file="$RESULTS_DIR/$dataset_name/"evaluation_results.json""
+
     
     # 检查输入文件是否存在
     if [ ! -f "$input_file" ]; then
@@ -140,10 +137,10 @@ run_evaluation() {
     mkdir -p "$OUTPUT_DIR/$dataset_name"
     
     # 确定输出文件
-    local output_file="$OUTPUT_DIR/$dataset_name/advanced_${eval_type}_results.json"
+    local output_file="$OUTPUT_DIR/$dataset_name/advanced_results.json"
     
     # 构建命令
-    local csv_output_file="$OUTPUT_DIR/$dataset_name/ragas_${eval_type}_metrics.csv"
+    local csv_output_file="$OUTPUT_DIR/$dataset_name/ragas_metrics.csv"
     local summary_csv="$OUTPUT_DIR/ragas_summary.csv"
     local cmd="python3 \"$ADVANCED_EVAL_SCRIPT\" \"$input_file\" \"$output_file\" --csv-output-file \"$csv_output_file\" --summary-csv \"$summary_csv\""
     

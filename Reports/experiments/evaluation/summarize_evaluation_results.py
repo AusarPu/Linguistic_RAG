@@ -79,28 +79,8 @@ def main():
         print(f"\n📊 数据集: {dataset.upper()}")
         print("-" * 50)
         
-        # 检查结果文件（新的命名方式）
-        sample_file = os.path.join(base_dir, dataset, "sample_results.json")
-        full_file = os.path.join(base_dir, dataset, "evaluation_results.json")
-        
-        # 检查旧的命名方式（兼容性）
-        old_sample_file = os.path.join(base_dir, dataset, "sample_evaluation_results.json")
-        old_full_file = os.path.join(base_dir, dataset, "concurrent_evaluation_results.json")
-        
-        # 优先使用新命名，然后是旧命名
-        if os.path.exists(full_file):
-            result_file = full_file
-            file_type = "完整结果"
-        elif os.path.exists(sample_file):
-            result_file = sample_file
-            file_type = "示例结果"
-        elif os.path.exists(old_full_file):
-            result_file = old_full_file
-            file_type = "完整结果（旧版）"
-        elif os.path.exists(old_sample_file):
-            result_file = old_sample_file
-            file_type = "示例结果（旧版）"
-        else:
+        result_file = os.path.join(base_dir, dataset, "evaluation_results.json")
+        if not os.path.exists(result_file):
             print("❌ 未找到结果文件")
             continue
         
@@ -110,7 +90,7 @@ def main():
             print(f"❌ 错误: {analysis['error']}")
             continue
         
-        print(f"📁 文件类型: {file_type}")
+        print(f"📁 文件类型: 完整结果")
         print(f"📝 总问题数: {analysis['total_questions']}")
         print(f"✅ 成功检索到内容的问题: {analysis['questions_with_chunks']} ({analysis['retrieval_success_rate']:.1%})")
         print(f"❌ 未检索到内容的问题: {analysis['questions_without_chunks']}")

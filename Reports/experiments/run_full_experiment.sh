@@ -227,7 +227,7 @@ run_advanced_evaluation() {
     fi
     
     # 运行高级评估脚本，使用样本结果
-    local cmd="bash $SCRIPT_DIR/run_advanced_evaluation.sh --sample --all"
+    local cmd="bash $SCRIPT_DIR/run_advanced_evaluation.sh -a -f"
     
     print_info "执行命令: $cmd"
     if eval $cmd; then

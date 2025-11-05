@@ -57,6 +57,24 @@ class DatasetQuery:
             数据集文件完整路径
         """
         return os.path.join(self.base_path, dataset_name.lower(), f"{file_type}.json")
+
+    def get_id_field(self, dataset_name: str) -> str:
+        """
+        返回不同数据集对应的主键字段名
+        
+        Args:
+            dataset_name: 数据集名称
+        
+        Returns:
+            主键字段名字符串
+        """
+        mapping = {
+            "ms_marco": "query_id",
+            "triviaqa": "question_id",
+            "hotpotqa": "id",
+            "natural_questions": "id",
+        }
+        return mapping.get(dataset_name.lower(), "id")
     
     def load_dataset(self, dataset_path: str) -> list:
         """
@@ -120,9 +138,10 @@ class DatasetQuery:
         # 加载数据集
         data = self.load_dataset(dataset_path)
         
-        # 查找匹配的ID
+        # 使用数据集对应的主键字段进行匹配
+        id_field = self.get_id_field(dataset_name)
         for item in data:
-            if str(item.get('id', '')) == str(target_id):
+            if str(item.get(id_field, "")) == str(target_id):
                 return item
         
         return None
@@ -141,7 +160,8 @@ class DatasetQuery:
         output = []
         output.append("=" * 80)
         output.append(f"数据集: {dataset_name.upper()}")
-        output.append(f"ID: {item.get('id', 'N/A')}")
+        id_field = self.get_id_field(dataset_name)
+        output.append(f"ID: {item.get(id_field, 'N/A')}")
         output.append("=" * 80)
         
         # 根据不同数据集显示不同字段
@@ -285,8 +305,9 @@ def main():
                 error_msg.append(f"数据集总条数: {len(data)}")
                 if data:
                     error_msg.append("前3个ID示例:")
+                    id_field = query.get_id_field(args.dataset_name)
                     for i, item in enumerate(data[:3]):
-                        error_msg.append(f"  {i+1}. {item.get('id', 'N/A')}")
+                        error_msg.append(f"  {i+1}. {item.get(id_field, 'N/A')}")
             else:
                 error_msg.append(f"数据集文件不存在: {dataset_path}")
             

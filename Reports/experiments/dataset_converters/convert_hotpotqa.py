@@ -110,8 +110,6 @@ def main():
     
     # 转换训练集
     input_file = input_dir / "train.json"
-    # 转换验证集
-    input_file = input_dir / "validation.json"
     
     # 使用统一配置的文件名
     output_file = output_dir / get_output_filename("hotpotqa")
