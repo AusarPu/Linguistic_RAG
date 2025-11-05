@@ -11,8 +11,6 @@ Ragas 自定义 LLM 封装：OpenAI 兼容 HTTP 客户端（支持 n>1）。
 使用：
 - 在评估脚本中用 RagasOpenAICompatLLMWrapper 取代 LangchainLLMWrapper(ChatOpenAI)。
 
-注意：
-- 遵循用户规则，不使用 try/except 或防错型 if/else。
 """
 
 import json
@@ -174,9 +172,24 @@ class RagasOpenAICompatLLMWrapper(BaseRagasLLM):
         }
 
         start_ts = time.time()
+        # 诊断：记录在并发信号量上的等待时长（用于定位“长时间阻塞无GPU/CPU占用”的问题）
+        wait_start = time.time()
+        self.logger.warning(
+            f"[RagasLLM/async] 等待并发信号量获取 (timeout={self.timeout or 60}s, max_tokens={EVALUATION_MAX_TOKENS})"
+        )
         await self._sem.acquire()
+        wait_elapsed = time.time() - wait_start
+        self.logger.warning(
+            f"[RagasLLM/async] 已获取并发信号量, 排队等待时长={wait_elapsed:.3f}s"
+        )
         try:
+            # 诊断：发起网络请求前的提示
+            self.logger.warning(
+                f"[RagasLLM/async] 发起请求: url={url}, 请求超时={self.timeout or 60}s, max_tokens={EVALUATION_MAX_TOKENS}"
+            )
             async with self._session.post(url, json=payload, headers=headers) as resp:
+                # 诊断：响应状态码
+                self.logger.warning(f"[RagasLLM/async] 收到响应: status={resp.status}")
                 result_text = await resp.text()
                 result = json.loads(result_text)
         finally:

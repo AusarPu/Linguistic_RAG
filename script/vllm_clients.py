@@ -214,12 +214,18 @@ async def call_generator_vllm_stream(
                                 # 检查是否有其他意外的、或者需要处理的字段，例如 tool_calls
                         finish_reason = chunk_data.get("choices", [{}])[0].get("finish_reason")
                         if finish_reason and finish_reason != "stop":  # 例如 "length", "tool_calls"
-                            logger.info(
-                                f"[{request_id}] [VLLM_GENERATOR_CLIENT] 流结束原因非 'stop': {finish_reason}. Delta: {delta}")
-                            # 如果是tool_calls，你可能想yield一个特定的事件
+                            # 对于 "length"，通常意味着被 max_tokens 截断，提升为报警输出
+                            if finish_reason == "length":
+                                max_tok = effective_generation_config.get("max_tokens")
+                                logger.warning(
+                                    f"[{request_id}] [VLLM_GENERATOR_CLIENT] 检测到长度截断 (finish_reason=length). max_tokens={max_tok}. Delta: {delta}")
+                            else:
+                                # 其他非 stop 原因保留为信息日志（受全局 WARNING 过滤，不会输出）
+                                logger.info(
+                                    f"[{request_id}] [VLLM_GENERATOR_CLIENT] 流结束原因非 'stop': {finish_reason}. Delta: {delta}")
+                            # 如果是 tool_calls，额外透传事件
                             if finish_reason == "tool_calls" and "tool_calls" in delta:
                                 yield {"type": "tool_calls_delta", "data": delta["tool_calls"]}
-                            # 对于 "length"，通常意味着被max_tokens截断
                             yield {"type": "stream_end", "reason": finish_reason}
                             return  # 遇到明确的结束原因（非stop）就终止
 

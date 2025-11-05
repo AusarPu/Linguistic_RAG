@@ -10,6 +10,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+from openai import timeout
 import pandas as pd
 import importlib
 
@@ -23,8 +24,6 @@ from ragas.metrics import (
 )
 from datasets import Dataset
 from ragas.run_config import RunConfig
-from langchain_openai import OpenAIEmbeddings
-from ragas.embeddings import LangchainEmbeddingsWrapper
 
 # 添加项目根目录到路径
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -139,6 +138,10 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
     dataset_name = _get_dataset_name_from_path(input_file)
     kb = _init_kb_for_dataset(dataset_name)
 
+    # 统一并发：将评估阶段客户端并发（LLM/Embeddings）与 CLI 的 max_workers 保持一致
+    # 注意：LLM 与 Embeddings 封装内部使用 config.EVALUATION_CONCURRENCY_LIMIT 作为信号量上限
+    config.EVALUATION_CONCURRENCY_LIMIT = max_workers
+
     # 构建 ragas 数据集
     hf_dataset = _prepare_ragas_dataset(results, kb)
 
@@ -160,6 +163,9 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
         max_retries=max_retries,
         max_wait=max_wait,
     )
+    # 统一超时：显式将 RunConfig 应用于 LLM 与 Embeddings 客户端，使两者使用相同的 timeout 设置
+    evaluator_llm.run_config = run_config
+    evaluator_embeddings.set_run_config(run_config)
     logger.info(
         f"Ragas运行配置: max_workers={max_workers}, timeout={timeout}s, max_retries={max_retries}, max_wait={max_wait}s"
     )
@@ -189,34 +195,78 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
     df.to_csv(csv_output_file, index=False)
     logger.info(f"Ragas评估CSV已保存: {csv_output_file}")
 
+    # === NaN 检查：统计每个指标中的 NaN 数量，并列出含 NaN 的行 ===
+    metrics_cols = [
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+    ]
+    numeric_df = df[metrics_cols].apply(pd.to_numeric, errors="coerce")
+    nan_counts = {col: int(numeric_df[col].isna().sum()) for col in metrics_cols}
+    nan_row_mask = numeric_df.isna().any(axis=1)
+    nan_rows_total = int(nan_row_mask.sum())
+    nan_row_indices = df.index[nan_row_mask].tolist()
+
+    # 输出日志，帮助快速定位问题
+    if nan_rows_total > 0:
+        logger.warning(f"数据集 {dataset_name} 含有 NaN 行: {nan_rows_total}，行索引: {nan_row_indices}")
+    for col in metrics_cols:
+        if nan_counts[col] > 0:
+            logger.warning(f"数据集 {dataset_name} 指标 {col} 存在 NaN 数量: {nan_counts[col]}")
+    if nan_rows_total == 0 and all(v == 0 for v in nan_counts.values()):
+        logger.info(f"数据集 {dataset_name} 指标无 NaN")
+
+    # 生成每数据集的 NaN 报告 CSV，仅包含出现 NaN 的行
+    nan_report_dir = os.path.dirname(csv_output_file)
+    nan_report_file = os.path.join(nan_report_dir, "nan_report.csv")
+    nan_flags = {f"nan_{col}": numeric_df[col].isna() for col in metrics_cols}
+    nan_any = pd.DataFrame(nan_flags)
+    nan_any["row_index"] = numeric_df.index
+    nan_any["is_nan_any"] = nan_any[[f"nan_{c}" for c in metrics_cols]].any(axis=1)
+    nan_any_rows = nan_any[nan_any["is_nan_any"]]
+    nan_any_rows.to_csv(nan_report_file, index=False)
+    logger.info(f"NaN检查报告已保存: {nan_report_file}")
+
     # 追加/生成根汇总 CSV
     if summary_csv_path:
-        summary_cols = [
+        # 使用与 NaN 检查一致的指标列，保证统计一致性
+        metrics_cols = [
             "answer_relevancy",
             "faithfulness",
             "context_precision",
             "context_recall",
         ]
-        means = {col: float(pd.to_numeric(df[col], errors="coerce").mean()) for col in summary_cols}
+        means = {col: float(pd.to_numeric(df[col], errors="coerce").mean()) for col in metrics_cols}
+        # 已在上文计算 numeric_df / nan_counts / nan_rows_total
         summary_row = {
             "dataset": dataset_name,
             **means,
             "total_questions": len(df),
+            "nan_rows_total": nan_rows_total,
+            **{f"nan_count_{col}": nan_counts[col] for col in metrics_cols},
         }
 
         os.makedirs(os.path.dirname(summary_csv_path), exist_ok=True)
-        # 如果文件不存在，写入头；否则追加
         write_header = not os.path.exists(summary_csv_path)
         with open(summary_csv_path, "a", encoding="utf-8") as f:
             if write_header:
-                # 动态写入表头
-                header = ["dataset"] + summary_cols + ["total_questions"]
+                header = [
+                    "dataset",
+                    *metrics_cols,
+                    "total_questions",
+                    "nan_rows_total",
+                    *[f"nan_count_{col}" for col in metrics_cols],
+                ]
                 f.write(",".join(header) + "\n")
             f.write(
                 ",".join([
                     summary_row["dataset"],
-                    *[f"{summary_row[col]:.6f}" for col in summary_cols],
-                    str(summary_row["total_questions"])]) + "\n"
+                    *[f"{summary_row[col]:.6f}" for col in metrics_cols],
+                    str(summary_row["total_questions"]),
+                    str(summary_row["nan_rows_total"]),
+                    *[str(summary_row[f"nan_count_{col}"]) for col in metrics_cols],
+                ]) + "\n"
             )
         logger.info(f"Ragas汇总CSV已更新: {summary_csv_path}")
 
@@ -239,10 +289,10 @@ def main():
     parser.add_argument("--summary-csv", type=str, help="Ragas汇总CSV输出路径（写在原txt目录）")
     parser.add_argument("--limit", type=int, help="限制处理的结果数量（用于测试）")
     # Ragas加速相关参数
-    parser.add_argument("--max-workers", type=int, default=200, help="Ragas并发工作数")
-    parser.add_argument("--timeout", type=int, default=60, help="Ragas评判请求超时（秒）")
+    parser.add_argument("--max-workers", type=int, default=10, help="Ragas并发工作数")
+    parser.add_argument("--timeout", type=int, default=300, help="Ragas评判请求超时（秒）")
     parser.add_argument("--max-retries", type=int, default=5, help="Ragas请求失败重试次数")
-    parser.add_argument("--max-wait", type=int, default=5, help="Ragas遇到限流时的最大等待（秒）")
+    parser.add_argument("--max-wait", type=int, default=300, help="Ragas遇到限流时的最大等待（秒）")
     
     args = parser.parse_args()
     
@@ -265,6 +315,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-# 诊断增强：降低冗余告警，提升关键日志
-logging.getLogger("ragas.executor").setLevel(logging.INFO)
+# 统一日志策略：只输出警告（含重试），屏蔽普通 info
+logging.getLogger("ragas.executor").setLevel(logging.WARNING)
 logging.getLogger("ragas.prompt.pydantic_prompt").setLevel(logging.ERROR)

@@ -42,8 +42,6 @@ show_help() {
     echo ""
     echo "选项:"
     echo "  -h, --help          显示此帮助信息"
-    echo "  -s, --sample        运行样本评估（默认）"
-    echo "  -f, --full          运行完整评估"
     echo "  -a, --all           评估所有数据集"
     echo "  -l, --limit N       限制处理的结果数量（用于测试）"
     echo "  --list              列出可用的数据集"
@@ -55,10 +53,9 @@ show_help() {
     echo "  triviaqa           TriviaQA数据集"
     echo ""
     echo "示例:"
-    echo "  $0                              # 评估所有数据集的样本结果"
-    echo "  $0 -s hotpotqa                  # 评估HotpotQA的样本结果"
-    echo "  $0 -f natural_questions         # 评估Natural Questions的完整结果"
-    echo "  $0 -a -f                        # 评估所有数据集的完整结果"
+    echo "  $0                              # 评估所有数据集"
+    echo "  $0 hotpotqa                     # 评估HotpotQA数据集"
+    echo "  $0 -a                           # 评估所有数据集"
     echo "  $0 -l 10 hotpotqa               # 仅评估HotpotQA的前10个结果"
 }
 
@@ -70,19 +67,12 @@ list_datasets() {
             if [ -d "$dataset_dir" ]; then
                 dataset_name=$(basename "$dataset_dir")
                 echo "  - $dataset_name"
-                
-                # 检查可用的结果文件
-                sample_file="$dataset_dir/sample_results.json"
-                full_file="$dataset_dir/full_results.json"
-                
-                if [ -f "$sample_file" ]; then
-                    echo "    ✓ 样本结果可用"
-                fi
-                if [ -f "$full_file" ]; then
-                    echo "    ✓ 完整结果可用"
-                fi
-                if [ ! -f "$sample_file" ] && [ ! -f "$full_file" ]; then
-                    echo "    ✗ 无可用结果文件"
+                # 检查评估结果文件
+                eval_file="$dataset_dir/evaluation_results.json"
+                if [ -f "$eval_file" ]; then
+                    echo "    ✓ 评估结果可用 (evaluation_results.json)"
+                else
+                    echo "    ✗ 无评估结果文件"
                 fi
             fi
         done
@@ -117,14 +107,13 @@ check_dependencies() {
 # 运行单个数据集的评估
 run_evaluation() {
     local dataset_name=$1
-    local eval_type=$2  # "sample" 或 "full"
-    local limit=$3      # 可选的限制数量
+    local limit=$2      # 可选的限制数量
     
-    print_info "开始评估数据集: $dataset_name ($eval_type)"
+    print_info "开始评估数据集: $dataset_name"
     
     # 确定输入文件
     local input_file
-    input_file="$RESULTS_DIR/$dataset_name/"evaluation_results.json""
+    input_file="$RESULTS_DIR/$dataset_name/evaluation_results.json"
 
     
     # 检查输入文件是否存在
@@ -151,18 +140,18 @@ run_evaluation() {
     
     # 执行评估
     if eval $cmd; then
-        print_success "数据集 $dataset_name ($eval_type) 评估完成"
-        print_info "结果保存到: $output_file"
+        print_success "数据集 $dataset_name 评估完成"
+        print_info "结果保存到: $csv_output_file"
+        print_info "汇总CSV: $summary_csv"
         return 0
     else
-        print_error "数据集 $dataset_name ($eval_type) 评估失败"
+        print_error "数据集 $dataset_name 评估失败"
         return 1
     fi
 }
 
 # 主函数
 main() {
-    local eval_type="sample"  # 默认为样本评估
     local eval_all=false
     local limit=""
     local datasets=()
@@ -173,14 +162,6 @@ main() {
             -h|--help)
                 show_help
                 exit 0
-                ;;
-            -s|--sample)
-                eval_type="sample"
-                shift
-                ;;
-            -f|--full)
-                eval_type="full"
-                shift
                 ;;
             -a|--all)
                 eval_all=true
@@ -250,7 +231,6 @@ main() {
     done
     
     print_info "评估配置:"
-    print_info "  评估类型: $eval_type"
     print_info "  数据集: ${datasets[*]}"
     if [ -n "$limit" ]; then
         print_info "  限制数量: $limit"
@@ -273,7 +253,7 @@ main() {
     for dataset in "${datasets[@]}"; do
         print_info "正在处理数据集: $dataset (${success_count}/${total_count})"
         
-        if run_evaluation "$dataset" "$eval_type" "$limit"; then
+        if run_evaluation "$dataset" "$limit"; then
             ((success_count++))
         fi
         
@@ -290,6 +270,15 @@ main() {
     else
         print_success "所有数据集评估成功完成!"
         print_info "结果保存在: $OUTPUT_DIR"
+        # === 在所有评估执行完毕后，统一进行 NaN 审计（避免被前面的日志顶掉） ===
+        print_info "开始执行 NaN 审计（所有数据集）..."
+        # 调用独立审计脚本，对本次评估产生的每数据集 ragas_metrics.csv 进行汇总统计
+        python3 "$SCRIPT_DIR/evaluation/nan_audit.py" --output-dir "$OUTPUT_DIR" --datasets ${datasets[@]}
+        if [ $? -eq 0 ]; then
+            print_success "NaN 审计完成，结果已输出到: $OUTPUT_DIR/nan_audit_summary.csv"
+        else
+            print_warning "NaN 审计执行失败，请检查 $SCRIPT_DIR/evaluation/nan_audit.py 与数据文件是否存在"
+        fi
     fi
 }
 

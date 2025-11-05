@@ -7,21 +7,16 @@ from typing import List, Dict, Any, Optional, Tuple
 import traceback
 import sys
 
-# 设置日志配置
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('/home/pushihao/RAG/Gradio_UI/app.log')
-    ]
-)
+# 使用项目内的统一日志策略，仅输出重试与警告
+sys.path.append('/home/pushihao/RAG')
+from script import config_rag as config
+config.setup_logging()
 
 # 从项目中导入
 sys.path.append('/home/pushihao/RAG')
 from script.knowledge_base import KnowledgeBase
 from script.rag_pipeline import execute_rag_flow
-from script import config_rag as config
+# config 已在上面导入并初始化日志
 
 logger = logging.getLogger(__name__)
 kb_instance: Optional[KnowledgeBase] = None

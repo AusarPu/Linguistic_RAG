@@ -141,8 +141,8 @@ USEFULNESS_MAX_CONCURRENT_REQUESTS = 200      # 有用性判断最大并发请�
 
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
-EVALUATION_CONCURRENCY_LIMIT = 200            # 评判请求的客户端并发上限（信号量）
-EVALUATION_MAX_TOKENS = 512                   # 单次评判的最大生成 tokens，用于限制长输出
+EVALUATION_CONCURRENCY_LIMIT = 50            # 评判请求的客户端并发上限（信号量）
+EVALUATION_MAX_TOKENS = 20480                   # 单次评判的最大生成 tokens，用于限制长输出
 
 # --- 有用性判断软保留策略 ---
 # 在多跳或不确定场景，避免过度过滤导致证据链断裂
@@ -151,13 +151,46 @@ SOFT_KEEP_RATIO = 0.3                         # 至少保留原候选的比例�
 
 # --- 日志配置函数 (方便在其他地方统一设置) ---
 def setup_logging():
+    """
+    统一日志输出策略：
+    - 仅输出重试与警告信息；常规 info 不再显示。
+    - 显式开启 ragas/retry 的日志通道，便于观察 tenacity 重试。
+
+    注意：tenacity 的重试日志在 ragas.run_config 中以 DEBUG 等级输出，
+    因此这里为对应 logger 单独配置 handler 与等级，避免被全局 WARNING 屏蔽。
+    """
+    # 根日志：只输出 WARNING 及以上
     logging.basicConfig(
-        level=LOG_LEVEL,
+        level=logging.WARNING,
         format=LOG_FORMAT,
         datefmt=LOG_DATE_FORMAT,
-        # filename='rag_chat.log', # 可以取消注释将日志写入文件
-        # filemode='w',
-        handlers=[logging.StreamHandler(sys.stdout)] # 直接输出到 stdout
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True  # 强制覆盖之前的 basicConfig 设置
     )
-    # 可以设置特定库的日志级别，例如减少 VLLM 自身日志
-    # logging.getLogger("vllm").setLevel(logging.WARNING)
+
+    # 常规库的 info 全部屏蔽，只保留 WARNING
+    logging.getLogger("ragas.executor").setLevel(logging.WARNING)
+    logging.getLogger("vllm").setLevel(logging.WARNING)
+
+    # 为重试相关 logger 单独打开 DEBUG handler（否则不会显示 tenacity 的重试）
+    def _ensure_retry_logger(logger_name: str):
+        lg = logging.getLogger(logger_name)
+        lg.setLevel(logging.DEBUG)
+        lg.propagate = False
+        # 避免重复添加 handler
+        if not lg.handlers:
+            h = logging.StreamHandler(sys.stdout)
+            h.setLevel(logging.DEBUG)
+            h.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+            lg.addHandler(h)
+
+    # ragas.run_config.add_retry 使用的命名（同步）
+    _ensure_retry_logger("ragas.retry.embed_documents")
+    _ensure_retry_logger("ragas.retry.aembed_documents")
+    _ensure_retry_logger("ragas.retry.agenerate_text")
+
+    # ragas.run_config.add_async_retry 使用的命名（异步，函数名会体现在方括号内）
+    _ensure_retry_logger("TENACITYRetry")
+    _ensure_retry_logger("TENACITYRetry[agenerate_text]")
+    _ensure_retry_logger("TENACITYRetry[aembed_documents]")
+    _ensure_retry_logger("tenacity")
