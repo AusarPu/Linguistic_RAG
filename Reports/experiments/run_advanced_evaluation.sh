@@ -136,13 +136,10 @@ run_evaluation() {
     # 创建输出目录
     mkdir -p "$OUTPUT_DIR/$dataset_name"
     
-    # 确定输出文件
-    local output_file="$OUTPUT_DIR/$dataset_name/advanced_results.json"
-    
     # 构建命令
     local csv_output_file="$OUTPUT_DIR/$dataset_name/ragas_metrics.csv"
     local summary_csv="$OUTPUT_DIR/ragas_summary.csv"
-    local cmd="python3 \"$ADVANCED_EVAL_SCRIPT\" \"$input_file\" \"$output_file\" --csv-output-file \"$csv_output_file\" --summary-csv \"$summary_csv\""
+    local cmd="python3 \"$ADVANCED_EVAL_SCRIPT\" \"$input_file\" --csv-output-file \"$csv_output_file\" --summary-csv \"$summary_csv\""
     
     # 添加限制参数
     if [ -n "$limit" ] && [ "$limit" -gt 0 ]; then

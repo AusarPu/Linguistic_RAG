@@ -139,6 +139,11 @@ MAX_CONCURRENT_REQUESTS = 250                # 最大文本块并发请求
 METADATA_MAX_CONCURRENT_REQUESTS = 1000       # 元数据生成的最大并发请求数
 USEFULNESS_MAX_CONCURRENT_REQUESTS = 200      # 有用性判断最大并发请求数
 
+# --- 评估并发与输出限制 (Ragas 评估专用) ---
+# 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
+EVALUATION_CONCURRENCY_LIMIT = 200            # 评判请求的客户端并发上限（信号量）
+EVALUATION_MAX_TOKENS = 512                   # 单次评判的最大生成 tokens，用于限制长输出
+
 # --- 有用性判断软保留策略 ---
 # 在多跳或不确定场景，避免过度过滤导致证据链断裂
 SOFT_KEEP_MIN_CHUNKS = 3                      # 至少保留的上下文块数（含判定为useful者）
