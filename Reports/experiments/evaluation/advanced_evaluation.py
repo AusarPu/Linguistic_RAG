@@ -13,6 +13,7 @@ from typing import Dict, List, Any, Optional
 from openai import timeout
 import pandas as pd
 import importlib
+import statistics
 
 # Ragas & wrappers
 from ragas import evaluate as ragas_evaluate
@@ -32,6 +33,7 @@ sys.path.append(project_root)
 from script import config_rag as config
 import script.knowledge_base as knowledge_base_module
 from script.llm_wrappers import RagasOpenAICompatLLMWrapper, RagasOpenAICompatEmbeddings
+from preprocess.vllm_tokenizer import fast_token_length
 
 # 设置日志
 config.setup_logging()
@@ -79,11 +81,32 @@ def _prepare_ragas_dataset(results: List[Dict[str, Any]], kb) -> Dataset:
         gt = item.get("ground_truth_answer", "")
         chunk_ids = item.get("retrieved_chunk_ids", [])
 
-        ctx_texts: List[str] = []
+        # 收集原始上下文文本
+        raw_ctx_texts: List[str] = []
         for cid in chunk_ids:
-            meta = chunk_map[cid]
-            text_val = meta.get("text") or meta.get("text_chunk_content")
-            ctx_texts.append(text_val)
+            meta = chunk_map.get(cid)
+            if not meta:
+                continue
+            text_val = meta.get("text") or meta.get("text_chunk_content") or ""
+            if text_val:
+                raw_ctx_texts.append(text_val)
+
+        # 基于配置进行上下文裁剪：按顺序保留，直到达到 token 总量与最大块数的上限
+        max_tokens = getattr(config, "EVALUATION_CONTEXTS_MAX_INPUT_TOKENS", None)
+        max_chunks = getattr(config, "EVALUATION_CONTEXTS_MAX_CHUNKS", None)
+        ctx_texts: List[str] = []
+        total_tokens = 0
+        for t in raw_ctx_texts:
+            # 如果达到最大块数限制则停止
+            if isinstance(max_chunks, int) and max_chunks > 0 and len(ctx_texts) >= max_chunks:
+                break
+            # 如果达到最大token限制则停止
+            if isinstance(max_tokens, int) and max_tokens > 0:
+                tlen = fast_token_length(t)
+                if total_tokens + tlen > max_tokens:
+                    break
+                total_tokens += tlen
+            ctx_texts.append(t)
 
         questions.append(q)
         answers.append(a)
@@ -109,7 +132,7 @@ def _get_ragas_clients():
         base_url=generator_base_url,
         model=config.GENERATOR_MODEL_NAME_FOR_API,
         api_key="-",
-        temperature=0.2,
+        temperature=0,
         top_p=0.9,
     )
     embeddings = RagasOpenAICompatEmbeddings(
@@ -219,7 +242,13 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
 
     # 生成每数据集的 NaN 报告 CSV，仅包含出现 NaN 的行
     nan_report_dir = os.path.dirname(csv_output_file)
-    nan_report_file = os.path.join(nan_report_dir, "nan_report.csv")
+    # 根据输出CSV文件名自动派生 NaN 报告文件名（如 ragas_metrics_0.csv -> nan_report_0.csv）
+    nan_report_suffix = ""
+    csv_stem = Path(csv_output_file).stem
+    last_seg = csv_stem.split("_")[-1]
+    if last_seg.isdigit():
+        nan_report_suffix = f"_{last_seg}"
+    nan_report_file = os.path.join(nan_report_dir, f"nan_report{nan_report_suffix}.csv")
     nan_flags = {f"nan_{col}": numeric_df[col].isna() for col in metrics_cols}
     nan_any = pd.DataFrame(nan_flags)
     nan_any["row_index"] = numeric_df.index
@@ -279,6 +308,83 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
     return df
 
 
+def _compute_means_from_df(df: pd.DataFrame) -> Dict[str, float]:
+    """从评估结果 DataFrame 计算指标均值（与汇总写入逻辑一致）。"""
+    metrics_cols = [
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+    ]
+    means = {col: float(pd.to_numeric(df[col], errors="coerce").mean()) for col in metrics_cols}
+    return means
+
+
+def run_repeated_evaluation(input_file: str,
+                            csv_output_file_base: Optional[str],
+                            summary_csv_path: Optional[str],
+                            limit: Optional[int],
+                            repeat: int,
+                            max_workers: int,
+                            timeout: int,
+                            max_retries: int,
+                            max_wait: int) -> None:
+    """按指定次数重复运行评估，并输出跨重复的方差（txt或csv）。
+
+    输出命名规则：
+    - 若提供了 csv_output_file_base，例如 /path/ragas_metrics.csv，则各次输出为 /path/ragas_metrics_0.csv, /path/ragas_metrics_1.csv, ...
+    - 未提供 csv_output_file_base 时，默认在数据集目录下生成 ragas_metrics_0.csv, ragas_metrics_1.csv, ...
+    - NaN 报告文件同样按 _i 后缀命名（nan_report_0.csv 等）。
+    - 方差文件默认输出到相同目录下，命名为 ragas_variance.txt 或 ragas_variance.csv。
+    """
+    dataset_name = _get_dataset_name_from_path(input_file)
+    base_dir = os.path.dirname(csv_output_file_base) if csv_output_file_base else os.path.dirname(input_file)
+    base_stem = Path(csv_output_file_base).stem if csv_output_file_base else "ragas_metrics"
+    base_ext = Path(csv_output_file_base).suffix if csv_output_file_base else ".csv"
+
+    means_per_run: List[Dict[str, float]] = []
+
+    for i in range(repeat):
+        csv_out = os.path.join(base_dir, f"{base_stem}_{i}{base_ext}")
+        df = evaluate_with_ragas(
+            input_file=input_file,
+            csv_output_file=csv_out,
+            summary_csv_path=summary_csv_path,
+            limit=limit,
+            max_workers=max_workers,
+            timeout=timeout,
+            max_retries=max_retries,
+            max_wait=max_wait,
+        )
+        if df is None:
+            logger.error("评估返回空结果，停止重复执行")
+            return
+        means_per_run.append(_compute_means_from_df(df))
+
+    metrics_cols = [
+        "answer_relevancy",
+        "faithfulness",
+        "context_precision",
+        "context_recall",
+    ]
+    variances: Dict[str, float] = {}
+    for col in metrics_cols:
+        values = [m[col] for m in means_per_run]
+        if len(values) >= 2:
+            variances[col] = float(statistics.variance(values))
+        else:
+            variances[col] = 0.0
+
+    var_file = os.path.join(base_dir, "ragas_variance.csv")
+    write_header = not os.path.exists(var_file)
+    with open(var_file, "a", encoding="utf-8") as f:
+        if write_header:
+            f.write("dataset,repeats,metric,variance\n")
+        for col in metrics_cols:
+            f.write(f"{dataset_name},{repeat},{col},{variances[col]:.6f}\n")
+    logger.info(f"重复实验方差已输出: {var_file}")
+
+
 def main():
     """主函数"""
     import argparse
@@ -289,10 +395,12 @@ def main():
     parser.add_argument("--summary-csv", type=str, help="Ragas汇总CSV输出路径（写在原txt目录）")
     parser.add_argument("--limit", type=int, help="限制处理的结果数量（用于测试）")
     # Ragas加速相关参数
-    parser.add_argument("--max-workers", type=int, default=10, help="Ragas并发工作数")
-    parser.add_argument("--timeout", type=int, default=300, help="Ragas评判请求超时（秒）")
-    parser.add_argument("--max-retries", type=int, default=5, help="Ragas请求失败重试次数")
-    parser.add_argument("--max-wait", type=int, default=300, help="Ragas遇到限流时的最大等待（秒）")
+    parser.add_argument("--max-workers", type=int, default=50, help="Ragas并发工作数")
+    parser.add_argument("--timeout", type=int, default=600, help="Ragas评判请求超时（秒）")
+    parser.add_argument("--max-retries", type=int, default=10, help="Ragas请求失败重试次数")
+    parser.add_argument("--max-wait", type=int, default=600, help="Ragas遇到限流时的最大等待（秒）")
+    # 重复实验控制
+    parser.add_argument("--repeat", type=int, default=3, help="重复实验次数（默认3）")
     
     args = parser.parse_args()
     
@@ -301,17 +409,31 @@ def main():
         logger.error(f"输入文件不存在: {args.input_file}")
         return
     
-    # 运行Ragas评估，并导出CSV（以及可选的根汇总CSV）
-    evaluate_with_ragas(
-        input_file=args.input_file,
-        csv_output_file=args.csv_output_file,
-        summary_csv_path=args.summary_csv,
-        limit=args.limit,
-        max_workers=args.max_workers,
-        timeout=args.timeout,
-        max_retries=args.max_retries,
-        max_wait=args.max_wait,
-    )
+    # 根据 repeat 控制单次或重复评估
+    if args.repeat and args.repeat > 1:
+        run_repeated_evaluation(
+            input_file=args.input_file,
+            csv_output_file_base=args.csv_output_file,
+            summary_csv_path=args.summary_csv,
+            limit=args.limit,
+            repeat=args.repeat,
+            max_workers=args.max_workers,
+            timeout=args.timeout,
+            max_retries=args.max_retries,
+            max_wait=args.max_wait,
+        )
+    else:
+        # 运行Ragas评估，并导出CSV（以及可选的根汇总CSV）
+        evaluate_with_ragas(
+            input_file=args.input_file,
+            csv_output_file=args.csv_output_file,
+            summary_csv_path=args.summary_csv,
+            limit=args.limit,
+            max_workers=args.max_workers,
+            timeout=args.timeout,
+            max_retries=args.max_retries,
+            max_wait=args.max_wait,
+        )
 
 if __name__ == "__main__":
     main()

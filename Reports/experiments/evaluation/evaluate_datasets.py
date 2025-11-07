@@ -15,6 +15,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 import threading
+from tqdm import tqdm
 
 # 添加项目根目录到路径
 project_root = "/home/pushihao/RAG"
@@ -272,6 +273,8 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
             logger.info(f"限制处理问题数量为: {max_questions}")
         
         logger.info(f"总共需要处理 {len(questions_data)} 个问题")
+        # 初始化进度条，显示该数据集的整体处理进度（单位：问）
+        pbar = tqdm(total=len(questions_data), desc=f"{dataset_name} 评估进度", unit="问", ncols=100)
         
         # 分批处理问题
         all_results = []
@@ -295,6 +298,8 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
                 use_usefulness_judger
             )
             all_results.extend(batch_results)
+            # 更新进度条：按当前批次已处理问题数增加进度
+            pbar.update(len(batch_results))
             
             # 每处理完一个批次就保存结果（防止数据丢失）
             logger.info(f"批次 {batch_num} 完成，保存中间结果...")
@@ -306,6 +311,8 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
             await asyncio.sleep(0.5)
         
         # 保存最终结果
+        # 关闭进度条
+        pbar.close()
         logger.info(f"保存最终结果到: {output_file}")
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(all_results, f, ensure_ascii=False, indent=2)

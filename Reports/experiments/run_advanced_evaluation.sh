@@ -270,15 +270,8 @@ main() {
     else
         print_success "所有数据集评估成功完成!"
         print_info "结果保存在: $OUTPUT_DIR"
-        # === 在所有评估执行完毕后，统一进行 NaN 审计（避免被前面的日志顶掉） ===
-        print_info "开始执行 NaN 审计（所有数据集）..."
-        # 调用独立审计脚本，对本次评估产生的每数据集 ragas_metrics.csv 进行汇总统计
-        python3 "$SCRIPT_DIR/evaluation/nan_audit.py" --output-dir "$OUTPUT_DIR" --datasets ${datasets[@]}
-        if [ $? -eq 0 ]; then
-            print_success "NaN 审计完成，结果已输出到: $OUTPUT_DIR/nan_audit_summary.csv"
-        else
-            print_warning "NaN 审计执行失败，请检查 $SCRIPT_DIR/evaluation/nan_audit.py 与数据文件是否存在"
-        fi
+        # 注：根据最新需求，移除独立的 NaN 审计步骤。
+        # 请依赖各次评估过程中生成的 ragas_summary.csv 中的 NaN 统计列（nan_rows_total、nan_count_*）。
     fi
 }
 

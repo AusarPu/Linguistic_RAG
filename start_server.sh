@@ -143,13 +143,13 @@ else
         --port "$REWRITER_PORT"
         --trust-remote-code
         --disable-log-requests
-        --max-model-len 40960
+        --max-model-len 131072
         --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
         --max_num_seqs 1024
         --quantization fp8
         --reasoning-parser deepseek_r1
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"
-        # --rope-scaling '{"rope_type": "yarn", "factor": 2.0, "original_max_position_embeddings": 32768}' \
+        --rope-scaling '{"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768}' \
     )
 
     # 有条件地添加内存参数

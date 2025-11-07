@@ -54,18 +54,18 @@ ALL_QUESTION_TEXTS_SAVE_PATH = os.path.join(PROCESSED_DATA_DIR, "all_question_te
 
 # --- vLLM 服务配置 ---
 # 生成器服务配置
-GPU_ID = "0,4"
+GPU_ID = "4,5"
 
 VLLM_GENERATOR_HOST = "localhost" # vLLM 监听的主机名 (通常 localhost 即可，因为 Gradio 和 vLLM 在同一容器/机器)
 VLLM_GENERATOR_PORT = 8001        # vLLM 生成器监听的端口
 VLLM_GENERATOR_GPU_ID = GPU_ID        # 分配给生成器的 GPU ID
-VLLM_GENERATOR_MEM_UTILIZATION = 0.6 # GPU 显存使用率 (例如 0.9 for 90%)
+VLLM_GENERATOR_MEM_UTILIZATION = 0.7 # GPU 显存使用率 (例如 0.9 for 90%)
 
 # 重写器服务配置
 VLLM_REWRITER_HOST = "localhost"
 VLLM_REWRITER_PORT = 8001         # vLLM 重写器监听的端口
 VLLM_REWRITER_GPU_ID = GPU_ID        # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
-VLLM_REWRITER_MEM_UTILIZATION = 0.6 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
+VLLM_REWRITER_MEM_UTILIZATION = 0.7 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
 VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 2 # 新增：Rewriter的张量并行数
 
 # 重写器 LoRA 配置
@@ -142,7 +142,13 @@ USEFULNESS_MAX_CONCURRENT_REQUESTS = 200      # 有用性判断最大并发请�
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
 EVALUATION_CONCURRENCY_LIMIT = 50            # 评判请求的客户端并发上限（信号量）
-EVALUATION_MAX_TOKENS = 20480                   # 单次评判的最大生成 tokens，用于限制长输出
+EVALUATION_MAX_TOKENS = 10240                   # 单次评判的最大生成 tokens，用于限制长输出
+
+# --- Ragas评估上下文输入限制 ---
+# 在构造传入 Ragas 的 contexts 列表时，基于 token 总量和最大块数进行裁剪，
+# 防止评估阶段提示过长导致超时或错误。
+EVALUATION_CONTEXTS_MAX_INPUT_TOKENS = 120000    # contexts 输入的最大 token 总量（fast tokenizer 估算）
+EVALUATION_CONTEXTS_MAX_CHUNKS = 50             # contexts 输入的最大块数上限
 
 # --- 有用性判断软保留策略 ---
 # 在多跳或不确定场景，避免过度过滤导致证据链断裂
@@ -161,7 +167,7 @@ def setup_logging():
     """
     # 根日志：只输出 WARNING 及以上
     logging.basicConfig(
-        level=logging.WARNING,
+        level=logging.WARN,
         format=LOG_FORMAT,
         datefmt=LOG_DATE_FORMAT,
         handlers=[logging.StreamHandler(sys.stdout)],
@@ -172,25 +178,25 @@ def setup_logging():
     logging.getLogger("ragas.executor").setLevel(logging.WARNING)
     logging.getLogger("vllm").setLevel(logging.WARNING)
 
-    # 为重试相关 logger 单独打开 DEBUG handler（否则不会显示 tenacity 的重试）
-    def _ensure_retry_logger(logger_name: str):
-        lg = logging.getLogger(logger_name)
-        lg.setLevel(logging.DEBUG)
-        lg.propagate = False
-        # 避免重复添加 handler
-        if not lg.handlers:
-            h = logging.StreamHandler(sys.stdout)
-            h.setLevel(logging.DEBUG)
-            h.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
-            lg.addHandler(h)
+    # # 为重试相关 logger 单独打开 DEBUG handler（否则不会显示 tenacity 的重试）
+    # def _ensure_retry_logger(logger_name: str):
+    #     lg = logging.getLogger(logger_name)
+    #     lg.setLevel(logging.DEBUG)
+    #     lg.propagate = False
+    #     # 避免重复添加 handler
+    #     if not lg.handlers:
+    #         h = logging.StreamHandler(sys.stdout)
+    #         h.setLevel(logging.DEBUG)
+    #         h.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    #         lg.addHandler(h)
 
-    # ragas.run_config.add_retry 使用的命名（同步）
-    _ensure_retry_logger("ragas.retry.embed_documents")
-    _ensure_retry_logger("ragas.retry.aembed_documents")
-    _ensure_retry_logger("ragas.retry.agenerate_text")
+    # # ragas.run_config.add_retry 使用的命名（同步）
+    # _ensure_retry_logger("ragas.retry.embed_documents")
+    # _ensure_retry_logger("ragas.retry.aembed_documents")
+    # _ensure_retry_logger("ragas.retry.agenerate_text")
 
-    # ragas.run_config.add_async_retry 使用的命名（异步，函数名会体现在方括号内）
-    _ensure_retry_logger("TENACITYRetry")
-    _ensure_retry_logger("TENACITYRetry[agenerate_text]")
-    _ensure_retry_logger("TENACITYRetry[aembed_documents]")
-    _ensure_retry_logger("tenacity")
+    # # ragas.run_config.add_async_retry 使用的命名（异步，函数名会体现在方括号内）
+    # _ensure_retry_logger("TENACITYRetry")
+    # _ensure_retry_logger("TENACITYRetry[agenerate_text]")
+    # _ensure_retry_logger("TENACITYRetry[aembed_documents]")
+    # _ensure_retry_logger("tenacity")

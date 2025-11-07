@@ -157,7 +157,13 @@ async def call_generator_vllm_stream(
 
     start_request_time = time.time()
     try:
-        timeout_config = aiohttp.ClientTimeout(total=request_timeout, connect=10.0, sock_read=request_timeout)  # connect 10s, sock_read aligned
+        # 统一各阶段超时为同一值，避免连接阶段过早超时
+        timeout_config = aiohttp.ClientTimeout(
+            total=request_timeout,
+            connect=request_timeout,
+            sock_connect=request_timeout,
+            sock_read=request_timeout,
+        )
         async with aiohttp.ClientSession(timeout=timeout_config) as session:
             # 构建日志信息
             if messages:

@@ -53,11 +53,16 @@ class RagasOpenAICompatLLMWrapper(BaseRagasLLM):
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            "Connection": "close",
         }
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout or 60) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout or 60) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            self.logger.warning(f"[RagasLLM] 同步请求失败: {e}")
+            raise
 
     def _estimate_token_stats(self, messages: List[dict]) -> dict:
         """估算 messages 的 token 数量统计（基于本地 fast tokenizer）。"""
@@ -112,7 +117,12 @@ class RagasOpenAICompatLLMWrapper(BaseRagasLLM):
             f"tokens_total≈{token_stats['total']}, tokens_per_msg≈{token_stats['per_message']}"
         )
         start_ts = time.time()
-        result = self._http_post_json(url, payload)
+        try:
+            result = self._http_post_json(url, payload)
+        except Exception as e:
+            self.logger.warning(f"[RagasLLM] generate_text 请求异常: {e}")
+            # 返回空结果避免上层崩溃
+            return LLMResult(generations=[[Generation(text="")]])
         elapsed = time.time() - start_ts
         usage = result.get("usage")
         finish_reasons = [ch.get("finish_reason") for ch in result.get("choices", [])]
@@ -121,6 +131,8 @@ class RagasOpenAICompatLLMWrapper(BaseRagasLLM):
             f"finish_reasons={finish_reasons}, usage={usage}"
         )
         choices = result.get("choices", [])
+        if not choices:
+            self.logger.warning("[RagasLLM] 返回 choices 为空，使用默认空生成")
         gens = [Generation(text=(ch.get("message", {}).get("content") or "")) for ch in choices] or [Generation(text="")]
         return LLMResult(generations=[gens])
 
@@ -162,36 +174,53 @@ class RagasOpenAICompatLLMWrapper(BaseRagasLLM):
 
         # 准备 aiohttp session（懒创建，保持复用）
         if self._session is None:
-            timeout = aiohttp.ClientTimeout(total=self.timeout or 60, connect=10.0, sock_read=self.timeout or 60)
-            connector = aiohttp.TCPConnector(limit=None)
+            # 统一连接/读超时到 run_config.timeout，避免连接阶段过早超时
+            timeout = aiohttp.ClientTimeout(
+                total=self.timeout or 60,
+                connect=self.timeout or 60,
+                sock_read=self.timeout or 60,
+            )
+            # 为了避免过多并发连接导致系统/服务端压力，设置连接数上限与评估并发信号量一致
+            from script.config_rag import EVALUATION_CONCURRENCY_LIMIT
+            connector = aiohttp.TCPConnector(
+                limit=int(EVALUATION_CONCURRENCY_LIMIT),
+                limit_per_host=int(EVALUATION_CONCURRENCY_LIMIT),
+                force_close=True,
+                enable_cleanup_closed=True,
+            )
             self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
 
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            "Connection": "close",
         }
 
         start_ts = time.time()
         # 诊断：记录在并发信号量上的等待时长（用于定位“长时间阻塞无GPU/CPU占用”的问题）
         wait_start = time.time()
-        self.logger.warning(
+        self.logger.info(
             f"[RagasLLM/async] 等待并发信号量获取 (timeout={self.timeout or 60}s, max_tokens={EVALUATION_MAX_TOKENS})"
         )
         await self._sem.acquire()
         wait_elapsed = time.time() - wait_start
-        self.logger.warning(
+        self.logger.info(
             f"[RagasLLM/async] 已获取并发信号量, 排队等待时长={wait_elapsed:.3f}s"
         )
         try:
             # 诊断：发起网络请求前的提示
-            self.logger.warning(
+            self.logger.info(
                 f"[RagasLLM/async] 发起请求: url={url}, 请求超时={self.timeout or 60}s, max_tokens={EVALUATION_MAX_TOKENS}"
             )
             async with self._session.post(url, json=payload, headers=headers) as resp:
                 # 诊断：响应状态码
-                self.logger.warning(f"[RagasLLM/async] 收到响应: status={resp.status}")
+                self.logger.info(f"[RagasLLM/async] 收到响应: status={resp.status}")
                 result_text = await resp.text()
                 result = json.loads(result_text)
+        except Exception as e:
+            self.logger.warning(f"[RagasLLM/async] agenerate_text 请求异常: {e}")
+            # 返回空结果避免上层崩溃
+            return LLMResult(generations=[[Generation(text="")]])
         finally:
             self._sem.release()
 
@@ -203,6 +232,8 @@ class RagasOpenAICompatLLMWrapper(BaseRagasLLM):
             f"finish_reasons={finish_reasons}, usage={usage}"
         )
         choices = result.get("choices", [])
+        if not choices:
+            self.logger.warning("[RagasLLM/async] 返回 choices 为空，使用默认空生成")
         gens = [Generation(text=(ch.get("message", {}).get("content") or "")) for ch in choices] or [Generation(text="")]
         return LLMResult(generations=[gens])
 
@@ -238,11 +269,16 @@ class RagasOpenAICompatEmbeddings(BaseRagasEmbeddings):
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            "Connection": "close",
         }
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout or 60) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout or 60) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            self.logger.warning(f"[RagasEmb] 同步请求失败: {e}")
+            raise
 
     def _estimate_token_stats_list(self, texts: List[str]) -> dict:
         counts = [fast_token_length(str(t)) for t in texts]
@@ -256,9 +292,15 @@ class RagasOpenAICompatEmbeddings(BaseRagasEmbeddings):
             f"[RagasEmb] POST /embeddings 开始(sync): timeout={self.timeout or 60}s, texts=1, tokens_total≈{token_stats['total']}, tokens_per_text≈{token_stats['per_text']}"
         )
         start_ts = time.time()
-        result = self._http_post_json(url, payload)
+        try:
+            result = self._http_post_json(url, payload)
+        except Exception as e:
+            self.logger.warning(f"[RagasEmb] embed_query 请求异常: {e}")
+            return []
         elapsed = time.time() - start_ts
         data = result.get("data", [])
+        if not data:
+            self.logger.warning("[RagasEmb] embed_query 返回 data 为空")
         self.logger.info(
             f"[RagasEmb] POST /embeddings 完成(sync): 耗时={elapsed:.3f}s, items={len(data)}"
         )
@@ -273,9 +315,15 @@ class RagasOpenAICompatEmbeddings(BaseRagasEmbeddings):
             f"[RagasEmb] POST /embeddings 开始(sync): timeout={self.timeout or 60}s, texts={len(texts)}, tokens_total≈{token_stats['total']}, tokens_per_text≈{token_stats['per_text']}"
         )
         start_ts = time.time()
-        result = self._http_post_json(url, payload)
+        try:
+            result = self._http_post_json(url, payload)
+        except Exception as e:
+            self.logger.warning(f"[RagasEmb] embed_documents 请求异常: {e}")
+            return [[] for _ in texts]
         elapsed = time.time() - start_ts
         data = result.get("data", [])
+        if not data:
+            self.logger.warning("[RagasEmb] embed_documents 返回 data 为空")
         self.logger.info(
             f"[RagasEmb] POST /embeddings 完成(sync): 耗时={elapsed:.3f}s, items={len(data)}"
         )
@@ -297,13 +345,25 @@ class RagasOpenAICompatEmbeddings(BaseRagasEmbeddings):
         )
 
         if self._session is None:
-            timeout = aiohttp.ClientTimeout(total=self.timeout or 60, connect=10.0, sock_read=self.timeout or 60)
-            connector = aiohttp.TCPConnector(limit=None)
+            timeout = aiohttp.ClientTimeout(
+                total=self.timeout or 60,
+                connect=self.timeout or 60,
+                sock_read=self.timeout or 60,
+            )
+            # 设置连接上限与评估并发信号量一致，并禁用复用
+            from script.config_rag import EVALUATION_CONCURRENCY_LIMIT
+            connector = aiohttp.TCPConnector(
+                limit=int(EVALUATION_CONCURRENCY_LIMIT),
+                limit_per_host=int(EVALUATION_CONCURRENCY_LIMIT),
+                force_close=True,
+                enable_cleanup_closed=True,
+            )
             self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
 
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            "Connection": "close",
         }
 
         start_ts = time.time()
@@ -312,11 +372,16 @@ class RagasOpenAICompatEmbeddings(BaseRagasEmbeddings):
             async with self._session.post(url, json=payload, headers=headers) as resp:
                 result_text = await resp.text()
                 result = json.loads(result_text)
+        except Exception as e:
+            self.logger.warning(f"[RagasEmb/async] aembed_query 请求异常: {e}")
+            return []
         finally:
             self._sem.release()
 
         elapsed = time.time() - start_ts
         data = result.get("data", [])
+        if not data:
+            self.logger.warning("[RagasEmb/async] aembed_query 返回 data 为空")
         self.logger.info(
             f"[RagasEmb/async] POST /embeddings 完成: 耗时={elapsed:.3f}s, items={len(data)}"
         )
@@ -332,13 +397,25 @@ class RagasOpenAICompatEmbeddings(BaseRagasEmbeddings):
         )
 
         if self._session is None:
-            timeout = aiohttp.ClientTimeout(total=self.timeout or 60, connect=10.0, sock_read=self.timeout or 60)
-            connector = aiohttp.TCPConnector(limit=None)
+            timeout = aiohttp.ClientTimeout(
+                total=self.timeout or 60,
+                connect=self.timeout or 60,
+                sock_read=self.timeout or 60,
+            )
+            # 设置连接上限与评估并发信号量一致，并禁用复用
+            from script.config_rag import EVALUATION_CONCURRENCY_LIMIT
+            connector = aiohttp.TCPConnector(
+                limit=int(EVALUATION_CONCURRENCY_LIMIT),
+                limit_per_host=int(EVALUATION_CONCURRENCY_LIMIT),
+                force_close=True,
+                enable_cleanup_closed=True,
+            )
             self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
 
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            "Connection": "close",
         }
 
         start_ts = time.time()
@@ -347,11 +424,16 @@ class RagasOpenAICompatEmbeddings(BaseRagasEmbeddings):
             async with self._session.post(url, json=payload, headers=headers) as resp:
                 result_text = await resp.text()
                 result = json.loads(result_text)
+        except Exception as e:
+            self.logger.warning(f"[RagasEmb/async] aembed_documents 请求异常: {e}")
+            return [[] for _ in texts]
         finally:
             self._sem.release()
 
         elapsed = time.time() - start_ts
         data = result.get("data", [])
+        if not data:
+            self.logger.warning("[RagasEmb/async] aembed_documents 返回 data 为空")
         self.logger.info(
             f"[RagasEmb/async] POST /embeddings 完成: 耗时={elapsed:.3f}s, items={len(data)}"
         )

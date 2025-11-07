@@ -67,10 +67,20 @@ async def judge_knowledge_usefulness(
         "guided_choice": ["useful", "useless"],
         **USEFULNESS_GENERATION_CONFIG,
     }
+    # 显式确保不传递 stop_token_ids（按用户要求），即便后续配置中出现该字段也先移除
+    request_body.pop("stop_token_ids", None)
+    # 同时确保不传递 stop 字段为字符串时，它存在则保留；若为 None（默认配置），让其不出现在请求体
+    if request_body.get("stop", None) is None:
+        request_body.pop("stop", None)
 
     # 3. 发送请求
     async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT)
+        timeout=aiohttp.ClientTimeout(
+            total=VLLM_REQUEST_TIMEOUT,
+            connect=VLLM_REQUEST_TIMEOUT,
+            sock_connect=VLLM_REQUEST_TIMEOUT,
+            sock_read=VLLM_REQUEST_TIMEOUT,
+        )
     ) as session:
         async with session.post(f"{_VLLM_BASE_URL}/chat/completions", json=request_body) as resp:
             if resp.status != 200:

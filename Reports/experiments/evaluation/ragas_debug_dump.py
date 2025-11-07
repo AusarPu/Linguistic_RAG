@@ -47,7 +47,8 @@ from langchain_openai import OpenAIEmbeddings
 
 # 项目内模块
 from script import config_rag as config
-from script.llm_wrappers import RagasOpenAICompatLLMWrapper
+from script.llm_wrappers import RagasOpenAICompatLLMWrapper, RagasOpenAICompatEmbeddings
+from preprocess.vllm_tokenizer import fast_token_length
 
 
 def _get_dataset_name_from_path(input_file: str) -> str:
@@ -88,7 +89,10 @@ def _init_kb_for_dataset(dataset_name: str):
 
 
 def _prepare_ragas_dataset(results: List[Dict[str, Any]], kb) -> Dataset:
-    """将评估结果转换为 Ragas 数据集（问题、上下文、答案、参考答案）。"""
+    """将评估结果转换为 Ragas 数据集（问题、上下文、答案、参考答案）。
+
+    上下文裁剪策略：按检索顺序前缀保留，直到达到配置的 token 总量与最大块数上限。
+    """
     questions: List[str] = []
     contexts: List[List[str]] = []
     answers: List[str] = []
@@ -103,13 +107,32 @@ def _prepare_ragas_dataset(results: List[Dict[str, Any]], kb) -> Dataset:
         gt = item.get("ground_truth_answer", "")
         chunk_ids = item.get("retrieved_chunk_ids", []) or []
 
-        ctx_texts: List[str] = []
+        # 收集原始上下文文本（过滤缺失/空文本）
+        raw_ctx_texts: List[str] = []
         for cid in chunk_ids:
             meta = chunk_map.get(cid)
             if meta:
                 text_val = meta.get("text") or meta.get("text_chunk_content") or ""
                 if text_val:
-                    ctx_texts.append(text_val)
+                    raw_ctx_texts.append(text_val)
+
+        # 基于配置进行上下文裁剪：按顺序保留，直到达到 token 总量与最大块数的上限
+        from script import config_rag as config
+        max_tokens = getattr(config, "EVALUATION_CONTEXTS_MAX_INPUT_TOKENS", None)
+        max_chunks = getattr(config, "EVALUATION_CONTEXTS_MAX_CHUNKS", None)
+        ctx_texts: List[str] = []
+        total_tokens = 0
+        for t in raw_ctx_texts:
+            # 块数上限
+            if isinstance(max_chunks, int) and max_chunks > 0 and len(ctx_texts) >= max_chunks:
+                break
+            # token 总量上限
+            if isinstance(max_tokens, int) and max_tokens > 0:
+                tlen = fast_token_length(t)
+                if total_tokens + tlen > max_tokens:
+                    break
+                total_tokens += tlen
+            ctx_texts.append(t)
 
         questions.append(q)
         answers.append(a)
@@ -125,7 +148,7 @@ def _prepare_ragas_dataset(results: List[Dict[str, Any]], kb) -> Dataset:
 
 
 def _get_ragas_clients() -> Tuple:
-    """初始化 Ragas 评估所需的 LLM 与 Embeddings 客户端。"""
+    """初始化 Ragas 评估所需的 LLM 与 Embeddings 客户端（统一为 OpenAI 兼容封装）。"""
     from script.config_rag import (
         GENERATOR_API_URL,
         GENERATOR_MODEL_NAME_FOR_API,
@@ -136,7 +159,6 @@ def _get_ragas_clients() -> Tuple:
     generator_base_url = GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
     embedding_base_url = EMBEDDING_API_URL.rsplit("/embeddings", 1)[0]
 
-    # 使用自定义封装，直接走 OpenAI 兼容接口，支持 n>1
     llm = RagasOpenAICompatLLMWrapper(
         base_url=generator_base_url,
         model=GENERATOR_MODEL_NAME_FOR_API,
@@ -144,13 +166,13 @@ def _get_ragas_clients() -> Tuple:
         temperature=0.2,
         top_p=0.9,
     )
-    embeddings = OpenAIEmbeddings(
+    embeddings = RagasOpenAICompatEmbeddings(
         base_url=embedding_base_url,
         api_key="-",
         model=EMBEDDING_MODEL_NAME_FOR_API,
     )
 
-    return llm, LangchainEmbeddingsWrapper(embeddings)
+    return llm, embeddings
 
 
 def _format_ragas_inputs(dataset: Dataset) -> str:
@@ -247,7 +269,7 @@ def debug_ragas(input_file: str, output_file: str, dataset_name: Optional[str] =
     ds_name = dataset_name or _get_dataset_name_from_path(input_file)
     kb = _init_kb_for_dataset(ds_name)
 
-    # 构建 Ragas Dataset
+    # 构建 Ragas Dataset（含上下文裁剪）
     hf_dataset = _prepare_ragas_dataset(results, kb)
 
     # 客户端与配置
@@ -256,6 +278,12 @@ def debug_ragas(input_file: str, output_file: str, dataset_name: Optional[str] =
     run_config = RunConfig(
         timeout=timeout, max_workers=max_workers, max_retries=max_retries, max_wait=max_wait
     )
+
+    # 将评估并发限制与 CLI 选项保持一致，并显式应用到客户端
+    from script import config_rag as config
+    config.EVALUATION_CONCURRENCY_LIMIT = max_workers
+    evaluator_llm.run_config = run_config
+    evaluator_embeddings.set_run_config(run_config)
 
     # 组织输出文本
     sections: List[str] = []
