@@ -400,7 +400,7 @@ def main():
     parser.add_argument("--max-retries", type=int, default=10, help="Ragas请求失败重试次数")
     parser.add_argument("--max-wait", type=int, default=600, help="Ragas遇到限流时的最大等待（秒）")
     # 重复实验控制
-    parser.add_argument("--repeat", type=int, default=3, help="重复实验次数（默认3）")
+    parser.add_argument("--repeat", type=int, default=1, help="重复实验次数（默认3）")
     
     args = parser.parse_args()
     
