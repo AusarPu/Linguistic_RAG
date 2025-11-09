@@ -219,34 +219,61 @@ def process_knowledge_base(
 
 
 if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description="处理知识库目录或单文件，生成分块 JSON。默认处理知识库目录以保持兼容。")
+    parser.add_argument("--source-file", dest="source_file", default=None, help="可选：指定单个 TXT 文件进行处理（不设置则处理整个知识库目录）")
+    parser.add_argument("--chunk-size", type=int, default=1000, help="每块目标 token 数，默认 1000")
+    parser.add_argument("--overlap", type=int, default=0, help="块间重叠 token 数，默认 0")
+    parser.add_argument("--min-chunk-length", type=int, default=10, help="最小块 token 数，默认 10")
+    parser.add_argument("--output", dest="output_path", default=None, help="输出 JSON 文件路径（默认写入 PROCESSED_DATA_DIR/processed_knowledge_base_chunks.json 或 source_file 同目录）")
+    args = parser.parse_args()
 
     KNOWLEDGE_BASE_DIRECTORY = KNOWLEDGE_BASE_DIR
 
     # 处理后输出的 JSON 文件路径
-    OUTPUT_JSON_FILE = PROCESSED_DATA_DIR
-    os.makedirs(OUTPUT_JSON_FILE, exist_ok=True)
+    OUTPUT_DIR = PROCESSED_DATA_DIR
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # 文本切分参数 (基于token)
-    TARGET_TOKEN_CHUNK_SIZE = 1000  # 默认1000 tokens
-    TARGET_TOKEN_OVERLAP = 0
-    MIN_TOKEN_CHUNK_LENGTH = 10  # 设定一个合适的最小块长度，避免过小的碎块
+    TARGET_TOKEN_CHUNK_SIZE = args.chunk_size
+    TARGET_TOKEN_OVERLAP = args.overlap
+    MIN_TOKEN_CHUNK_LENGTH = args.min_chunk_length
 
     # Langchain RecursiveCharacterTextSplitter 的分隔符
-    # 你可以根据你的 OCR 文本特性调整这个列表及其顺序
-    # None 表示使用 generate_document_chunks_langchain 中的默认列表
     LANGCHAIN_SEPARATORS = ["\n\n","。", "！", "？", "，", "、", ". ", "! ", "? ", ", ", " ", ""]
-    # LANGCHAIN_SEPARATORS = None # 使用函数内默认值
 
-    # --- 执行处理 ---
-    process_knowledge_base(
-        KNOWLEDGE_BASE_DIRECTORY,
-        OUTPUT_JSON_FILE+"processed_knowledge_base_chunks.json",
-        TARGET_TOKEN_CHUNK_SIZE,
-        TARGET_TOKEN_OVERLAP,
-        MIN_TOKEN_CHUNK_LENGTH,
-        langchain_separators=LANGCHAIN_SEPARATORS
-    )
-
-    print("\n--- 运行完毕 ---")
-    print(f"如果一切顺利，你应该能在 '{OUTPUT_JSON_FILE}' 找到处理好的数据。")
-    print("这个 JSON 文件中的每个条目都是一个文本块及其元数据，可用于后续的嵌入和LLM增强。")
+    if args.source_file is None:
+        # 兼容旧行为：未显式设置 --source-file 时，处理知识库目录
+        output_json = args.output_path or (OUTPUT_DIR + "processed_knowledge_base_chunks.json")
+        process_knowledge_base(
+            KNOWLEDGE_BASE_DIRECTORY,
+            output_json,
+            TARGET_TOKEN_CHUNK_SIZE,
+            TARGET_TOKEN_OVERLAP,
+            MIN_TOKEN_CHUNK_LENGTH,
+            langchain_separators=LANGCHAIN_SEPARATORS
+        )
+        print("\n--- 运行完毕（目录模式） ---")
+        print(f"输出: '{output_json}'")
+    else:
+        # 单文件模式：仅读取指定 TXT，生成同结构输出
+        src = args.source_file
+        with open(src, 'r', encoding='utf-8') as f:
+            content = f.read()
+        doc_name = os.path.basename(src)
+        chunks = generate_document_chunks_langchain(
+            content,
+            doc_name,
+            TARGET_TOKEN_CHUNK_SIZE,
+            TARGET_TOKEN_OVERLAP,
+            MIN_TOKEN_CHUNK_LENGTH,
+            separators=LANGCHAIN_SEPARATORS
+        )
+        output_json = args.output_path or os.path.join(os.path.dirname(src), os.path.splitext(doc_name)[0] + "_chunks.json")
+        with open(output_json, 'w', encoding='utf-8') as outfile:
+            json.dump(chunks, outfile, ensure_ascii=False, indent=2)
+        print("\n--- 运行完毕（单文件模式） ---")
+        print(f"文件: {src}")
+        print(f"生成块数量: {len(chunks)}")
+        print(f"输出: '{output_json}'")

@@ -21,6 +21,31 @@ from .config_rag import (
 
 logger = logging.getLogger(__name__)
 
+def get_vllm_models_endpoint_url_from_generator(api_url: str = GENERATOR_API_URL) -> str:
+    """
+    根据生成接口URL推导出 /v1/models 端点URL。
+    约定：GENERATOR_API_URL 为 OpenAI 兼容的 /v1/chat/completions。
+    """
+    return api_url.replace('/v1/chat/completions', '/v1/models')
+
+def get_vllm_current_model_name(api_url: str = GENERATOR_API_URL) -> str:
+    """
+    自动获取当前 vLLM 服务的模型名（端口通常为 8001），用于编程时动态确认模型。
+
+    使用方式示例：
+        from script.vllm_clients import get_vllm_current_model_name
+        name = get_vllm_current_model_name()  # 默认读取 config 中的 GENERATOR_API_URL
+
+    返回：模型 id 字符串（OpenAI 兼容接口 /v1/models 的 "data[0].id"）。
+    """
+    models_url = get_vllm_models_endpoint_url_from_generator(api_url)
+    headers = {"Accept": "application/json"}
+    response = requests.get(models_url, headers=headers, timeout=10)
+    result = response.json()
+    model_id = result["data"][0]["id"]
+    logger.info(f"[VLLM] 自动发现模型: {model_id} @ {models_url}")
+    return model_id
+
 
 # ===== EMBEDDING CLIENT =====
 class EmbeddingAPIClient:
