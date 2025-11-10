@@ -16,7 +16,7 @@ from .config_rag import (
     GENERATION_CONFIG,
     VLLM_REQUEST_TIMEOUT_GENERATION,
     EMBEDDING_API_URL,
-    EMBEDDING_MODEL_NAME_FOR_API
+    EMBEDDING_MODEL_NAME_FOR_API,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,13 +92,14 @@ class EmbeddingAPIClient:
             "Content-Type": "application/json"
         }
         
-        # 发送请求
-        response = requests.post(self.api_url, json=payload, headers=headers, timeout=60)
-        
-        if response.status_code != 200:
-            raise RuntimeError(f"Embedding API request failed with status {response.status_code}: {response.text}")
-        
-        result = response.json()
+        # 异步发送请求
+        timeout_config = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT, connect=VLLM_REQUEST_TIMEOUT, sock_read=VLLM_REQUEST_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout_config) as session:
+            async with session.post(self.api_url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    error_body = await resp.text()
+                    raise RuntimeError(f"Embedding API request failed with status {resp.status}: {error_body}")
+                result = await resp.json()
         
         if "data" not in result:
             raise RuntimeError(f"Invalid API response format: {result}")
