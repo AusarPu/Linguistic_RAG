@@ -197,8 +197,8 @@ else
         --port "$EMBEDDING_PORT"
         --trust-remote-code
         --disable-log-requests
-        --max-model-len 4096
-        --max_num_seqs 256
+        --max-model-len 2048
+        --max_num_seqs 1024
         --quantization fp8
         --tensor-parallel-size "$EMBEDDING_TENSOR_PARALLEL_SIZE"
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"

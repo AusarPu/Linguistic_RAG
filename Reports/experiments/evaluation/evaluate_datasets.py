@@ -56,7 +56,7 @@ DATASETS = {
 }
 
 # 并发配置
-DEFAULT_BATCH_SIZE = 5  # 默认批处理大小
+DEFAULT_BATCH_SIZE = 10  # 默认并发数（同时运行的任务数）
 DEFAULT_MAX_QUESTIONS = 20  # 默认不限制问题数量（按数据集配置与文件决定）
 
 # 线程锁用于保护共享资源
@@ -215,7 +215,7 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
     并发评估单个数据集
     """
     mode_desc = "示例模式" if is_sample else "完整模式"
-    logger.info(f"开始并发评估数据集: {dataset_name} ({mode_desc}, 批大小: {batch_size})")
+    logger.info(f"开始并发评估数据集: {dataset_name} ({mode_desc}, 并发数: {batch_size})")
     
     # 创建输出目录和文件路径
     output_dir = Path(config["output_dir"])
@@ -275,48 +275,61 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
         logger.info(f"总共需要处理 {len(questions_data)} 个问题")
         # 初始化进度条，显示该数据集的整体处理进度（单位：问）
         pbar = tqdm(total=len(questions_data), desc=f"{dataset_name} 评估进度", unit="问", ncols=100)
-        
-        # 分批处理问题
+
+        # 使用信号量维持固定并发数，持续调度任务
+        concurrency = max(1, int(batch_size))
+        sem = asyncio.Semaphore(concurrency)
+
+        async def run_one(item: Dict[str, Any], idx: int) -> Dict[str, Any]:
+            async with sem:
+                question = item.get("question", "")
+                if not question:
+                    return {
+                        "question": "",
+                        "retrieved_chunk_ids": [],
+                        "system_answer": "",
+                        "original_id": item.get("id", ""),
+                        "ground_truth_answer": item.get("answer", "")
+                    }
+                question_id = f"pool_q_{idx+1}"
+                result = await process_single_question(
+                    question,
+                    kb_instance,
+                    question_id,
+                    use_query_rewriter,
+                    use_dense_chunks,
+                    use_dense_keywords,
+                    use_dense_questions,
+                    use_usefulness_judger,
+                )
+                # 合并原始字段
+                result.update({
+                    "original_id": item.get("id", ""),
+                    "ground_truth_answer": item.get("answer", "")
+                })
+                return result
+
+        tasks = [asyncio.create_task(run_one(item, idx)) for idx, item in enumerate(questions_data)]
         all_results = []
-        total_batches = (len(questions_data) + batch_size - 1) // batch_size
-        
-        for batch_idx in range(0, len(questions_data), batch_size):
-            batch_num = batch_idx // batch_size + 1
-            batch_questions = questions_data[batch_idx:batch_idx + batch_size]
-            
-            logger.info(f"处理批次 {batch_num}/{total_batches}")
-            
-            # 并发处理当前批次
-            batch_results = await process_questions_batch(
-                batch_questions, 
-                kb_instance, 
-                batch_num,
-                use_query_rewriter,
-                use_dense_chunks,
-                use_dense_keywords,
-                use_dense_questions,
-                use_usefulness_judger
-            )
-            all_results.extend(batch_results)
-            # 更新进度条：按当前批次已处理问题数增加进度
-            pbar.update(len(batch_results))
-            
-            # 每处理完一个批次就保存结果（防止数据丢失）
-            logger.info(f"批次 {batch_num} 完成，保存中间结果...")
-            with result_lock:
-                with open(output_file, 'w', encoding='utf-8') as f:
-                    json.dump(all_results, f, ensure_ascii=False, indent=2)
-            
-            # 简短休息，避免过度占用资源
-            await asyncio.sleep(0.5)
-        
-        # 保存最终结果
-        # 关闭进度条
+
+        # 按完成顺序收集结果，并周期性写出中间结果
+        flush_every = max(1, concurrency)
+        for i, task in enumerate(asyncio.as_completed(tasks), start=1):
+            result = await task
+            all_results.append(result)
+            pbar.update(1)
+            if i % flush_every == 0:
+                logger.info(f"进度 {i}/{len(questions_data)}，保存中间结果...")
+                with result_lock:
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        json.dump(all_results, f, ensure_ascii=False, indent=2)
+
+        # 关闭进度条并保存最终结果
         pbar.close()
         logger.info(f"保存最终结果到: {output_file}")
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(all_results, f, ensure_ascii=False, indent=2)
-        
+
         logger.info(f"数据集 {dataset_name} 并发评估完成，共处理 {len(all_results)} 个问题")
         
     except Exception as e:
@@ -343,7 +356,7 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
     
     if dataset_concurrent:
         # 数据集级别并发处理
-        logger.info(f"开始并发评估所有数据集，批大小: {batch_size}")
+        logger.info(f"开始并发评估所有数据集，并发数: {batch_size}")
         tasks = [
             evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample,
                                       use_query_rewriter, use_dense_chunks, use_dense_keywords, 
@@ -353,7 +366,7 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
         await asyncio.gather(*tasks, return_exceptions=True)
     else:
         # 数据集串行处理，但问题并发处理
-        logger.info(f"开始串行评估数据集（问题并发），批大小: {batch_size}")
+        logger.info(f"开始串行评估数据集（问题并发），并发数: {batch_size}")
         for dataset_name, config in datasets_to_process:
             try:
                 await evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample,
@@ -373,7 +386,7 @@ async def main():
     parser.add_argument("--dataset", type=str, choices=list(DATASETS.keys()) + ["all"], 
                        default="all", help="要评估的数据集")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, 
-                       help=f"并发批处理大小（默认：{DEFAULT_BATCH_SIZE}）")
+                       help=f"最大并发数（同时运行的任务数，默认：{DEFAULT_BATCH_SIZE}）")
     parser.add_argument("--max-questions", type=int, default=DEFAULT_MAX_QUESTIONS, 
                        help=f"限制每个数据集处理的问题数量（默认：{DEFAULT_MAX_QUESTIONS}）")
     parser.add_argument("--dataset-concurrent", action="store_true", 
@@ -400,7 +413,7 @@ async def main():
     
     logger.info(f"开始并发评估")
     logger.info(f"数据集: {[name for name, _ in datasets_to_process]}")
-    logger.info(f"批处理大小: {args.batch_size}")
+    logger.info(f"并发数: {args.batch_size}")
     logger.info(f"最大问题数: {args.max_questions}")
     logger.info(f"数据集并发: {'是' if args.dataset_concurrent else '否'}")
     

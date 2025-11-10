@@ -44,7 +44,7 @@ show_help() {
     echo "  --test              启用测试模式（用于index阶段）"
     echo "  --no-filter         不过滤没有答案的数据（用于converter阶段）"
     echo "  --enhance-mode      增强模式 (optimize|metadata|pipeline，默认：pipeline)"
-    echo "  --batch-size        评估批处理大小（默认：10）"
+    echo "  --batch-size        评估最大并发数（默认：10）"
     echo "  --verbose           启用详细日志输出"
     echo ""
     echo "消融实验选项（用于evaluation阶段）:"
@@ -349,7 +349,7 @@ main() {
     print_info "测试模式: $([ "$test_mode" = true ] && echo "是" || echo "否")"
     print_info "过滤无答案数据: $([ "$no_filter" = true ] && echo "否" || echo "是")"
     print_info "增强模式: $enhance_mode"
-    print_info "批处理大小: $batch_size"
+    print_info "并发数: $batch_size"
     print_info "详细日志: $([ "$verbose" = true ] && echo "是" || echo "否")"
     print_info "工作目录: $SCRIPT_DIR"
     
