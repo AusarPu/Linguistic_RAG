@@ -11,7 +11,6 @@ import logging
 import asyncio
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from openai import timeout
 import pandas as pd
 import importlib
 import statistics
