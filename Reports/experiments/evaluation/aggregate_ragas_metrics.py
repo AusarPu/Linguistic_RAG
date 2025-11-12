@@ -42,6 +42,7 @@ METRICS_COLS = [
     "faithfulness",
     "context_precision",
     "context_recall",
+    "accuracy",
 ]
 
 
@@ -111,7 +112,8 @@ def compute_repeat_variances(dataset_dir: str) -> Dict[str, float]:
     means_per_run: List[Dict[str, float]] = []
     for fname in files:
         df = pd.read_csv(os.path.join(dataset_dir, fname))
-        numeric_df = df[METRICS_COLS].apply(pd.to_numeric, errors="coerce")
+        # 使用 reindex 以容忍缺失列（例如旧CSV无 accuracy）
+        numeric_df = df.reindex(columns=METRICS_COLS).apply(pd.to_numeric, errors="coerce")
         means_per_run.append({col: float(numeric_df[col].mean()) for col in METRICS_COLS})
     variances: Dict[str, float] = {}
     for col in METRICS_COLS:
@@ -123,7 +125,8 @@ def compute_repeat_variances(dataset_dir: str) -> Dict[str, float]:
 def summarize_dataset(dataset: str, dataset_dir: str, pass_threshold: float, trim_fraction: float) -> Dict[str, float]:
     csv_path = os.path.join(dataset_dir, "ragas_metrics.csv")
     df = pd.read_csv(csv_path)
-    numeric_df = df[METRICS_COLS].apply(pd.to_numeric, errors="coerce")
+    # 容忍缺失列（例如 accuracy 尚未附加时），缺失列将以 NaN 填充
+    numeric_df = df.reindex(columns=METRICS_COLS).apply(pd.to_numeric, errors="coerce")
 
     nan_counts = {col: int(numeric_df[col].isna().sum()) for col in METRICS_COLS}
     nan_rows_total = int(numeric_df.isna().any(axis=1).sum())

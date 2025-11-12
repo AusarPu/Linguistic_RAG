@@ -143,6 +143,7 @@ else
         --port "$REWRITER_PORT"
         --trust-remote-code
         --disable-log-requests
+        --enforce-eager
         --max-model-len 131072
         --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
         --max_num_seqs 1024
@@ -197,6 +198,7 @@ else
         --port "$EMBEDDING_PORT"
         --trust-remote-code
         --disable-log-requests
+        --enforce-eager
         --max-model-len 2048
         --max_num_seqs 1024
         --quantization fp8

@@ -16,12 +16,12 @@ PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 # 检索参数
 MAX_HISTORY = 10
-DENSE_CHUNK_RETRIEVAL_TOP_K = 5
-DENSE_QUESTION_RETRIEVAL_TOP_K = 5 # 可以与上面不同
-SPARSE_KEYWORD_RETRIEVAL_TOP_K = 5
-DENSE_CHUNK_THRESHOLD = 0.5
-DENSE_QUESTION_THRESHOLD = 0.5
-SPARSE_KEYWORD_THRESHOLD = 0.5
+DENSE_CHUNK_RETRIEVAL_TOP_K = 10
+DENSE_QUESTION_RETRIEVAL_TOP_K = 10 # 可以与上面不同
+SPARSE_KEYWORD_RETRIEVAL_TOP_K = 10
+DENSE_CHUNK_THRESHOLD = 0.3
+DENSE_QUESTION_THRESHOLD = 0.3
+SPARSE_KEYWORD_THRESHOLD = 0.3
 
 # BM25和语义搜索融合参数
 BM25_SEMANTIC_FUSION_ALPHA = 0.3  # BM25权重，语义搜索权重为(1-alpha)
@@ -59,13 +59,13 @@ GPU_ID = "4,5"
 VLLM_GENERATOR_HOST = "localhost" # vLLM 监听的主机名 (通常 localhost 即可，因为 Gradio 和 vLLM 在同一容器/机器)
 VLLM_GENERATOR_PORT = 8001        # vLLM 生成器监听的端口
 VLLM_GENERATOR_GPU_ID = GPU_ID        # 分配给生成器的 GPU ID
-VLLM_GENERATOR_MEM_UTILIZATION = 0.7 # GPU 显存使用率 (例如 0.9 for 90%)
+VLLM_GENERATOR_MEM_UTILIZATION = 0.65 # GPU 显存使用率 (例如 0.9 for 90%)
 
 # 重写器服务配置
 VLLM_REWRITER_HOST = "localhost"
 VLLM_REWRITER_PORT = 8001         # vLLM 重写器监听的端口
 VLLM_REWRITER_GPU_ID = GPU_ID        # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
-VLLM_REWRITER_MEM_UTILIZATION = 0.5 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
+VLLM_REWRITER_MEM_UTILIZATION = 0.65 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
 VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 2 # 新增：Rewriter的张量并行数
 
 # 重写器 LoRA 配置
@@ -76,7 +76,7 @@ VLLM_MAX_LORA_RANK = 32           # 支持的最大 LoRA Rank
 VLLM_EMBEDDING_HOST = "localhost"  # Embedding 服务部署在本地
 VLLM_EMBEDDING_PORT = 8850       # 为 Embedding 分配端口 8850
 VLLM_EMBEDDING_GPU_ID = GPU_ID        # 分配给 Embedding 的 GPU ID
-VLLM_EMBEDDING_MEM_UTILIZATION = 0.3 
+VLLM_EMBEDDING_MEM_UTILIZATION = 0.2 
 VLLM_EMBEDDING_TENSOR_PARALLEL_SIZE = 2 # Embedding的张量并行数
 
 # --- API 端点 (根据上面配置自动生成) ---
@@ -113,6 +113,7 @@ REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "top_p": 0.95,
     "repetition_penalty": 1.1,
     "stop": None,
+    "chat_template_kwargs": {"enable_thinking": True}
 }
 USEFULNESS_GENERATION_CONFIG = { # 用于有用性判断 vLLM API
     "max_tokens": 20480,
@@ -141,7 +142,7 @@ USEFULNESS_MAX_CONCURRENT_REQUESTS = 200      # 有用性判断最大并发请�
 
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
-EVALUATION_CONCURRENCY_LIMIT = 50            # 评判请求的客户端并发上限（信号量）
+EVALUATION_CONCURRENCY_LIMIT = 100            # 评判请求的客户端并发上限（信号量）
 EVALUATION_MAX_TOKENS = 10240                   # 单次评判的最大生成 tokens，用于限制长输出
 
 # --- Ragas评估上下文输入限制 ---
