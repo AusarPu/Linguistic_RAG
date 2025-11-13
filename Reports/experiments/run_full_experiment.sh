@@ -353,6 +353,98 @@ main() {
     print_info "详细日志: $([ "$verbose" = true ] && echo "是" || echo "否")"
     print_info "工作目录: $SCRIPT_DIR"
     
+    # 生成运行ID与运行目录（放在 Reports/experiments/datasets/runs 下）
+    local ts=$(date +%Y%m%d-%H%M%S)
+    local ablation_tag=""
+    [[ "$ablation_args" == *"--no-query-rewriter"* ]] && ablation_tag+="-noqr"
+    [[ "$ablation_args" == *"--no-dense-chunks"* ]] && ablation_tag+="-ndc"
+    [[ "$ablation_args" == *"--no-dense-keywords"* ]] && ablation_tag+="-ndk"
+    [[ "$ablation_args" == *"--no-dense-questions"* ]] && ablation_tag+="-ndq"
+    [[ "$ablation_args" == *"--no-usefulness-judger"* ]] && ablation_tag+="-nuj"
+    local run_id="${ts}-enh=${enhance_mode}-bs=${batch_size}${ablation_tag}"
+    local RUNS_BASE_DIR="$SCRIPT_DIR/datasets/runs"
+    local RUN_DIR="$RUNS_BASE_DIR/$run_id"
+    
+    # 计算各阶段是否执行
+    stage_skipped() { local s="$1"; for st in "${skip_stages[@]}"; do [[ "$st" == "$s" ]] && return 0; done; return 1; }
+    local do_converter=true; stage_skipped converter && do_converter=false
+    local do_chunk=true; stage_skipped chunk && do_chunk=false
+    local do_enhance=true; stage_skipped enhance && do_enhance=false
+    local do_index=true; stage_skipped index && do_index=false
+    local do_evaluation=true; stage_skipped evaluation && do_evaluation=false
+    local do_advanced=true; stage_skipped advanced && do_advanced=false
+    
+    # 共享目录（默认路径）
+    local SHARED_CONVERTED="$SCRIPT_DIR/datasets/converted"
+    local SHARED_CHUNKED="$SCRIPT_DIR/datasets/chunked"
+    local SHARED_ENHANCED="$SCRIPT_DIR/datasets/enhanced"
+    local SHARED_KB="$SCRIPT_DIR/datasets/knowledge_bases"
+    local SHARED_EVAL_RESULTS="$SCRIPT_DIR/datasets/rag_evaluation_results"
+    local SHARED_ADV_RESULTS="$SCRIPT_DIR/datasets/advanced_evaluation_results"
+    
+    # 运行目录的子路径
+    local RUN_CONVERTED="$RUN_DIR/converted"
+    local RUN_CHUNKED="$RUN_DIR/chunked"
+    local RUN_ENHANCED="$RUN_DIR/enhanced"
+    local RUN_KB="$RUN_DIR/knowledge_bases"
+    local RUN_EVAL_RESULTS="$RUN_DIR/rag_evaluation_results"
+    local RUN_ADV_RESULTS="$RUN_DIR/advanced_evaluation_results"
+    
+    # 创建运行根目录
+    mkdir -p "$RUN_DIR"
+    print_info "运行ID: $run_id"
+    print_info "运行目录: $RUN_DIR"
+    
+    # 导出环境变量以隔离本次运行的输入/输出
+    # converter 输出目录
+    export CONVERT_OUTPUT_DIR="$RUN_CONVERTED"
+    
+    # chunk 输入/输出目录
+    if [ "$do_converter" = true ]; then
+        export CHUNK_INPUT_DIR="$RUN_CONVERTED"
+    else
+        export CHUNK_INPUT_DIR="$SHARED_CONVERTED"
+    fi
+    export CHUNK_OUTPUT_DIR="$RUN_CHUNKED"
+    
+    # enhance 输入/输出目录
+    if [ "$do_chunk" = true ]; then
+        export ENHANCE_INPUT_DIR="$RUN_CHUNKED"
+    else
+        export ENHANCE_INPUT_DIR="$SHARED_CHUNKED"
+    fi
+    export ENHANCE_OUTPUT_DIR="$RUN_ENHANCED"
+    
+    # index 输入（增强数据）与输出（知识库基目录）
+    if [ "$do_enhance" = true ]; then
+        export INDEX_ENHANCED_DIR="$RUN_ENHANCED"
+    else
+        export INDEX_ENHANCED_DIR="$SHARED_ENHANCED"
+    fi
+    export INDEX_OUTPUT_BASE_DIR="$RUN_KB"
+    
+    # evaluation 问题文件目录、索引基目录、输出目录
+    if [ "$do_converter" = true ]; then
+        export EVAL_QUESTIONS_DIR="$RUN_CONVERTED"
+    else
+        export EVAL_QUESTIONS_DIR="$SHARED_CONVERTED"
+    fi
+    if [ "$do_index" = true ]; then
+        export EVAL_INDEX_BASE_DIR="$RUN_KB"
+    else
+        export EVAL_INDEX_BASE_DIR="$SHARED_KB"
+    fi
+    export EVAL_OUTPUT_BASE_DIR="$RUN_EVAL_RESULTS"
+    
+    # advanced evaluation 输入/输出与KB基目录
+    export RUN_RESULTS_DIR="$RUN_EVAL_RESULTS"
+    export RUN_ADV_OUTPUT_DIR="$RUN_ADV_RESULTS"
+    if [ "$do_index" = true ]; then
+        export KB_BASE_DIR="$RUN_KB"
+    else
+        export KB_BASE_DIR="$SHARED_KB"
+    fi
+    
     # 记录开始时间
     local start_time=$(date +%s)
     

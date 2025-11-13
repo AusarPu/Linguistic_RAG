@@ -163,23 +163,27 @@ def process_all_datasets(converted_dir: str, output_dir: str):
 
 def main():
     """主函数"""
-    # 设置路径
+    # 设置路径，支持环境变量覆盖以隔离运行
     base_dir = Path(__file__).parent.parent
-    converted_dir = base_dir / "datasets" / "converted"
-    output_dir = base_dir / "datasets" / "chunked"
-    
+    default_converted = base_dir / "datasets" / "converted"
+    default_chunked = base_dir / "datasets" / "chunked"
+
+    # 允许通过环境变量覆盖
+    converted_dir = Path(os.environ.get("CHUNK_INPUT_DIR", str(default_converted)))
+    output_dir = Path(os.environ.get("CHUNK_OUTPUT_DIR", str(default_chunked)))
+
     print("=== 数据集分块处理 ===")
     print(f"输入目录: {converted_dir}")
     print(f"输出目录: {output_dir}")
-    
+
     # 检查输入目录是否存在
     if not converted_dir.exists():
         print(f"错误: 输入目录 {converted_dir} 不存在")
         return
-    
+
     # 处理所有数据集
     process_all_datasets(str(converted_dir), str(output_dir))
-    
+
     print("\n=== 处理完成 ===")
 
 

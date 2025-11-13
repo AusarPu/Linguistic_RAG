@@ -31,29 +31,51 @@ logger = logging.getLogger(__name__)
 
 
 
-DATASETS = {
-    "hotpotqa": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/hotpotqa_validation_kb_chunks.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/hotpotqa",
-        "output_dir": "/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results/hotpotqa"
-    },
-    "ms_marco": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/ms_marco_validation_kb_chunks.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/ms_marco",
-        "output_dir": "/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results/ms_marco"
-    },
-    "natural_questions": {
-        # 使用1k子集，确保评估只针对构建索引用到的1000条问题
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/natural_questions_validation_kb_chunks.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/natural_questions",
-        "output_dir": "/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results/natural_questions"
-    },
-    "triviaqa": {
-        "questions_file": "/home/pushihao/RAG/Reports/experiments/datasets/converted/triviaqa_validation_kb_chunks.json",
-        "index_dir": "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/triviaqa",
-        "output_dir": "/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results/triviaqa"
+def _build_dataset_paths() -> Dict[str, Dict[str, str]]:
+    """构造评估阶段所需的输入/输出路径，支持环境变量覆盖。
+
+    环境变量：
+    - EVAL_QUESTIONS_DIR：converted 的目录（默认共享路径）
+    - EVAL_INDEX_BASE_DIR：knowledge_bases 的基目录（默认共享路径）
+    - EVAL_OUTPUT_BASE_DIR：rag_evaluation_results 的基目录（默认共享路径）
+    """
+    questions_dir = os.environ.get(
+        "EVAL_QUESTIONS_DIR",
+        "/home/pushihao/RAG/Reports/experiments/datasets/converted",
+    )
+    index_base = os.environ.get(
+        "EVAL_INDEX_BASE_DIR",
+        "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases",
+    )
+    output_base = os.environ.get(
+        "EVAL_OUTPUT_BASE_DIR",
+        "/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results",
+    )
+
+    return {
+        "hotpotqa": {
+            "questions_file": os.path.join(questions_dir, "hotpotqa_validation_kb_chunks.json"),
+            "index_dir": os.path.join(index_base, "hotpotqa"),
+            "output_dir": os.path.join(output_base, "hotpotqa"),
+        },
+        "ms_marco": {
+            "questions_file": os.path.join(questions_dir, "ms_marco_validation_kb_chunks.json"),
+            "index_dir": os.path.join(index_base, "ms_marco"),
+            "output_dir": os.path.join(output_base, "ms_marco"),
+        },
+        "natural_questions": {
+            "questions_file": os.path.join(questions_dir, "natural_questions_validation_kb_chunks.json"),
+            "index_dir": os.path.join(index_base, "natural_questions"),
+            "output_dir": os.path.join(output_base, "natural_questions"),
+        },
+        "triviaqa": {
+            "questions_file": os.path.join(questions_dir, "triviaqa_validation_kb_chunks.json"),
+            "index_dir": os.path.join(index_base, "triviaqa"),
+            "output_dir": os.path.join(output_base, "triviaqa"),
+        },
     }
-}
+
+DATASETS = _build_dataset_paths()
 
 # 并发配置
 DEFAULT_BATCH_SIZE = 10  # 默认并发数（同时运行的任务数）

@@ -6,8 +6,9 @@
 # 脚本配置
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADVANCED_EVAL_SCRIPT="$SCRIPT_DIR/evaluation/advanced_evaluation.py"
-RESULTS_DIR="/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results"
-OUTPUT_DIR="/home/pushihao/RAG/Reports/experiments/datasets/advanced_evaluation_results"
+# 允许通过环境变量覆盖，以支持 runs/<run_id>
+RESULTS_DIR="${RUN_RESULTS_DIR:-/home/pushihao/RAG/Reports/experiments/datasets/rag_evaluation_results}"
+OUTPUT_DIR="${RUN_ADV_OUTPUT_DIR:-/home/pushihao/RAG/Reports/experiments/datasets/advanced_evaluation_results}"
 
 # 颜色输出
 RED='\033[0;31m'

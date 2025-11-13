@@ -25,9 +25,9 @@ from preprocess.llm_chunk_processor import refine_all_chunks_with_llm, enhance_c
 config.setup_logging()
 logger = logging.getLogger(__name__)
 
-# 目录配置
-CHUNKED_DIR = "/home/pushihao/RAG/Reports/experiments/datasets/chunked"
-ENHANCED_DIR = "/home/pushihao/RAG/Reports/experiments/datasets/enhanced"
+# 目录配置，支持环境变量覆盖以隔离不同运行
+CHUNKED_DIR = os.environ.get("ENHANCE_INPUT_DIR", "/home/pushihao/RAG/Reports/experiments/datasets/chunked")
+ENHANCED_DIR = os.environ.get("ENHANCE_OUTPUT_DIR", "/home/pushihao/RAG/Reports/experiments/datasets/enhanced")
 
 def ensure_output_dir():
     """确保输出目录存在"""

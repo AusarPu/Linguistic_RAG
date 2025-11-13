@@ -28,9 +28,9 @@ DATASETS = [
     "triviaqa"
 ]
 
-# 路径配置
-ENHANCED_DATA_DIR = "/home/pushihao/RAG/Reports/experiments/datasets/enhanced"
-OUTPUT_BASE_DIR = "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases"
+# 路径配置，支持环境变量覆盖以隔离不同运行
+ENHANCED_DATA_DIR = os.environ.get("INDEX_ENHANCED_DIR", "/home/pushihao/RAG/Reports/experiments/datasets/enhanced")
+OUTPUT_BASE_DIR = os.environ.get("INDEX_OUTPUT_BASE_DIR", "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases")
 
 def get_enhanced_file_path(dataset_name: str) -> str:
     """获取增强数据集文件路径"""

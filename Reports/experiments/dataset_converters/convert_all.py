@@ -9,6 +9,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+import os
 
 # 统一配置
 DATASET_CONFIG = {
@@ -35,8 +36,11 @@ DATASET_CONFIG = {
 }
 
 def get_output_dir():
-    """获取统一的输出目录"""
-    return DATASET_CONFIG["output_dir"]
+    """获取统一的输出目录
+    支持通过环境变量 CONVERT_OUTPUT_DIR 覆盖默认输出目录，以便隔离不同实验运行。
+    """
+    env_dir = os.environ.get("CONVERT_OUTPUT_DIR")
+    return env_dir if env_dir else DATASET_CONFIG["output_dir"]
 
 def get_output_filename(dataset_name):
     """根据数据集名称生成输出文件名"""

@@ -168,7 +168,7 @@ def setup_logging():
     """
     # 根日志：只输出 WARNING 及以上
     logging.basicConfig(
-        level=logging.WARN,
+        level=logging.INFO,
         format=LOG_FORMAT,
         datefmt=LOG_DATE_FORMAT,
         handlers=[logging.StreamHandler(sys.stdout)],

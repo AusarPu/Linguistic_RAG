@@ -51,9 +51,12 @@ def _get_dataset_name_from_path(input_file: str) -> str:
 
 
 def _init_kb_for_dataset(dataset_name: str):
-    """为指定数据集初始化 KnowledgeBase（通过动态设置 config 路径）"""
+    """为指定数据集初始化 KnowledgeBase（通过动态设置 config 路径）
+    支持通过环境变量 KB_BASE_DIR 覆盖默认知识库基目录，以适配 runs/<run_id>。
+    """
     # 动态指向该数据集的索引目录
-    index_dir = f"/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases/{dataset_name}"
+    kb_base = os.environ.get("KB_BASE_DIR", "/home/pushihao/RAG/Reports/experiments/datasets/knowledge_bases")
+    index_dir = os.path.join(kb_base, dataset_name)
     config.FAISS_INDEX_CHUNKS_SAVE_PATH = os.path.join(index_dir, "faiss_index_chunks_ip.idx")
     config.INDEXED_CHUNKS_METADATA_SAVE_PATH = os.path.join(index_dir, "indexed_chunks_metadata.json")
     config.PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH = os.path.join(index_dir, "phrase_dense_embeddings_map.pkl")
