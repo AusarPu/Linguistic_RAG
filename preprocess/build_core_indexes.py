@@ -20,6 +20,46 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import jieba
+import re
+from pathlib import Path as _P
+from script.config_rag import BM25_TOKENIZER_LANG, BM25_TOKENIZER_SOURCE, EN_STOPWORDS_FILE
+from preprocess.vllm_tokenizer import get_local_hf_tokenizer
+
+_en_stopwords = set()
+if EN_STOPWORDS_FILE:
+    p = _P(EN_STOPWORDS_FILE)
+    if p.is_file():
+        with open(p, "r", encoding="utf-8") as f:
+            for line in f:
+                t = line.strip().lower()
+                if t:
+                    _en_stopwords.add(t)
+
+_hf_tok = None
+def _is_english(text: str) -> bool:
+    letters = re.findall(r"[A-Za-z]", text)
+    return len(letters) > 0 and (len(letters) / max(len(text), 1)) > 0.2
+
+def _tokenize_en(text: str) -> list:
+    if BM25_TOKENIZER_SOURCE == "hf":
+        global _hf_tok
+        if _hf_tok is None:
+            _hf_tok = get_local_hf_tokenizer()
+        toks = _hf_tok.tokenize(text)
+        toks = [t.lower() for t in toks if any(c.isalpha() for c in t)]
+    else:
+        toks = re.findall(r"[A-Za-z]+", text)
+        toks = [t.lower() for t in toks]
+    return [t for t in toks if len(t) > 1 and t not in _en_stopwords]
+
+def _tokenize_zh(text: str) -> list:
+    toks = list(jieba.cut(text))
+    return [t.strip() for t in toks if t.strip() and len(t.strip()) > 1]
+
+def tokenize_for_bm25(text: str) -> list:
+    if BM25_TOKENIZER_LANG == "en" or (BM25_TOKENIZER_LANG == "auto" and _is_english(text)):
+        return _tokenize_en(text)
+    return _tokenize_zh(text)
 
 
 
@@ -243,9 +283,7 @@ def build_all_search_indexes(
                 tokenized_chunks = []
                 with tqdm(total=len(texts_for_chunk_dense_embedding), desc="文本块分词", unit="块") as pbar:
                     for text in texts_for_chunk_dense_embedding:
-                        tokens = list(jieba.cut(text))
-                        # 过滤掉空白符和单字符
-                        tokens = [token.strip() for token in tokens if token.strip() and len(token.strip()) > 1]
+                        tokens = tokenize_for_bm25(text)
                         tokenized_chunks.append(tokens)
                         pbar.update(1)
                 

@@ -19,9 +19,13 @@ MAX_HISTORY = 10
 DENSE_CHUNK_RETRIEVAL_TOP_K = 10
 DENSE_QUESTION_RETRIEVAL_TOP_K = 10 # 可以与上面不同
 SPARSE_KEYWORD_RETRIEVAL_TOP_K = 10
-DENSE_CHUNK_THRESHOLD = 0.3
-DENSE_QUESTION_THRESHOLD = 0.3
-SPARSE_KEYWORD_THRESHOLD = 0.3
+DENSE_CHUNK_THRESHOLD = 0.5
+DENSE_QUESTION_THRESHOLD = 0.5
+SPARSE_KEYWORD_THRESHOLD = 0.5
+
+BM25_TOKENIZER_LANG = "auto"
+BM25_TOKENIZER_SOURCE = "hf"
+EN_STOPWORDS_FILE = ""
 
 # BM25和语义搜索融合参数
 BM25_SEMANTIC_FUSION_ALPHA = 0.3  # BM25权重，语义搜索权重为(1-alpha)
@@ -153,7 +157,7 @@ EVALUATION_CONTEXTS_MAX_CHUNKS = 50             # contexts 输入的最大块数
 
 # --- 有用性判断软保留策略 ---
 # 在多跳或不确定场景，避免过度过滤导致证据链断裂
-SOFT_KEEP_MIN_CHUNKS = 3                      # 至少保留的上下文块数（含判定为useful者）
+SOFT_KEEP_MIN_CHUNKS = 5                      # 至少保留的上下文块数（含判定为useful者）
 SOFT_KEEP_RATIO = 0.3                         # 至少保留原候选的比例（含判定为useful者）
 
 # --- 日志配置函数 (方便在其他地方统一设置) ---
@@ -168,7 +172,7 @@ def setup_logging():
     """
     # 根日志：只输出 WARNING 及以上
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARN,
         format=LOG_FORMAT,
         datefmt=LOG_DATE_FORMAT,
         handlers=[logging.StreamHandler(sys.stdout)],

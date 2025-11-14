@@ -1,6 +1,6 @@
 """
 Create Advanced Visualization Charts
-Generates heatmaps, radar charts, and other advanced visualizations
+Reads real metrics from runs CSV
 """
 
 import matplotlib.pyplot as plt
@@ -10,378 +10,146 @@ import numpy as np
 import os
 import sys
 
-# Add the current directory to path to import our modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from data_parser import RAGDataParser
 from visualization_utils import RAGVisualizer
 
 def create_performance_heatmap(parser, visualizer, output_dir):
-    """Create performance matrix heatmap"""
-    
-    # Create simulated data for different experiments and datasets
-    experiments = [
-        'Complete System',
-        'No Query Rewriter', 
-        'No Usefulness Judge',
-        'No Dense Chunk',
-        'No Dense Keywords',
-        'No Dense Questions'
-    ]
-    
+    runs = parser.load_all_runs()
     datasets = ['HotpotQA', 'MS MARCO', 'Natural Questions', 'TriviaQA']
-    
-    # Load current system data for baseline
-    current_data = parser.load_experiment_data('advanced_evaluation_results')
-    
-    if 'error' not in current_data and 'error' not in current_data.get('summary', {}):
-        current_datasets = current_data['summary']['datasets']
-        baseline_accuracies = [
-            current_datasets.get('hotpotqa', {}).get('accuracy', 0.63) * 100,
-            current_datasets.get('ms_marco', {}).get('accuracy', 0.96) * 100,
-            current_datasets.get('natural_questions', {}).get('accuracy', 0.81) * 100,
-            current_datasets.get('triviaqa', {}).get('accuracy', 0.68) * 100
-        ]
-    else:
-        # Fallback values
-        baseline_accuracies = [63.0, 96.0, 81.0, 68.0]
-    
-    # Create simulated performance matrix
-    # Each row represents an experiment, each column a dataset
-    performance_matrix = []
-    
-    # Performance drops for each component removal (different impact per dataset)
-    component_impacts = {
-        'Complete System': [0, 0, 0, 0],
-        'No Query Rewriter': [-8, -6, -9, -7],
-        'No Usefulness Judge': [-15, -8, -12, -14],
-        'No Dense Chunk': [-7, -5, -8, -6],
-        'No Dense Keywords': [-4, -3, -5, -4],
-        'No Dense Questions': [-5, -4, -6, -5]
-    }
-    
-    for exp in experiments:
+    dataset_keys = ['hotpotqa', 'ms_marco', 'natural_questions', 'triviaqa']
+    run_labels = parser.get_run_labels()
+    matrix = []
+    row_names = []
+    for run_name, data in runs.items():
         row = []
-        for i, base_acc in enumerate(baseline_accuracies):
-            impact = component_impacts[exp][i]
-            final_acc = base_acc + impact
-            row.append(max(final_acc, 0))  # Ensure non-negative
-        performance_matrix.append(row)
-    
-    # Create DataFrame
-    df = pd.DataFrame(performance_matrix, index=experiments, columns=datasets)
-    
-    # Create heatmap
+        for dk in dataset_keys:
+            if dk in data['datasets']:
+                row.append(data['datasets'][dk]['accuracy'] * 100)
+            else:
+                row.append(0)
+        matrix.append(row)
+        row_names.append(run_labels.get(run_name, run_name))
+    df = pd.DataFrame(matrix, index=row_names, columns=datasets)
     fig, ax = plt.subplots(figsize=(10, 8))
-    
-    # Use a diverging colormap centered around the mean performance
-    sns.heatmap(df, annot=True, fmt='.1f', cmap='RdYlBu_r', 
-               center=df.values.mean(), square=True, ax=ax,
-               cbar_kws={'shrink': 0.8, 'label': 'Accuracy (%)'})
-    
-    ax.set_title('Performance Matrix: Experiments × Datasets\n(Accuracy %)', 
-                fontsize=14, fontweight='bold', pad=20)
+    sns.heatmap(df, annot=True, fmt='.1f', cmap='RdYlBu_r', center=df.values.mean(), square=False, ax=ax,
+                cbar_kws={'shrink': 0.8, 'label': 'Accuracy (%)'})
+    ax.set_title('Performance Matrix: Runs × Datasets (Accuracy %)', fontsize=14, fontweight='bold', pad=20)
     ax.set_xlabel('Datasets', fontsize=12, fontweight='bold')
-    ax.set_ylabel('System Configurations', fontsize=12, fontweight='bold')
-    
-    # Rotate labels for better readability
+    ax.set_ylabel('Runs', fontsize=12, fontweight='bold')
     plt.xticks(rotation=45, ha='right')
     plt.yticks(rotation=0)
-    
     plt.tight_layout()
-    
-    # Save the figure
     output_path = os.path.join(output_dir, 'performance_heatmap.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"Performance heatmap saved to: {output_path}")
-    
     return fig
 
 def create_comprehensive_radar_chart(parser, visualizer, output_dir):
-    """Create comprehensive radar chart comparing system configurations"""
-    
-    # Load current system data
-    current_data = parser.load_experiment_data('advanced_evaluation_results')
-    
-    if 'error' not in current_data and 'error' not in current_data.get('summary', {}):
-        overall = current_data['summary']['overall']
-        base_accuracy = overall.get('overall_accuracy', 0.77)
-    else:
-        base_accuracy = 0.77
-    
-    # Define evaluation dimensions
-    dimensions = [
-        'Overall Accuracy',
-        'Retrieval Quality', 
-        'Answer Relevance',
-        'System Robustness',
-        'Processing Speed',
-        'Resource Efficiency'
-    ]
-    
-    # Simulated performance scores for different configurations
-    configurations = {
-        'Complete System': [
-            base_accuracy,  # Overall accuracy
-            0.85,          # Retrieval quality
-            0.82,          # Answer relevance  
-            0.88,          # System robustness
-            0.75,          # Processing speed (slower due to complexity)
-            0.70           # Resource efficiency (more resource intensive)
-        ],
-        'Simplified System\n(No Usefulness Judge)': [
-            base_accuracy - 0.12,  # Lower accuracy
-            0.78,                  # Lower retrieval quality
-            0.75,                  # Lower answer relevance
-            0.82,                  # Slightly lower robustness
-            0.85,                  # Faster processing
-            0.80                   # More efficient
+    runs = parser.load_all_runs()
+    run_labels = parser.get_run_labels()
+    keys = list(runs.keys())
+    a_key = keys[0]
+    b_key = 'result_6_bm25' if 'result_6_bm25' in runs else keys[-1]
+    dimensions = ['Accuracy', 'Context Recall', 'Context Precision', 'Faithfulness', 'Answer Relevancy']
+    data = {}
+    for key in [a_key, b_key]:
+        o = runs[key]['overall']
+        vals = [
+            float(o['overall_accuracy']),
+            float(o['overall_context_recall']),
+            float(o['overall_context_precision']),
+            float(o['overall_faithfulness']),
+            float(o['overall_answer_relevancy'])
         ]
-    }
-    
-    # Create radar chart
+        data[run_labels.get(key, key)] = vals
     fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
-    
-    # Calculate angles for each dimension
     angles = np.linspace(0, 2 * np.pi, len(dimensions), endpoint=False).tolist()
-    angles += angles[:1]  # Complete the circle
-    
-    colors = ['#2E86AB', '#E74C3C']
-    
-    for i, (config_name, values) in enumerate(configurations.items()):
-        values += values[:1]  # Complete the circle
-        
-        ax.plot(angles, values, 'o-', linewidth=3, label=config_name, 
-               color=colors[i], markersize=8)
-        ax.fill(angles, values, alpha=0.25, color=colors[i])
-    
-    # Customize the chart
+    angles += angles[:1]
+    colors = visualizer.color_schemes['comparison']
+    for i, (name, values) in enumerate(data.items()):
+        v = values + values[:1]
+        ax.plot(angles, v, 'o-', linewidth=2, label=name, color=colors[i % len(colors)])
+        ax.fill(angles, v, alpha=0.25, color=colors[i % len(colors)])
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(dimensions, fontsize=11)
+    ax.set_xticklabels(dimensions)
     ax.set_ylim(0, 1)
-    ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
-    ax.set_yticklabels(['20%', '40%', '60%', '80%', '100%'])
-    ax.grid(True, alpha=0.3)
-    
-    ax.set_title('Comprehensive System Performance Comparison\n(Multi-dimensional Analysis)', 
-                fontsize=14, fontweight='bold', pad=30)
-    
-    # Position legend outside the plot
-    ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.0), fontsize=11)
-    
+    ax.set_title('System Metrics Radar (Real CSV)', fontsize=14, fontweight='bold', pad=30)
+    ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.0))
+    ax.grid(True)
     plt.tight_layout()
-    
-    # Save the figure
     output_path = os.path.join(output_dir, 'comprehensive_radar_chart.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"Comprehensive radar chart saved to: {output_path}")
-    
     return fig
 
 def create_retrieval_analysis_chart(parser, visualizer, output_dir):
-    """Create retrieval effectiveness analysis chart"""
-    
-    # Load current system data
-    current_data = parser.load_experiment_data('advanced_evaluation_results')
-    
-    if 'error' not in current_data and 'error' not in current_data.get('summary', {}):
-        overall = current_data['summary']['overall']
-        avg_chunks = overall.get('avg_chunks_per_question', 7.38)
-    else:
-        avg_chunks = 7.38
-    
-    # Create a multi-panel figure for retrieval analysis
+    runs = parser.load_all_runs()
+    preferred = 'result_5_full' if 'result_5_full' in runs else list(runs.keys())[0]
+    data = runs[preferred]
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-    fig.suptitle('Retrieval System Analysis Dashboard', fontsize=16, fontweight='bold')
-    
-    # 1. Chunks per question distribution (simulated)
-    ax1.hist(np.random.normal(avg_chunks, 2, 1000), bins=30, alpha=0.7, color='#2E86AB', edgecolor='black')
-    ax1.axvline(avg_chunks, color='red', linestyle='--', linewidth=2, label=f'Average: {avg_chunks:.1f}')
-    ax1.set_xlabel('Number of Retrieved Chunks')
-    ax1.set_ylabel('Frequency')
-    ax1.set_title('Distribution of Retrieved Chunks per Question')
-    ax1.legend()
+    fig.suptitle('Retrieval Analysis (Real CSV)', fontsize=16, fontweight='bold')
+    ds_labels = parser.get_dataset_labels()
+    names = []
+    accs = []
+    recalls = []
+    precs = []
+    for dk, lab in ds_labels.items():
+        if dk in data['datasets']:
+            names.append(lab)
+            accs.append(data['datasets'][dk]['accuracy'] * 100)
+            recalls.append(data['datasets'][dk]['context_recall'] * 100)
+            precs.append(data['datasets'][dk]['context_precision'] * 100)
+    x = np.arange(len(names))
+    ax1.bar(names, recalls, color=visualizer.color_schemes['ablation'][:len(names)])
+    ax1.set_title('Context Recall by Dataset (%)')
+    ax1.set_ylim(0, 100)
     ax1.grid(True, alpha=0.3)
-    
-    # 2. Retrieval method effectiveness
-    methods = ['BM25', 'Dense Chunk', 'Dense Keywords', 'Dense Questions']
-    effectiveness = [0.72, 0.85, 0.68, 0.75]  # Simulated effectiveness scores
-    
-    bars = ax2.bar(methods, effectiveness, color=visualizer.color_schemes['ablation'][:4], alpha=0.8)
-    for bar, eff in zip(bars, effectiveness):
-        height = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                f'{eff:.2f}', ha='center', va='bottom', fontweight='bold')
-    
-    ax2.set_ylabel('Effectiveness Score')
-    ax2.set_title('Retrieval Method Effectiveness')
-    ax2.set_ylim(0, 1)
+    ax2.bar(names, precs, color=visualizer.color_schemes['ablation'][:len(names)])
+    ax2.set_title('Context Precision by Dataset (%)')
+    ax2.set_ylim(0, 100)
     ax2.grid(True, alpha=0.3)
-    plt.setp(ax2.get_xticklabels(), rotation=45, ha='right')
-    
-    # 3. Query complexity vs retrieval success (simulated)
-    complexity_levels = ['Simple', 'Medium', 'Complex', 'Very Complex']
-    success_rates = [0.92, 0.85, 0.73, 0.61]
-    
-    ax3.plot(complexity_levels, success_rates, 'o-', linewidth=3, markersize=8, color='#F18F01')
-    ax3.fill_between(complexity_levels, success_rates, alpha=0.3, color='#F18F01')
-    
-    for i, rate in enumerate(success_rates):
-        ax3.text(i, rate + 0.02, f'{rate:.0%}', ha='center', va='bottom', fontweight='bold')
-    
-    ax3.set_ylabel('Retrieval Success Rate')
-    ax3.set_title('Query Complexity vs Retrieval Success')
-    ax3.set_ylim(0, 1)
+    ax3.plot(names, accs, 'o-', linewidth=2, color='#2E86AB')
+    ax3.set_title('Accuracy by Dataset (%)')
+    ax3.set_ylim(0, 100)
     ax3.grid(True, alpha=0.3)
-    
-    # 4. Soft retention strategy impact
-    retention_thresholds = np.linspace(0.1, 0.9, 9)
-    retained_chunks = [8.2, 7.8, 7.4, 6.9, 6.3, 5.7, 5.0, 4.2, 3.5]
-    accuracy_scores = [0.74, 0.76, 0.77, 0.77, 0.76, 0.74, 0.71, 0.67, 0.62]
-    
-    ax4_twin = ax4.twinx()
-    
-    line1 = ax4.plot(retention_thresholds, retained_chunks, 'o-', color='#2E86AB', 
-                    linewidth=2, label='Avg Retained Chunks')
-    line2 = ax4_twin.plot(retention_thresholds, accuracy_scores, 's-', color='#E74C3C', 
-                         linewidth=2, label='Accuracy')
-    
-    ax4.set_xlabel('Usefulness Threshold')
-    ax4.set_ylabel('Average Retained Chunks', color='#2E86AB')
-    ax4_twin.set_ylabel('Accuracy', color='#E74C3C')
-    ax4.set_title('Soft Retention Strategy Impact')
-    
-    # Combine legends
-    lines = line1 + line2
-    labels = [l.get_label() for l in lines]
-    ax4.legend(lines, labels, loc='center right')
-    
+    ax4.scatter(recalls, accs, c=precs, cmap='RdYlGn')
+    ax4.set_xlabel('Context Recall (%)')
+    ax4.set_ylabel('Accuracy (%)')
+    ax4.set_title('Accuracy vs Recall (colored by Precision)')
     ax4.grid(True, alpha=0.3)
-    
     plt.tight_layout()
-    
-    # Save the figure
     output_path = os.path.join(output_dir, 'retrieval_analysis_dashboard.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"Retrieval analysis dashboard saved to: {output_path}")
-    
     return fig
 
 def create_system_comparison_matrix(parser, visualizer, output_dir):
-    """Create a comprehensive system comparison matrix"""
-    
-    # Define system variants and their characteristics
-    systems = {
-        'Complete RAG System': {
-            'Query Rewriting': '✓',
-            'Multi-path Retrieval': '✓', 
-            'Usefulness Judgment': '✓',
-            'Soft Retention': '✓',
-            'Accuracy': '77.0%',
-            'Complexity': 'High',
-            'Speed': 'Medium'
-        },
-        'Basic RAG System': {
-            'Query Rewriting': '✗',
-            'Multi-path Retrieval': '✗',
-            'Usefulness Judgment': '✗', 
-            'Soft Retention': '✗',
-            'Accuracy': '58.5%',
-            'Complexity': 'Low',
-            'Speed': 'Fast'
-        },
-        'Enhanced Retrieval': {
-            'Query Rewriting': '✓',
-            'Multi-path Retrieval': '✓',
-            'Usefulness Judgment': '✗',
-            'Soft Retention': '✗', 
-            'Accuracy': '68.5%',
-            'Complexity': 'Medium',
-            'Speed': 'Medium'
-        },
-        'Smart Filtering': {
-            'Query Rewriting': '✗',
-            'Multi-path Retrieval': '✗',
-            'Usefulness Judgment': '✓',
-            'Soft Retention': '✓',
-            'Accuracy': '64.8%',
-            'Complexity': 'Medium',
-            'Speed': 'Medium'
-        }
-    }
-    
-    # Create comparison table visualization
+    runs = parser.load_all_runs()
+    run_labels = parser.get_run_labels()
     fig, ax = plt.subplots(figsize=(14, 8))
     ax.axis('tight')
     ax.axis('off')
-    
-    # Prepare data for table
-    features = list(next(iter(systems.values())).keys())
-    system_names = list(systems.keys())
-    
-    table_data = []
-    for system in system_names:
-        row = [systems[system][feature] for feature in features]
-        table_data.append(row)
-    
-    # Create table
-    table = ax.table(cellText=table_data,
-                    rowLabels=system_names,
-                    colLabels=features,
-                    cellLoc='center',
-                    loc='center',
-                    bbox=[0, 0, 1, 1])
-    
-    # Style the table
+    col_labels = ['Run', 'Accuracy (%)', 'Context Recall (%)', 'Context Precision (%)']
+    rows = []
+    for run_name, data in runs.items():
+        o = data['overall']
+        rows.append([
+            run_labels.get(run_name, run_name),
+            f"{o['overall_accuracy']*100:.1f}",
+            f"{o['overall_context_recall']*100:.1f}",
+            f"{o['overall_context_precision']*100:.1f}"
+        ])
+    table = ax.table(cellText=rows, colLabels=col_labels, cellLoc='center', loc='center', bbox=[0, 0, 1, 1])
     table.auto_set_font_size(False)
     table.set_fontsize(10)
     table.scale(1, 2)
-    
-    # Color coding
-    colors = {
-        '✓': '#E8F5E8',
-        '✗': '#FFE8E8', 
-        '77.0%': '#E8F5E8',
-        '68.5%': '#FFF3E0',
-        '64.8%': '#FFF3E0',
-        '58.5%': '#FFE8E8'
-    }
-    
-    # Apply colors to cells
-    for i in range(len(system_names)):
-        for j in range(len(features)):
-            cell_value = table_data[i][j]
-            if cell_value in colors:
-                table[(i+1, j)].set_facecolor(colors[cell_value])
-    
-    # Style headers
-    for j in range(len(features)):
-        table[(0, j)].set_facecolor('#D3D3D3')
-        table[(0, j)].set_text_props(weight='bold')
-    
-    # Style row labels
-    for i in range(len(system_names)):
-        table[(i+1, -1)].set_facecolor('#F0F0F0')
-        table[(i+1, -1)].set_text_props(weight='bold')
-    
-    ax.set_title('RAG System Variants Comparison Matrix', 
-                fontsize=16, fontweight='bold', pad=20)
-    
-    # Add legend
-    legend_elements = [
-        plt.Rectangle((0,0),1,1, facecolor='#E8F5E8', label='Available/High Performance'),
-        plt.Rectangle((0,0),1,1, facecolor='#FFF3E0', label='Medium Performance'),
-        plt.Rectangle((0,0),1,1, facecolor='#FFE8E8', label='Not Available/Low Performance')
-    ]
-    ax.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=3)
-    
+    ax.set_title('System Comparison Matrix (Real CSV)', fontsize=16, fontweight='bold', pad=20)
     plt.tight_layout()
-    
-    # Save the figure
     output_path = os.path.join(output_dir, 'system_comparison_matrix.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"System comparison matrix saved to: {output_path}")
-    
     return fig
 
 def main():
@@ -425,3 +193,55 @@ def main():
 
 if __name__ == "__main__":
     main()
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from visualization_utils import RAGVisualizer
+
+def plot_multipath_fusion_cost(output_dir: str, output_name: str) -> str:
+    datasets = ["HotpotQA", "TriviaQA"]
+    r2_acc = [0.75 * 100, 0.77 * 100]
+    r4_acc = [0.69 * 100, 0.74 * 100]
+    r2_rec = [0.88 * 100, 0.79 * 100]
+    r4_rec = [0.90 * 100, 0.82 * 100]
+
+    viz = RAGVisualizer(output_dir)
+    c1, c2 = viz.color_schemes["comparison"][0], viz.color_schemes["comparison"][1]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    fig.suptitle("Cost of Naive Multi-path Fusion (R4)", fontsize=16, fontweight="bold")
+    x = np.arange(len(datasets))
+    width = 0.35
+
+    b1 = ax1.bar(x - width/2, r2_acc, width, label="R2: P1 + P2", color=c1, alpha=0.85)
+    b2 = ax1.bar(x + width/2, r4_acc, width, label="R4: P1 + P2 + P3", color=c2, alpha=0.85)
+    ax1.set_title("Accuracy (%)", fontweight="bold")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(datasets)
+    ax1.set_ylim(0, 105)
+    ax1.grid(True, alpha=0.3, axis="y")
+    for bars in [b1, b2]:
+        for bar in bars:
+            h = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2, h + 1, f"{h:.1f}%", ha="center", va="bottom")
+
+    b3 = ax2.bar(x - width/2, r2_rec, width, label="R2: P1 + P2", color=c1, alpha=0.85)
+    b4 = ax2.bar(x + width/2, r4_rec, width, label="R4: P1 + P2 + P3", color=c2, alpha=0.85)
+    ax2.set_title("Context Recall (%)", fontweight="bold")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(datasets)
+    ax2.set_ylim(0, 105)
+    ax2.grid(True, alpha=0.3, axis="y")
+    for bars in [b3, b4]:
+        for bar in bars:
+            h = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2, h + 1, f"{h:.1f}%", ha="center", va="bottom")
+
+    handles, labels = ax1.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper right")
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, output_name)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out_path

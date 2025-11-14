@@ -338,9 +338,11 @@ class KnowledgeBase:
         # 用于存储所有查询的RRF融合结果
         chunk_id_to_rrf_info: Dict[str, Dict[str, Any]] = {}
         
+        from preprocess.build_core_indexes import tokenize_for_bm25
         for query in queries:        
             # 1. BM25检索 - 直接对文本块进行检索
-            bm25_scores = self.chunk_bm25_index.get_scores(query)
+            query_tokens = tokenize_for_bm25(query)
+            bm25_scores = self.chunk_bm25_index.get_scores(query_tokens)
             
             # 获取BM25排序结果（按分数降序）
             bm25_ranked_indices = np.argsort(bm25_scores)[::-1]

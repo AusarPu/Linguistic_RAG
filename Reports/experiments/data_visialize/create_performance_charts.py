@@ -18,16 +18,11 @@ from visualization_utils import RAGVisualizer
 
 def create_dataset_performance_chart(parser, visualizer, output_dir):
     """Create dataset performance comparison chart"""
-    
-    # Load current experiment data
-    current_data = parser.load_experiment_data('advanced_evaluation_results')
-    
-    if 'error' in current_data or 'error' in current_data.get('summary', {}):
-        print("Error loading data for dataset performance chart")
-        return None
-    
-    # Extract dataset metrics
-    datasets = current_data['summary']['datasets']
+    runs = parser.load_all_runs()
+    preferred = 'result_5_full'
+    run_name = preferred if preferred in runs else sorted(runs.keys())[0]
+    current_data = runs[run_name]
+    datasets = current_data['datasets']
     dataset_labels = parser.get_dataset_labels()
     
     # Prepare data for visualization
@@ -38,9 +33,9 @@ def create_dataset_performance_chart(parser, visualizer, output_dir):
     
     for dataset, metrics in datasets.items():
         dataset_names.append(dataset_labels.get(dataset, dataset))
-        accuracies.append(metrics.get('accuracy', 0) * 100)  # Convert to percentage
-        retrieval_rates.append(metrics.get('retrieval_success_rate', 0) * 100)
-        f1_scores.append(metrics.get('f1_score', 0))
+        accuracies.append(metrics.get('accuracy', 0) * 100)
+        retrieval_rates.append(metrics.get('context_recall', 0) * 100)
+        f1_scores.append(metrics.get('faithfulness', 0) * 100)
     
     # Create the chart
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -52,7 +47,7 @@ def create_dataset_performance_chart(parser, visualizer, output_dir):
     
     bars1 = ax.bar(x - width, accuracies, width, label='Accuracy (%)', color=colors[0], alpha=0.8)
     bars2 = ax.bar(x, retrieval_rates, width, label='Retrieval Success Rate (%)', color=colors[1], alpha=0.8)
-    bars3 = ax.bar(x + width, f1_scores, width, label='F1 Score', color=colors[2], alpha=0.8)
+    bars3 = ax.bar(x + width, f1_scores, width, label='F1 Score (%)', color=colors[2], alpha=0.8)
     
     # Add value labels on bars
     def add_value_labels(bars, values, format_str='{:.1f}'):
@@ -64,7 +59,7 @@ def create_dataset_performance_chart(parser, visualizer, output_dir):
     
     add_value_labels(bars1, accuracies, '{:.1f}%')
     add_value_labels(bars2, retrieval_rates, '{:.1f}%')
-    add_value_labels(bars3, f1_scores, '{:.2f}')
+    add_value_labels(bars3, f1_scores, '{:.1f}%')
     
     ax.set_xlabel('Datasets', fontsize=12, fontweight='bold')
     ax.set_ylabel('Performance Metrics', fontsize=12, fontweight='bold')
@@ -75,7 +70,7 @@ def create_dataset_performance_chart(parser, visualizer, output_dir):
     ax.grid(True, alpha=0.3)
     
     # Set y-axis limit to accommodate labels
-    ax.set_ylim(0, max(max(accuracies), max(retrieval_rates), max(f1_scores) * 20) + 10)
+    ax.set_ylim(0, max(max(accuracies), max(retrieval_rates), max(f1_scores)) + 10)
     
     plt.tight_layout()
     
@@ -88,13 +83,10 @@ def create_dataset_performance_chart(parser, visualizer, output_dir):
 
 def create_current_system_summary_dashboard(parser, visualizer, output_dir):
     """Create a summary dashboard for the current system"""
-    
-    # Load current experiment data
-    current_data = parser.load_experiment_data('advanced_evaluation_results')
-    
-    if 'error' in current_data or 'error' in current_data.get('summary', {}):
-        print("Error loading data for summary dashboard")
-        return None
+    runs = parser.load_all_runs()
+    preferred = 'result_5_full'
+    run_name = preferred if preferred in runs else sorted(runs.keys())[0]
+    current_data = runs[run_name]
     
     # Create dashboard
     fig = plt.figure(figsize=(16, 12))
@@ -105,16 +97,15 @@ def create_current_system_summary_dashboard(parser, visualizer, output_dir):
     
     # Overall metrics (top left)
     ax1 = fig.add_subplot(gs[0, 0])
-    overall = current_data['summary']['overall']
+    overall = current_data['overall']
     
-    metrics = ['Overall Accuracy', 'Avg Chunks/Question', 'Total Questions']
+    metrics = ['Overall Accuracy', 'Total Questions']
     values = [
         overall.get('overall_accuracy', 0) * 100,
-        overall.get('avg_chunks_per_question', 0),
         overall.get('total_questions', 0)
     ]
     
-    colors = ['#2E86AB', '#F18F01', '#5D737E']
+    colors = ['#2E86AB', '#5D737E']
     bars = ax1.bar(range(len(metrics)), values, color=colors, alpha=0.8)
     
     # Add value labels
@@ -123,7 +114,7 @@ def create_current_system_summary_dashboard(parser, visualizer, output_dir):
         if 'Accuracy' in metrics[bars.index(bar)]:
             label = f'{value:.1f}%'
         else:
-            label = f'{value:.1f}' if value < 100 else f'{int(value)}'
+            label = f'{int(value)}'
         ax1.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
                 label, ha='center', va='bottom', fontsize=10, fontweight='bold')
     
@@ -134,7 +125,7 @@ def create_current_system_summary_dashboard(parser, visualizer, output_dir):
     
     # Dataset accuracy comparison (top middle)
     ax2 = fig.add_subplot(gs[0, 1])
-    datasets = current_data['summary']['datasets']
+    datasets = current_data['datasets']
     dataset_labels = parser.get_dataset_labels()
     
     dataset_names = [dataset_labels.get(d, d) for d in datasets.keys()]
@@ -183,9 +174,9 @@ def create_current_system_summary_dashboard(parser, visualizer, output_dir):
     categories = ['Accuracy', 'Knowledge\nRetrieval', 'Answer\nQuality', 'System\nRobustness']
     values = [
         overall.get('overall_accuracy', 0),
-        0.7,  # Estimated based on retrieval performance
-        0.75,  # Estimated based on overall performance
-        0.8   # Estimated system robustness
+        overall.get('overall_context_recall', 0),
+        overall.get('overall_faithfulness', 0),
+        overall.get('overall_answer_relevancy', 0)
     ]
     
     # Create a horizontal bar chart instead of radar for better readability
@@ -211,10 +202,9 @@ def create_current_system_summary_dashboard(parser, visualizer, output_dir):
     insights_text = """
     Key Insights:
     
-    • Best Performance: MS MARCO (96%)
-    • Most Challenging: HotpotQA (63%)
-    • Average Retrieval: 7.4 chunks/query
-    • System handles 400 test questions
+    • Best Performance: 自动计算
+    • Most Challenging: 自动计算
+    • Total Questions: 来自 CSV 汇总
     • Multi-path retrieval strategy active
     """
     
@@ -255,7 +245,7 @@ def create_current_system_summary_dashboard(parser, visualizer, output_dir):
     
     📊 Total Questions Processed: {overall.get('total_questions', 0)}
     🎯 Overall Accuracy: {overall.get('overall_accuracy', 0):.1%}
-    🔍 Avg Chunks Retrieved: {overall.get('avg_chunks_per_question', 0):.1f}
+    🔍 Context Recall: {overall.get('overall_context_recall', 0):.1%}
     ⚡ All Components Active
     ✅ System Operational
     """
@@ -274,122 +264,58 @@ def create_current_system_summary_dashboard(parser, visualizer, output_dir):
     
     return fig
 
-def create_simulated_ablation_comparison(parser, visualizer, output_dir):
-    """Create a simulated ablation study comparison chart based on typical patterns"""
-    
-    # Since we only have current system data, we'll create a realistic simulation
-    # based on typical ablation study patterns in RAG systems
-    
-    experiments = [
-        'Complete System',
-        'No Query Rewriter', 
-        'No Usefulness Judge',
-        'No Dense Chunk Retrieval',
-        'No Dense Keyword Retrieval', 
-        'No Dense Question Retrieval'
-    ]
-    
-    # Simulated performance drops based on component importance
-    # These are realistic estimates based on RAG system research
-    base_accuracy = 77.0  # Current system accuracy
-    
-    simulated_accuracies = [
-        base_accuracy,           # Complete system
-        base_accuracy - 8.5,     # No query rewriter (significant impact)
-        base_accuracy - 12.2,    # No usefulness judge (major impact)
-        base_accuracy - 6.8,     # No dense chunk retrieval
-        base_accuracy - 4.3,     # No dense keyword retrieval
-        base_accuracy - 5.1      # No dense question retrieval
-    ]
-    
-    # Create the chart
+def create_runs_ablation_comparison(parser, visualizer, output_dir):
+    runs = parser.load_all_runs()
+    run_labels = parser.get_run_labels()
+    names = []
+    accs = []
+    for run_name, data in runs.items():
+        names.append(run_labels.get(run_name, run_name))
+        accs.append(data['overall']['overall_accuracy'] * 100)
     fig, ax = plt.subplots(figsize=(14, 8))
-    
-    colors = visualizer.color_schemes['ablation']
-    bars = ax.bar(experiments, simulated_accuracies, color=colors, alpha=0.8)
-    
-    # Add value labels on bars
-    for bar, acc in zip(bars, simulated_accuracies):
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + 0.5,
-               f'{acc:.1f}%', ha='center', va='bottom', fontsize=11, fontweight='bold')
-    
-    # Highlight the complete system
-    bars[0].set_edgecolor('black')
-    bars[0].set_linewidth(3)
-    
-    ax.set_xlabel('System Configuration', fontsize=12, fontweight='bold')
+    colors = visualizer.color_schemes['ablation'][:len(names)]
+    bars = ax.bar(names, accs, color=colors, alpha=0.8)
+    for bar, acc in zip(bars, accs):
+        h = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., h + 0.5, f'{acc:.1f}%', ha='center', va='bottom', fontsize=11, fontweight='bold')
+    ax.set_xlabel('Runs', fontsize=12, fontweight='bold')
     ax.set_ylabel('Overall Accuracy (%)', fontsize=12, fontweight='bold')
-    ax.set_title('Ablation Study: Component Contribution Analysis\n(Simulated Results Based on Current System)', 
-                fontsize=14, fontweight='bold', pad=20)
-    
-    # Rotate x-axis labels for better readability
+    ax.set_title('Ablation/System Comparison by Runs (CSV Real Data)', fontsize=14, fontweight='bold', pad=20)
     plt.xticks(rotation=45, ha='right')
-    
-    # Add grid
     ax.grid(True, alpha=0.3)
-    
-    # Add a note about simulation
-    ax.text(0.02, 0.98, 'Note: Ablation results are simulated based on typical RAG component contributions',
-           transform=ax.transAxes, fontsize=9, style='italic',
-           bbox=dict(boxstyle="round,pad=0.3", facecolor='#FFF3E0', edgecolor='#F18F01'))
-    
     plt.tight_layout()
-    
-    # Save the figure
     output_path = os.path.join(output_dir, 'ablation_study_comparison.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"Ablation study chart saved to: {output_path}")
-    
     return fig
 
 def create_component_contribution_chart(parser, visualizer, output_dir):
-    """Create component contribution analysis chart"""
-    
-    # Component importance based on simulated ablation results
-    components = [
-        'Usefulness Judge',
-        'Query Rewriter', 
-        'Dense Chunk Retrieval',
-        'Dense Question Retrieval',
-        'Dense Keyword Retrieval'
-    ]
-    
-    # Performance drops when component is removed (simulated)
-    performance_drops = [12.2, 8.5, 6.8, 5.1, 4.3]
-    
-    # Create horizontal bar chart
+    runs = parser.load_all_runs()
+    baseline = 'result_5_full' if 'result_5_full' in runs else sorted(runs.keys())[0]
+    base_acc = runs[baseline]['overall']['overall_accuracy'] * 100
+    labels = []
+    deltas = []
+    run_labels = parser.get_run_labels()
+    for run_name, data in runs.items():
+        if run_name == baseline:
+            continue
+        labels.append(run_labels.get(run_name, run_name))
+        deltas.append(data['overall']['overall_accuracy'] * 100 - base_acc)
     fig, ax = plt.subplots(figsize=(12, 8))
-    
-    colors = visualizer.color_schemes['ablation'][:len(components)]
-    bars = ax.barh(components, performance_drops, color=colors, alpha=0.8)
-    
-    # Add value labels
-    for bar, drop in zip(bars, performance_drops):
-        width = bar.get_width()
-        ax.text(width + 0.2, bar.get_y() + bar.get_height()/2,
-               f'-{drop:.1f}%', ha='left', va='center', fontsize=11, fontweight='bold')
-    
-    ax.set_xlabel('Performance Drop When Removed (%)', fontsize=12, fontweight='bold')
-    ax.set_ylabel('System Components', fontsize=12, fontweight='bold')
-    ax.set_title('Component Contribution Analysis\n(Performance Impact When Each Component is Removed)', 
-                fontsize=14, fontweight='bold', pad=20)
-    
-    # Add grid
+    colors = ['green' if d >= 0 else 'red' for d in deltas]
+    bars = ax.barh(labels, deltas, color=colors, alpha=0.8)
+    for bar, d in zip(bars, deltas):
+        w = bar.get_width()
+        ax.text(w + (0.2 if w >= 0 else -0.2), bar.get_y() + bar.get_height()/2, f'{d:+.1f}%',
+                ha='left' if w >= 0 else 'right', va='center', fontsize=11, fontweight='bold')
+    ax.set_xlabel('Accuracy Change vs Baseline (%)', fontsize=12, fontweight='bold')
+    ax.set_title(f'Component/System Contribution vs {run_labels.get(baseline, baseline)}', fontsize=14, fontweight='bold', pad=20)
+    ax.axvline(x=0, color='black', linestyle='-', alpha=0.3)
     ax.grid(True, alpha=0.3)
-    
-    # Add interpretation
-    ax.text(0.02, 0.02, 'Higher values indicate more critical components for system performance',
-           transform=ax.transAxes, fontsize=10, style='italic',
-           bbox=dict(boxstyle="round,pad=0.3", facecolor='#F0F8FF', edgecolor='#2E86AB'))
-    
     plt.tight_layout()
-    
-    # Save the figure
     output_path = os.path.join(output_dir, 'component_contribution.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"Component contribution chart saved to: {output_path}")
-    
     return fig
 
 def main():
@@ -419,7 +345,7 @@ def main():
     
     # 3. Simulated ablation comparison
     print("\n3. Creating ablation study comparison chart...")
-    fig3 = create_simulated_ablation_comparison(parser, visualizer, output_dir)
+    fig3 = create_runs_ablation_comparison(parser, visualizer, output_dir)
     if fig3:
         plt.close(fig3)
     
@@ -433,3 +359,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

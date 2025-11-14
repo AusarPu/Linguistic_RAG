@@ -1,238 +1,19 @@
 """
 Data Parser for RAG System Evaluation Results
-Extracts metrics from evaluation_summary.txt and advanced_sample_results.json files
+CSV-based loader from runs directory
 """
 
-import json
-import re
 import os
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 import pandas as pd
 
 
 class RAGDataParser:
-    """Parser for RAG evaluation data"""
-    
-    def __init__(self, base_dir: str = "/home/pushihao/RAG/Reports/experiments/datasets"):
+    def __init__(self, base_dir: str = "/home/pushihao/RAG/Reports/experiments/datasets/runs"):
         self.base_dir = base_dir
         self.datasets = ['hotpotqa', 'ms_marco', 'natural_questions', 'triviaqa']
-        
-    def parse_summary_file(self, file_path: str) -> Dict[str, Any]:
-        """Parse evaluation_summary.txt file"""
-        if not os.path.exists(file_path):
-            return {"error": f"File not found: {file_path}"}
-            
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Extract overall metrics
-            overall_metrics = {}
-            
-            # Total questions
-            match = re.search(r'总问题数:\s*(\d+)', content)
-            if match:
-                overall_metrics['total_questions'] = int(match.group(1))
-            
-            # Overall accuracy
-            match = re.search(r'总体准确率:\s*([\d.]+)%', content)
-            if match:
-                overall_metrics['overall_accuracy'] = float(match.group(1)) / 100
-            
-            # Overall retrieval success rate
-            match = re.search(r'总体检索成功率:\s*([\d.]+)%', content)
-            if match:
-                overall_metrics['overall_retrieval_success_rate'] = float(match.group(1)) / 100
-            
-            # Overall F1 score
-            match = re.search(r'总体F1分数:\s*([\d.]+)', content)
-            if match:
-                overall_metrics['overall_f1_score'] = float(match.group(1))
-            
-            # Average chunks per question
-            match = re.search(r'平均检索块数:\s*([\d.]+)', content)
-            if match:
-                overall_metrics['avg_chunks_per_question'] = float(match.group(1))
-            
-            # Dataset-specific metrics
-            dataset_metrics = {}
-            
-            for dataset in self.datasets:
-                dataset_upper = dataset.upper().replace('_', '_')
-                
-                # Find dataset section
-                pattern = rf'{dataset_upper}:\s*\n\s*-\s*准确率:\s*([\d.]+)%\s*\n\s*-\s*检索成功率:\s*([\d.]+)%\s*\n\s*-\s*F1分数:\s*([\d.]+)'
-                match = re.search(pattern, content)
-                
-                if match:
-                    dataset_metrics[dataset] = {
-                        'accuracy': float(match.group(1)) / 100,
-                        'retrieval_success_rate': float(match.group(2)) / 100,
-                        'f1_score': float(match.group(3))
-                    }
-            
-            return {
-                'overall': overall_metrics,
-                'datasets': dataset_metrics,
-                'status': 'success'
-            }
-            
-        except Exception as e:
-            return {"error": f"Error parsing summary file: {str(e)}"}
-    
-    def parse_detailed_results(self, file_path: str) -> Dict[str, Any]:
-        """Parse advanced_sample_results.json file"""
-        if not os.path.exists(file_path):
-            return {"error": f"File not found: {file_path}"}
-            
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if not isinstance(data, list):
-                return {"error": "Expected list format in JSON file"}
-            
-            # Calculate metrics
-            total_questions = len(data)
-            correct_answers = 0
-            successful_retrievals = 0
-            total_chunks = 0
-            confidence_scores = []
-            
-            for item in data:
-                # Answer correctness
-                if 'answer_correctness' in item and item['answer_correctness'].get('is_correct', False):
-                    correct_answers += 1
-                
-                # Retrieval success
-                if 'retrieval_accuracy' in item and item['retrieval_accuracy'].get('is_retrieved', False):
-                    successful_retrievals += 1
-                
-                # Chunk count
-                if 'retrieved_chunk_ids' in item:
-                    total_chunks += len(item['retrieved_chunk_ids'])
-                
-                # Confidence scores
-                if 'answer_correctness' in item and 'confidence' in item['answer_correctness']:
-                    confidence_scores.append(item['answer_correctness']['confidence'])
-            
-            accuracy = correct_answers / total_questions if total_questions > 0 else 0
-            retrieval_rate = successful_retrievals / total_questions if total_questions > 0 else 0
-            avg_chunks = total_chunks / total_questions if total_questions > 0 else 0
-            avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
-            
-            return {
-                'total_questions': total_questions,
-                'accuracy': accuracy,
-                'retrieval_success_rate': retrieval_rate,
-                'avg_chunks_per_question': avg_chunks,
-                'avg_confidence': avg_confidence,
-                'confidence_distribution': confidence_scores,
-                'status': 'success'
-            }
-            
-        except Exception as e:
-            return {"error": f"Error parsing detailed results: {str(e)}"}
-    
-    def load_experiment_data(self, experiment_name: str) -> Dict[str, Any]:
-        """Load data for a specific experiment"""
-        experiment_dir = os.path.join(self.base_dir, experiment_name)
-        
-        if not os.path.exists(experiment_dir):
-            return {"error": f"Experiment directory not found: {experiment_dir}"}
-        
-        # Parse summary file
-        summary_path = os.path.join(experiment_dir, 'evaluation_summary.txt')
-        summary_data = self.parse_summary_file(summary_path)
-        
-        # Parse detailed results for each dataset
-        detailed_data = {}
-        for dataset in self.datasets:
-            dataset_path = os.path.join(experiment_dir, dataset, 'advanced_sample_results.json')
-            detailed_data[dataset] = self.parse_detailed_results(dataset_path)
-        
-        return {
-            'experiment_name': experiment_name,
-            'summary': summary_data,
-            'detailed': detailed_data
-        }
-    
-    def load_all_experiments(self) -> Dict[str, Any]:
-        """Load data for all available experiments"""
-        experiments = {}
-        
-        # Look for final_result_* directories
-        experiment_dirs = []
-        
-        # Check for final_result_* directories
-        for item in os.listdir(self.base_dir):
-            if item.startswith('final_result_') and os.path.isdir(os.path.join(self.base_dir, item)):
-                experiment_dirs.append(item)
-        
-        # Sort to ensure consistent ordering
-        experiment_dirs.sort()
-        
-        # Load each experiment
-        for exp_dir in experiment_dirs:
-            exp_data = self.load_experiment_data(exp_dir)
-            experiments[exp_dir] = exp_data
-        
-        return experiments
-    
-    def create_comparison_dataframe(self, experiments_data: Dict[str, Any]) -> pd.DataFrame:
-        """Create a DataFrame for easy comparison of experiments"""
-        rows = []
-        
-        for exp_name, exp_data in experiments_data.items():
-            if 'error' in exp_data:
-                continue
-                
-            summary = exp_data.get('summary', {})
-            if 'error' in summary:
-                continue
-            
-            # Overall metrics
-            overall = summary.get('overall', {})
-            row = {
-                'experiment': exp_name,
-                'total_questions': overall.get('total_questions', 0),
-                'overall_accuracy': overall.get('overall_accuracy', 0),
-                'overall_retrieval_success_rate': overall.get('overall_retrieval_success_rate', 0),
-                'overall_f1_score': overall.get('overall_f1_score', 0),
-                'avg_chunks_per_question': overall.get('avg_chunks_per_question', 0)
-            }
-            
-            # Dataset-specific metrics
-            datasets = summary.get('datasets', {})
-            for dataset in self.datasets:
-                if dataset in datasets:
-                    row[f'{dataset}_accuracy'] = datasets[dataset].get('accuracy', 0)
-                    row[f'{dataset}_retrieval_rate'] = datasets[dataset].get('retrieval_success_rate', 0)
-                    row[f'{dataset}_f1_score'] = datasets[dataset].get('f1_score', 0)
-                else:
-                    row[f'{dataset}_accuracy'] = 0
-                    row[f'{dataset}_retrieval_rate'] = 0
-                    row[f'{dataset}_f1_score'] = 0
-            
-            rows.append(row)
-        
-        return pd.DataFrame(rows)
-    
-    def get_experiment_labels(self) -> Dict[str, str]:
-        """Get human-readable labels for experiments"""
-        return {
-            'advanced_evaluation_results': 'Current System',
-            'final_result_2_preprocess_think': 'Complete System (Original)',
-            'final_result_8_preprocess_think_usefulness_v2': 'Complete System (Optimized)',
-            'final_result_3_preprocess_think_no_rewriter': 'No Query Rewriter',
-            'final_result_4_preprocess_think_no_usefulness': 'No Usefulness Judge',
-            'final_result_5_preprocess_think_no_dense_chunks': 'No Dense Chunk Retrieval',
-            'final_result_6_preprocess_think_no_dense_keywords': 'No Dense Keyword Retrieval',
-            'final_result_7_preprocess_think_no_dense_questions': 'No Dense Question Retrieval'
-        }
-    
+
     def get_dataset_labels(self) -> Dict[str, str]:
-        """Get human-readable labels for datasets"""
         return {
             'hotpotqa': 'HotpotQA',
             'ms_marco': 'MS MARCO',
@@ -240,21 +21,90 @@ class RAGDataParser:
             'triviaqa': 'TriviaQA'
         }
 
+    def get_run_labels(self) -> Dict[str, str]:
+        return {
+            'result_1_chunk_only': 'Chunk Only',
+            'result_2_chunk+question': 'Chunk+Question',
+            'result_3_chunk+keyword': 'Chunk+Keyword',
+            'result_4_chunk+question+keyword': 'Chunk+Question+Keyword',
+            'result_5_full': 'Full System',
+            'result_5_1': 'Full System v1',
+            'result_6_bm25': 'BM25'
+        }
+
+    def load_run_summary(self, run_name: str) -> Dict[str, Any]:
+        summary_path = os.path.join(self.base_dir, run_name, 'advanced_evaluation_results', 'ragas_summary.csv')
+        df = pd.read_csv(summary_path)
+        total_questions = int(df['total_questions'].sum())
+        w = df['total_questions']
+        overall_accuracy = float((df['accuracy'] * w).sum() / total_questions)
+        overall_context_recall = float((df['context_recall'] * w).sum() / total_questions)
+        overall_context_precision = float((df['context_precision'] * w).sum() / total_questions)
+        overall_answer_relevancy = float((df['answer_relevancy'] * w).sum() / total_questions)
+        overall_faithfulness = float((df['faithfulness'] * w).sum() / total_questions)
+        datasets: Dict[str, Any] = {}
+        for _, row in df.iterrows():
+            d = str(row['dataset'])
+            datasets[d] = {
+                'accuracy': float(row['accuracy']),
+                'context_recall': float(row['context_recall']),
+                'context_precision': float(row['context_precision']),
+                'answer_relevancy': float(row['answer_relevancy']),
+                'faithfulness': float(row['faithfulness']),
+                'total_questions': int(row['total_questions'])
+            }
+        return {
+            'run_name': run_name,
+            'overall': {
+                'overall_accuracy': overall_accuracy,
+                'overall_context_recall': overall_context_recall,
+                'overall_context_precision': overall_context_precision,
+                'overall_answer_relevancy': overall_answer_relevancy,
+                'overall_faithfulness': overall_faithfulness,
+                'total_questions': total_questions
+            },
+            'datasets': datasets
+        }
+
+    def load_all_runs(self) -> Dict[str, Any]:
+        runs: Dict[str, Any] = {}
+        items = sorted(os.listdir(self.base_dir))
+        for item in items:
+            if not item.startswith('result_'):
+                continue
+            run_dir = os.path.join(self.base_dir, item, 'advanced_evaluation_results')
+            csv_path = os.path.join(run_dir, 'ragas_summary.csv')
+            if not os.path.isfile(csv_path):
+                continue
+            runs[item] = self.load_run_summary(item)
+        return runs
+
+    def create_comparison_dataframe(self, runs_data: Dict[str, Any]) -> pd.DataFrame:
+        rows: List[Dict[str, Any]] = []
+        for run_name, data in runs_data.items():
+            overall = data['overall']
+            row: Dict[str, Any] = {
+                'run': run_name,
+                'total_questions': overall['total_questions'],
+                'overall_accuracy': overall['overall_accuracy'],
+                'overall_context_recall': overall['overall_context_recall'],
+                'overall_context_precision': overall['overall_context_precision'],
+                'overall_answer_relevancy': overall['overall_answer_relevancy'],
+                'overall_faithfulness': overall['overall_faithfulness']
+            }
+            for d in self.datasets:
+                if d in data['datasets']:
+                    row[f'{d}_accuracy'] = data['datasets'][d]['accuracy']
+                    row[f'{d}_context_recall'] = data['datasets'][d]['context_recall']
+                else:
+                    row[f'{d}_accuracy'] = 0.0
+                    row[f'{d}_context_recall'] = 0.0
+            rows.append(row)
+        return pd.DataFrame(rows)
+
 
 if __name__ == "__main__":
-    # Test the parser
     parser = RAGDataParser()
-    
-    # Load current available data
-    current_data = parser.load_experiment_data('advanced_evaluation_results')
-    print("Current experiment data:")
-    print(json.dumps(current_data, indent=2, ensure_ascii=False))
-    
-    # Load all experiments
-    all_data = parser.load_all_experiments()
-    print(f"\nFound {len(all_data)} experiments")
-    
-    # Create comparison DataFrame
-    df = parser.create_comparison_dataframe(all_data)
-    print("\nComparison DataFrame:")
+    all_runs = parser.load_all_runs()
+    df = parser.create_comparison_dataframe(all_runs)
     print(df.to_string())

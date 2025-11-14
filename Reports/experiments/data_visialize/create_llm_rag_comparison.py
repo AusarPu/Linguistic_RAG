@@ -1,67 +1,19 @@
 #!/usr/bin/env python3
 """
 LLM-only vs RAG System Comparison Visualization
-Creates comprehensive comparison charts between LLM-only baseline and RAG systems
+Reads LLM-only and RAG data from runs CSV if available
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from pathlib import Path
-import json
 import os
 
-# Set style
 plt.style.use('default')
 sns.set_palette("husl")
 
-def load_llm_only_data():
-    """Load LLM-only experimental results"""
-    base_path = Path("/home/pushihao/RAG/Reports/experiments/datasets/final_result_9_only_LLM")
-    
-    # Load summary data
-    summary_file = base_path / "evaluation_summary.txt"
-    
-    data = {
-        'overall': {'accuracy': 62.0},
-        'datasets': {
-            'HotpotQA': {'accuracy': 41.0},
-            'MS MARCO': {'accuracy': 86.0}, 
-            'Natural Questions': {'accuracy': 57.0},
-            'TriviaQA': {'accuracy': 64.0}
-        }
-    }
-    
-    return data
-
-def load_rag_systems_data():
-    """Load RAG systems data for comparison"""
-    
-    # Best RAG system (optimized)
-    best_rag = {
-        'name': 'RAG System (Optimized)',
-        'overall': {'accuracy': 87.5},
-        'datasets': {
-            'HotpotQA': {'accuracy': 89.0},
-            'MS MARCO': {'accuracy': 89.0},
-            'Natural Questions': {'accuracy': 86.0}, 
-            'TriviaQA': {'accuracy': 86.0}
-        }
-    }
-    
-    # Original RAG system
-    original_rag = {
-        'name': 'RAG System (Original)',
-        'overall': {'accuracy': 81.75},
-        'datasets': {
-            'HotpotQA': {'accuracy': 75.0},
-            'MS MARCO': {'accuracy': 89.0},
-            'Natural Questions': {'accuracy': 82.0},
-            'TriviaQA': {'accuracy': 81.0}
-        }
-    }
-    
-    return best_rag, original_rag
+from data_parser import RAGDataParser
 
 def create_overall_comparison(llm_data, best_rag, original_rag, output_dir):
     """Create overall performance comparison chart"""
@@ -279,10 +231,37 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("Loading experimental data...")
-    
-    # Load data
-    llm_data = load_llm_only_data()
-    best_rag, original_rag = load_rag_systems_data()
+    parser = RAGDataParser()
+    runs = parser.load_all_runs()
+    llm_run = None
+    for k in runs.keys():
+        if 'llm' in k.lower():
+            llm_run = k
+            break
+    if llm_run is None:
+        print("No LLM-only run found. Skipping LLM vs RAG comparison.")
+        return
+    llm_data = {
+        'overall': {'accuracy': runs[llm_run]['overall']['overall_accuracy'] * 100},
+        'datasets': {
+            'HotpotQA': {'accuracy': runs[llm_run]['datasets'].get('hotpotqa', {}).get('accuracy', 0) * 100},
+            'MS MARCO': {'accuracy': runs[llm_run]['datasets'].get('ms_marco', {}).get('accuracy', 0) * 100},
+            'Natural Questions': {'accuracy': runs[llm_run]['datasets'].get('natural_questions', {}).get('accuracy', 0) * 100},
+            'TriviaQA': {'accuracy': runs[llm_run]['datasets'].get('triviaqa', {}).get('accuracy', 0) * 100}
+        }
+    }
+    original_key = 'result_5_full' if 'result_5_full' in runs else list(runs.keys())[0]
+    best_key = 'result_4_chunk+question+keyword' if 'result_4_chunk+question+keyword' in runs else original_key
+    original_rag = {
+        'name': 'RAG System (Original)',
+        'overall': {'accuracy': runs[original_key]['overall']['overall_accuracy'] * 100},
+        'datasets': {k: {'accuracy': runs[original_key]['datasets'].get(dk, {}).get('accuracy', 0) * 100} for k, dk in [('HotpotQA','hotpotqa'),('MS MARCO','ms_marco'),('Natural Questions','natural_questions'),('TriviaQA','triviaqa')]}
+    }
+    best_rag = {
+        'name': 'RAG System (Optimized)',
+        'overall': {'accuracy': runs[best_key]['overall']['overall_accuracy'] * 100},
+        'datasets': {k: {'accuracy': runs[best_key]['datasets'].get(dk, {}).get('accuracy', 0) * 100} for k, dk in [('HotpotQA','hotpotqa'),('MS MARCO','ms_marco'),('Natural Questions','natural_questions'),('TriviaQA','triviaqa')]}
+    }
     
     print("Creating comparison visualizations...")
     

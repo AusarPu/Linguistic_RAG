@@ -42,6 +42,24 @@ from preprocess.vllm_tokenizer import fast_token_length
 config.setup_logging()
 logger = logging.getLogger(__name__)
 
+# === LLM返回内容日志开关与辅助 ===
+_EVAL_LOG_ENABLED = str(os.getenv("EVAL_LOG_LLM", "")).strip().lower() in ("1","true","yes","on")
+_EVAL_LOG_FILE = os.getenv("EVAL_LOG_FILE", os.path.join(project_root, "Reports", "experiments", "evaluation", "llm_return_log.txt"))
+
+def _append_llm_log(gt: str, ans: str, content: str, raw_obj: any, tag: str) -> None:
+    if not _EVAL_LOG_ENABLED:
+        return
+    os.makedirs(os.path.dirname(_EVAL_LOG_FILE), exist_ok=True)
+    record = {
+        "tag": tag,
+        "ground_truth": gt,
+        "system_answer": ans,
+        "llm_content": content,
+        "raw": raw_obj,
+    }
+    with open(_EVAL_LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
 # === Ragas 集成辅助逻辑 ===
 def _get_dataset_name_from_path(input_file: str) -> str:
     """从输入文件路径中推断数据集名称"""
@@ -201,6 +219,7 @@ def _llm_classify_correctness(gt: str, ans: str) -> str:
     with urllib.request.urlopen(req) as resp:
         resp_json = json.loads(resp.read().decode("utf-8"))
     content = resp_json["choices"][0]["message"]["content"]
+    _append_llm_log(gt, ans, content, resp_json, "sync")
     return (content or "").strip().lower()
 
 async def _async_llm_classify_correctness(gt: str, ans: str, session: aiohttp.ClientSession, url: str) -> str:
@@ -220,6 +239,7 @@ async def _async_llm_classify_correctness(gt: str, ans: str, session: aiohttp.Cl
     async with session.post(url, json=payload, headers=headers) as resp:
         result = await resp.json()
     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    _append_llm_log(gt, ans, content, result, "async")
     return (content or "").strip().lower()
 
 def _judge_correctness(gt: str, ans: str) -> str:
