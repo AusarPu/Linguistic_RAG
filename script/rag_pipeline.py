@@ -144,6 +144,7 @@ async def execute_rag_flow(
     retrieval_duration = time.time() - retrieval_start_time
     logger.info(
         f"[{flow_request_id}] RAG Flow STAGE: Retrieval complete. Found {len(candidate_chunks_for_reranker)} unique candidates. Duration: {retrieval_duration:.3f}s")
+    yield {"type": "timing", "stage": "retrieval", "duration_ms": int(retrieval_duration * 1000)}
 
     preview_for_ui_retrieved = [{"id": c.get("chunk_id"),
                                     "text_preview": c.get("text", ""),
@@ -193,6 +194,7 @@ async def execute_rag_flow(
         usefulness_duration = time.time() - usefulness_start_time
         logger.info(
             f"[{flow_request_id}] RAG Flow STAGE: Usefulness judging complete. {len(useful_chunks)}/{len(candidate_chunks_for_reranker)} chunks kept. Duration: {usefulness_duration:.3f}s")
+        yield {"type": "timing", "stage": "usefulness", "duration_ms": int(usefulness_duration * 1000)}
 
         # 更新候选chunks列表
         candidate_chunks_for_reranker = useful_chunks
@@ -285,6 +287,7 @@ async def execute_rag_flow(
 
     # 4. 构建最终上下文并生成答案
     yield _build_status_event("generation_start", "步骤4: 正在构建提示并生成答案...")
+    generation_start_time = time.time()
     final_context_chunks_for_llm = preview_for_ui_useful
 
     # 构建新的消息格式：system + chat history + tool role + user role + thinking process
@@ -340,6 +343,8 @@ async def execute_rag_flow(
             return
 
     logger.info(f"[{flow_request_id}] RAG Flow STAGE: Generation complete.")
+    generation_duration = time.time() - generation_start_time
+    yield {"type": "timing", "stage": "generation", "duration_ms": int(generation_duration * 1000)}
     yield {"type": "final_answer_complete",
             "full_text": full_final_answer_text.strip(),
             "full_reasoning": full_reasoning_text.strip(),
@@ -347,6 +352,7 @@ async def execute_rag_flow(
     yield _build_status_event("generation_complete", "答案生成完毕。")
     total_duration = time.time() - start_time_total
     logger.info(f"[{flow_request_id}] RAG流程处理完毕 (总耗时: {total_duration:.3f}s)。")
+    yield {"type": "timing", "stage": "total", "duration_ms": int(total_duration * 1000)}
     yield {"type": "pipeline_end", "reason": "flow_completed"}
     
 

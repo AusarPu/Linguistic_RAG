@@ -15,7 +15,7 @@ from .vllm_clients import EmbeddingAPIClient
 from .config_rag import (
     FAISS_INDEX_CHUNKS_SAVE_PATH,
     INDEXED_CHUNKS_METADATA_SAVE_PATH,
-    PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH,
+    RRF_K,
     PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH,
     BM25_INDEX_SAVE_PATH,
     FAISS_INDEX_QUESTIONS_SAVE_PATH,
@@ -375,7 +375,7 @@ class KnowledgeBase:
                 logger.warning(f"未能为查询 '{query[:30]}...' 生成稠密向量，仅使用BM25结果。")
             
             # 3. RRF融合
-            k = 60  # RRF平滑因子
+            k = RRF_K  # RRF平滑因子
             chunk_rrf_scores = {}
             
             # 收集所有出现在任一排序中的chunk
@@ -439,5 +439,5 @@ class KnowledgeBase:
         query_summary = f"{len(queries)} queries" if isinstance(query_text, list) else f"'{query_text[:30]}...'"
         logger.info(
             f"RRF融合检索 for {query_summary} (耗时: {time.time() - start_time:.3f}s) - "
-            f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold}, k={60})")
+            f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold}, k={RRF_K})")
         return final_results

@@ -16,6 +16,7 @@ import importlib
 import statistics
 import urllib.request
 import aiohttp
+from pydantic import BaseModel
 from tqdm import tqdm
 
 # Ragas & wrappers
@@ -144,35 +145,24 @@ def _prepare_ragas_dataset(results: List[Dict[str, Any]], kb) -> Dataset:
         "ground_truth": ground_truths,
     })
 
-# === LLM 正确性判断（新增） ===
 _CORRECTNESS_PROMPT = (
     "你是一位严格的正确性判别器。\n"
     "给定标准答案（ground truth）和系统回答（system answer），请基于事实一致性进行判断。\n"
-    "只输出 `correct` 或 `incorrect`，不要输出其他内容。\n"
-    "判断要求：\n"
+    "输出格式要求：优先输出 JSON：{\"verdict\": \"correct\" 或 \"incorrect\", \"reason\": \"简短说明关键证据或缺失点\"}。若无法输出 JSON，则仅输出 `correct` 或 `incorrect`。\n"
+    "判定规则：\n"
     "- 忽略措辞差异与同义表达；\n"
     "- 若系统回答与标准答案语义等价或包含完整核心事实，判为 `correct`；\n"
-    "- 若系统回答与标准答案矛盾、缺失关键事实或给出错误信息，判为 `incorrect`。\n"
+    "- 若系统回答与标准答案矛盾、缺失关键事实，或系统回答为拒答/信息不足类而 ground truth 为具体事实，判为 `incorrect`。\n"
 )
+
+class _CorrectnessOutput(BaseModel):
+    verdict: str
+    reason: str
 
 def _gt_is_no_answer(gt: str) -> bool:
     s = (gt or "").strip().lower()
-    # 包含常见“无答案”表达（含用户明确提到的拼写：no answer presnted）
     no_answer_set = {
         "no answer presented",
-        "no answer presnted",
-        "no answer",
-        "no-answer",
-        "noanswer",
-        "none",
-        "n/a",
-        "not provided",
-        "unknown",
-        "未提供答案",
-        "没有答案",
-        "无答案",
-        "未知",
-        "不详",
     }
     return s in no_answer_set
 
@@ -180,22 +170,6 @@ def _ans_is_insufficient(ans: str) -> bool:
     s = (ans or "").strip().lower()
     patterns = [
         "信息不足",
-        "无法回答",
-        "无法确定",
-        "依据不足",
-        "缺少信息",
-        "无法提供",
-        "不知道",
-        "不确定",
-        "无法判断",
-        "insufficient information",
-        "not enough information",
-        "cannot determine",
-        "cannot answer",
-        "unknown",
-        "insufficient context",
-        "lack of information",
-        "not provided in context",
     ]
     return any(p in s for p in patterns)
 
@@ -208,11 +182,9 @@ def _llm_classify_correctness(gt: str, ans: str) -> str:
             {"role": "system", "content": _CORRECTNESS_PROMPT},
             {"role": "user", "content": f"[Ground Truth]\n{gt}\n[System Answer]\n{ans}"},
         ],
-        "temperature": 0.0,
+        "temperature": 0.6,
         "top_p": 0.95,
         "max_tokens": getattr(config, "EVALUATION_MAX_TOKENS", 10240),
-        # 引导分类，仅返回 `correct` 或 `incorrect`
-        "guided_choice": ["correct", "incorrect"],
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
@@ -220,7 +192,14 @@ def _llm_classify_correctness(gt: str, ans: str) -> str:
         resp_json = json.loads(resp.read().decode("utf-8"))
     content = resp_json["choices"][0]["message"]["content"]
     _append_llm_log(gt, ans, content, resp_json, "sync")
-    return (content or "").strip().lower()
+    s = (content or "").strip()
+    v = s.strip().lower()
+    try:
+        parsed = _CorrectnessOutput.model_validate_json(s)
+        v = (parsed.verdict or "").strip().lower()
+    except Exception:
+        pass
+    return v
 
 async def _async_llm_classify_correctness(gt: str, ans: str, session: aiohttp.ClientSession, url: str) -> str:
     """异步版本的正确性判别，返回 'correct' 或 'incorrect'。"""
@@ -230,17 +209,23 @@ async def _async_llm_classify_correctness(gt: str, ans: str, session: aiohttp.Cl
             {"role": "system", "content": _CORRECTNESS_PROMPT},
             {"role": "user", "content": f"[Ground Truth]\n{gt}\n[System Answer]\n{ans}"},
         ],
-        "temperature": 0.0,
+        "temperature": 0.6,
         "top_p": 0.95,
-        "max_tokens": getattr(config, "EVALUATION_MAX_TOKENS", 10240),
-        "guided_choice": ["correct", "incorrect"],
+        "max_tokens": getattr(config, "EVALUATION_MAX_TOKENS", 20480),
     }
     headers = {"Content-Type": "application/json"}
     async with session.post(url, json=payload, headers=headers) as resp:
         result = await resp.json()
     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
     _append_llm_log(gt, ans, content, result, "async")
-    return (content or "").strip().lower()
+    s = (content or "").strip()
+    v = s.strip().lower()
+    try:
+        parsed = _CorrectnessOutput.model_validate_json(s)
+        v = (parsed.verdict or "").strip().lower()
+    except Exception:
+        pass
+    return v
 
 def _judge_correctness(gt: str, ans: str) -> str:
     # 特殊规则：ground truth 标记“无答案”，系统回答为“信息不足”类表述，判为正确

@@ -19,16 +19,16 @@ MAX_HISTORY = 10
 DENSE_CHUNK_RETRIEVAL_TOP_K = 10
 DENSE_QUESTION_RETRIEVAL_TOP_K = 10 # 可以与上面不同
 SPARSE_KEYWORD_RETRIEVAL_TOP_K = 10
-DENSE_CHUNK_THRESHOLD = 0.5
-DENSE_QUESTION_THRESHOLD = 0.5
-SPARSE_KEYWORD_THRESHOLD = 0.5
+DENSE_CHUNK_THRESHOLD = 0.3
+DENSE_QUESTION_THRESHOLD = 0.3
+SPARSE_KEYWORD_THRESHOLD = 0.3
 
 BM25_TOKENIZER_LANG = "auto"
 BM25_TOKENIZER_SOURCE = "hf"
 EN_STOPWORDS_FILE = ""
 
 # BM25和语义搜索融合参数
-BM25_SEMANTIC_FUSION_ALPHA = 0.3  # BM25权重，语义搜索权重为(1-alpha)
+RRF_K = 30
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
@@ -125,7 +125,7 @@ USEFULNESS_GENERATION_CONFIG = { # 用于有用性判断 vLLM API
     "top_p": 0.95,
     "repetition_penalty": 1.1,
     "stop": None,
-    "chat_template_kwargs": {"enable_thinking": True}
+    "chat_template_kwargs": {"enable_thinking": False}
 }
 
 # -----------------
@@ -142,7 +142,7 @@ OPTIMIZATION_BATCH_SIZE = 1000                # 分批处理大小
 # --- 并发控制配置 ---
 MAX_CONCURRENT_REQUESTS = 250                # 最大文本块并发请求
 METADATA_MAX_CONCURRENT_REQUESTS = 1000       # 元数据生成的最大并发请求数
-USEFULNESS_MAX_CONCURRENT_REQUESTS = 200      # 有用性判断最大并发请求数
+USEFULNESS_MAX_CONCURRENT_REQUESTS = 1000      # 有用性判断最大并发请求数
 
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
@@ -172,7 +172,7 @@ def setup_logging():
     """
     # 根日志：只输出 WARNING 及以上
     logging.basicConfig(
-        level=logging.WARN,
+        level=logging.INFO,
         format=LOG_FORMAT,
         datefmt=LOG_DATE_FORMAT,
         handlers=[logging.StreamHandler(sys.stdout)],

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 import sys
 import time
+import csv
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from tqdm import tqdm
@@ -98,7 +99,8 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
     reasoning_text = ""
     rewritten_query = {}
     pipeline_end_reason = ""
-    events = []  # 新增：收集所有事件
+    events = []
+    timings: Dict[str, float] = {}
     
     try:
         # 执行RAG流程
@@ -133,6 +135,12 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
                 final_text = event.get("full_text", "")
                 if final_text:
                     system_answer = final_text
+
+            elif event.get("type") == "timing":
+                stg = event.get("stage")
+                dur = event.get("duration_ms")
+                if isinstance(stg, str) and isinstance(dur, (int, float)):
+                    timings[stg] = float(dur)
             
             # 流程结束
             elif event.get("type") == "pipeline_end":
@@ -164,11 +172,16 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
     
     return {
         "question": question,
+        "question_id": question_id,
         "retrieved_chunk_ids": retrieved_chunk_ids,
         "system_answer": system_answer.strip(),
         "rewritten_query": rewritten_query,
         "pipeline_end_reason": pipeline_end_reason,
-        "has_reasoning": bool(reasoning_text.strip())
+        "has_reasoning": bool(reasoning_text.strip()),
+        "timing_retrieval_ms": timings.get("retrieval"),
+        "timing_usefulness_ms": timings.get("usefulness"),
+        "timing_generation_ms": timings.get("generation"),
+        "timing_total_ms": timings.get("total"),
     }
 
 async def process_questions_batch(questions_batch: List[Dict[str, Any]], kb_instance: KnowledgeBase, batch_id: int,
@@ -232,7 +245,8 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
                                     use_dense_chunks: bool = True,
                                     use_dense_keywords: bool = True,
                                     use_dense_questions: bool = True,
-                                    use_usefulness_judger: bool = True) -> None:
+                                    use_usefulness_judger: bool = True,
+                                    run_label: str = "RUN") -> None:
     """
     并发评估单个数据集
     """
@@ -353,6 +367,20 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
             json.dump(all_results, f, ensure_ascii=False, indent=2)
 
         logger.info(f"数据集 {dataset_name} 并发评估完成，共处理 {len(all_results)} 个问题")
+        lat_file = output_dir / f"latency_records_{run_label}.csv"
+        with open(lat_file, 'w', newline='', encoding='utf-8') as cf:
+            w = csv.writer(cf)
+            w.writerow(["dataset_name","run_label","question_id","retrieval_ms","usefulness_ms","generation_ms","total_ms"])
+            for item in all_results:
+                w.writerow([
+                    dataset_name,
+                    run_label,
+                    item.get("question_id", ""),
+                    item.get("timing_retrieval_ms", None),
+                    item.get("timing_usefulness_ms", None),
+                    item.get("timing_generation_ms", None),
+                    item.get("timing_total_ms", None),
+                ])
         
     except Exception as e:
         logger.error(f"评估数据集 {dataset_name} 时出错: {str(e)}")
@@ -369,7 +397,8 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
                                          use_dense_chunks: bool = True,
                                          use_dense_keywords: bool = True,
                                          use_dense_questions: bool = True,
-                                         use_usefulness_judger: bool = True) -> None:
+                                         use_usefulness_judger: bool = True,
+                                         run_label: str = "RUN") -> None:
     """
     评估所有数据集，支持数据集级别的并发
     """
@@ -382,7 +411,7 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
         tasks = [
             evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample,
                                       use_query_rewriter, use_dense_chunks, use_dense_keywords, 
-                                      use_dense_questions, use_usefulness_judger)
+                                      use_dense_questions, use_usefulness_judger, run_label)
             for dataset_name, config in datasets_to_process
         ]
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -393,7 +422,7 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
             try:
                 await evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample,
                                                 use_query_rewriter, use_dense_chunks, use_dense_keywords, 
-                                                use_dense_questions, use_usefulness_judger)
+                                                use_dense_questions, use_usefulness_judger, run_label)
             except Exception as e:
                 logger.error(f"数据集 {dataset_name} 评估失败: {str(e)}")
                 continue
@@ -414,6 +443,7 @@ async def main():
     parser.add_argument("--dataset-concurrent", action="store_true", 
                        help="启用数据集级别的并发处理（默认：串行处理数据集）")
     
+    parser.add_argument("--run-label", type=str, default="RUN", help="运行标签，用于时延记录区分")
     # 消融实验参数
     parser.add_argument("--no-query-rewriter", action="store_true", 
                        help="禁用查询重写模块")
@@ -464,7 +494,8 @@ async def main():
         use_dense_chunks,
         use_dense_keywords,
         use_dense_questions,
-        use_usefulness_judger
+        use_usefulness_judger,
+        args.run_label
     )
     
     total_time = time.time() - start_time

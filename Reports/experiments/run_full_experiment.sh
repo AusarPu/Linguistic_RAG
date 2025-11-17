@@ -197,18 +197,19 @@ run_evaluation() {
     local max_samples=$1
     local batch_size=$2
     local ablation_args=$3
+    local run_label=${4:-RUN}
     
     print_info "========== 阶段5: RAG评估 =========="
     
     # 切换到项目根目录执行评估脚本，确保路径和环境一致
-    local cmd="cd $PROJECT_ROOT && python3 $SCRIPT_DIR/evaluation/evaluate_datasets.py --dataset all --max-questions $max_samples --batch-size $batch_size $ablation_args"
+    local cmd="cd $PROJECT_ROOT && python3 $SCRIPT_DIR/evaluation/evaluate_datasets.py --dataset all --max-questions $max_samples --batch-size $batch_size --run-label $run_label $ablation_args"
     
     print_info "执行命令: $cmd"
     if eval $cmd; then
-        print_success "RAG评估完成"
+        print_success "RAG评估完成 ($run_label)"
         return 0
     else
-        print_error "RAG评估失败"
+        print_error "RAG评估失败 ($run_label)"
         return 1
     fi
 }
@@ -249,6 +250,7 @@ main() {
     local batch_size=10
     local verbose=false
     local ablation_args=""
+    local latency_suite=false
     
     # 解析命令行参数
     while [[ $# -gt 0 ]]; do
@@ -287,6 +289,10 @@ main() {
                 ;;
             --verbose)
                 verbose=true
+                shift
+                ;;
+            --latency-suite)
+                latency_suite=true
                 shift
                 ;;
             --no-query-rewriter)
@@ -448,52 +454,91 @@ main() {
     # 记录开始时间
     local start_time=$(date +%s)
     
-    # 执行各阶段
-    local stages=("converter" "chunk" "enhance" "index" "evaluation" "advanced")
+    # 执行各阶段或时延套件
     local failed_stages=()
-    
-    for stage in "${stages[@]}"; do
-        # 检查是否跳过该阶段
-        if [[ " ${skip_stages[@]} " =~ " ${stage} " ]]; then
-            print_warning "跳过阶段: $stage"
-            continue
+    if [ "$latency_suite" = true ]; then
+        print_info "========== 运行时延评估套件 (R1–R6) =========="
+        # R1: Naive RAG (P1)
+        if ! run_evaluation "$max_samples" "$batch_size" "--no-query-rewriter --no-dense-keywords --no-dense-questions --no-usefulness-judger" "R1"; then
+            failed_stages+=("evaluation:R1")
         fi
-        
-        case $stage in
-            converter)
-                if ! run_converter "$max_samples" "$no_filter"; then
-                    failed_stages+=("$stage")
-                fi
-                ;;
-            chunk)
-                if ! run_chunk; then
-                    failed_stages+=("$stage")
-                fi
-                ;;
-            enhance)
-                if ! run_enhance "$enhance_mode" "$max_samples" "$verbose"; then
-                    failed_stages+=("$stage")
-                fi
-                ;;
-            index)
-                if ! run_index "$test_mode" "$max_samples"; then
-                    failed_stages+=("$stage")
-                fi
-                ;;
-            evaluation)
-                if ! run_evaluation "$max_samples" "$batch_size" "$ablation_args"; then
-                    failed_stages+=("$stage")
-                fi
-                ;;
-            advanced)
-                if ! run_advanced_evaluation; then
-                    failed_stages+=("$stage")
-                fi
-                ;;
-        esac
-        
-        echo "" # 添加空行分隔
-    done
+        echo ""
+        # R2: P1+P2
+        if ! run_evaluation "$max_samples" "$batch_size" "--no-dense-keywords --no-usefulness-judger" "R2"; then
+            failed_stages+=("evaluation:R2")
+        fi
+        echo ""
+        # R3: P1+P3
+        if ! run_evaluation "$max_samples" "$batch_size" "--no-dense-questions --no-usefulness-judger" "R3"; then
+            failed_stages+=("evaluation:R3")
+        fi
+        echo ""
+        # R4: P1+P2+P3 (No Filter)
+        if ! run_evaluation "$max_samples" "$batch_size" "--no-usefulness-judger" "R4"; then
+            failed_stages+=("evaluation:R4")
+        fi
+        echo ""
+        # R5: Full with Filter
+        if ! run_evaluation "$max_samples" "$batch_size" "" "R5"; then
+            failed_stages+=("evaluation:R5")
+        fi
+        echo ""
+        # R6: BM25 (Keywords only)
+        if ! run_evaluation "$max_samples" "$batch_size" "--no-dense-chunks --no-dense-questions --no-usefulness-judger" "R6"; then
+            failed_stages+=("evaluation:R6")
+        fi
+        echo ""
+        # 聚合时延摘要
+        local agg_cmd="cd $PROJECT_ROOT && python3 $SCRIPT_DIR/evaluation/compute_latency_summary.py --runs-dir $RUN_DIR"
+        print_info "执行命令: $agg_cmd"
+        if eval $agg_cmd; then
+            print_success "时延摘要计算完成"
+        else
+            print_error "时延摘要计算失败"
+            failed_stages+=("latency_summary")
+        fi
+    else
+        local stages=("converter" "chunk" "enhance" "index" "evaluation" "advanced")
+        for stage in "${stages[@]}"; do
+            if [[ " ${skip_stages[@]} " =~ " ${stage} " ]]; then
+                print_warning "跳过阶段: $stage"
+                continue
+            fi
+            case $stage in
+                converter)
+                    if ! run_converter "$max_samples" "$no_filter"; then
+                        failed_stages+=("$stage")
+                    fi
+                    ;;
+                chunk)
+                    if ! run_chunk; then
+                        failed_stages+=("$stage")
+                    fi
+                    ;;
+                enhance)
+                    if ! run_enhance "$enhance_mode" "$max_samples" "$verbose"; then
+                        failed_stages+=("$stage")
+                    fi
+                    ;;
+                index)
+                    if ! run_index "$test_mode" "$max_samples"; then
+                        failed_stages+=("$stage")
+                    fi
+                    ;;
+                evaluation)
+                    if ! run_evaluation "$max_samples" "$batch_size" "$ablation_args"; then
+                        failed_stages+=("$stage")
+                    fi
+                    ;;
+                advanced)
+                    if ! run_advanced_evaluation; then
+                        failed_stages+=("$stage")
+                    fi
+                    ;;
+            esac
+            echo ""
+        done
+    fi
     
     # 计算总耗时
     local end_time=$(date +%s)
@@ -524,3 +569,13 @@ main() {
 
 # 运行主函数
 main "$@"
+    # 如果启用时延套件，强制跳过除 evaluation 外的所有阶段
+    if [ "$latency_suite" = true ]; then
+        skip_stages+=(converter)
+        skip_stages+=(chunk)
+        skip_stages+=(enhance)
+        skip_stages+=(index)
+        skip_stages+=(advanced)
+        batch_size=50
+        print_info "启用时延套件：固定并发数为 50，仅运行评估阶段"
+    fi

@@ -202,10 +202,10 @@ def create_current_system_summary_dashboard(parser, visualizer, output_dir):
     insights_text = """
     Key Insights:
     
-    • Best Performance: 自动计算
-    • Most Challenging: 自动计算
-    • Total Questions: 来自 CSV 汇总
-    • Multi-path retrieval strategy active
+    - Best Performance: Auto-computed
+    - Most Challenging: Auto-computed
+    - Total Questions: From CSV summary
+    - Multi-path retrieval strategy active
     """
     
     ax5.text(0.1, 0.9, insights_text, transform=ax5.transAxes, fontsize=10,
@@ -243,11 +243,11 @@ def create_current_system_summary_dashboard(parser, visualizer, output_dir):
     status_text = f"""
     System Status:
     
-    📊 Total Questions Processed: {overall.get('total_questions', 0)}
-    🎯 Overall Accuracy: {overall.get('overall_accuracy', 0):.1%}
-    🔍 Context Recall: {overall.get('overall_context_recall', 0):.1%}
-    ⚡ All Components Active
-    ✅ System Operational
+    Total Questions Processed: {overall.get('total_questions', 0)}
+    Overall Accuracy: {overall.get('overall_accuracy', 0):.1%}
+    Context Recall: {overall.get('overall_context_recall', 0):.1%}
+    Components: Active
+    System: Operational
     """
     
     ax7.text(0.1, 0.9, status_text, transform=ax7.transAxes, fontsize=10,
