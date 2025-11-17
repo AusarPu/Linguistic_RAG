@@ -20,9 +20,9 @@ from .config_rag import (
     BM25_INDEX_SAVE_PATH,
     FAISS_INDEX_QUESTIONS_SAVE_PATH,
     QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH,
-    ALL_QUESTION_TEXTS_SAVE_PATH,  # 用于加载问题文本的路径
+    ALL_QUESTION_TEXTS_SAVE_PATH,
     CHUNK_BM25_INDEX_SAVE_PATH,
-
+    SPARSE_KEYWORD_THRESHOLD,
     DENSE_CHUNK_RETRIEVAL_TOP_K,
     DENSE_QUESTION_RETRIEVAL_TOP_K,
     SPARSE_KEYWORD_RETRIEVAL_TOP_K,
@@ -83,19 +83,17 @@ class KnowledgeBase:
         required_files_paths = [
             Path(FAISS_INDEX_CHUNKS_SAVE_PATH),
             Path(INDEXED_CHUNKS_METADATA_SAVE_PATH),
-            # Path(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH),  # 这个文件是可选的
             Path(PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH),
             Path(BM25_INDEX_SAVE_PATH),
             Path(FAISS_INDEX_QUESTIONS_SAVE_PATH),
             Path(QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH),
-            # Path(ALL_QUESTION_TEXTS_SAVE_PATH) # 这个是可选的
+            Path(ALL_QUESTION_TEXTS_SAVE_PATH)
         ]
 
         missing = [p.name for p in required_files_paths if not p.is_file()]
         if missing:
             raise FileNotFoundError(f"Required index files not found: {missing}")
 
-        # 直接加载，不使用try-except
         # 1. 加载块文本稠密检索资源
         logger.info(f"Loading Faiss index for chunk texts from '{FAISS_INDEX_CHUNKS_SAVE_PATH}'...")
         self.faiss_chunks_index = faiss.read_index(FAISS_INDEX_CHUNKS_SAVE_PATH)  # faiss需要str路径
@@ -117,18 +115,7 @@ class KnowledgeBase:
         }
         logger.info(f"Built chunk_id_to_metadata_map with {len(self.chunk_id_to_metadata_map)} entries.")
 
-        # # 2. 加载关键词短语稀疏权重映射（如果存在）
-        # if Path(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH).exists():
-        #     logger.info(f"Loading phrase sparse weights map from '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}'...")
-        #     with open(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH, "rb") as f:
-        #         self.phrase_to_sparse_weights_map = pickle.load(f)
-        #     logger.info(f"Loaded sparse weights for {len(self.phrase_to_sparse_weights_map)} unique phrases.")
-        # else:
-        #     logger.warning(f"Phrase sparse weights map not found at '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}', skipping...")
-        #     self.phrase_to_sparse_weights_map = {}
-
-        
-        # 2.1. 加载文本块BM25索引
+        # 2.加载文本块BM25索引
         chunk_bm25_path = CHUNK_BM25_INDEX_SAVE_PATH
         logger.info(f"Loading chunk BM25 index from '{chunk_bm25_path}'...")
         with open(chunk_bm25_path, "rb") as f:
@@ -150,17 +137,16 @@ class KnowledgeBase:
                          f"vs. question_idx_to_chunk_id_map length ({len(self.question_idx_to_chunk_id_map)}).")
         logger.info(f"Loaded {self.faiss_questions_index.ntotal} question vectors and their chunk_id map.")
 
-        # 4. 加载问题文本列表 (如果存在)
+        # 4. 加载问题文本列表
         all_q_texts_file_path = Path(ALL_QUESTION_TEXTS_SAVE_PATH)  # 使用Path对象进行检查
         if all_q_texts_file_path.is_file():
             logger.info(f"Loading all question texts from '{all_q_texts_file_path}'...")
             with open(all_q_texts_file_path, 'r', encoding='utf-8') as f:
-                self.question_idx_to_text_map = json.load(f)  # 假设它是一个列表
+                self.question_idx_to_text_map = json.load(f)
             if len(self.question_idx_to_text_map) != self.faiss_questions_index.ntotal:
                 logger.warning(f"Mismatch: Loaded question texts count ({len(self.question_idx_to_text_map)}) "
                                f"vs. question Faiss index ntotal ({self.faiss_questions_index.ntotal}). Map may not align.")
-                # 你可以选择清空它或接受不匹配
-                # self.question_idx_to_text_map = []
+
         else:
             logger.info(f"Optional file '{ALL_QUESTION_TEXTS_SAVE_PATH}' not found, "
                         "retrieved question texts will not be directly available for display from this map.")
@@ -427,10 +413,10 @@ class KnowledgeBase:
                     result['retrieval_score'] = normalized_score
                     result['original_rrf_score'] = original_score  # 保留原始分数用于调试
             else:
-                # 如果所有分数相同，设置为1.0
+                # 如果所有分数相同，设置为SPARSE_KEYWORD_THRESHOLD
                 for result in results:
                     result['original_rrf_score'] = result['retrieval_score']
-                    result['retrieval_score'] = 1.0
+                    result['retrieval_score'] = SPARSE_KEYWORD_THRESHOLD
         
         # 6. 排序并返回结果
         results.sort(key=lambda x: x['retrieval_score'], reverse=True)

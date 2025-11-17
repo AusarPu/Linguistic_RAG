@@ -19,7 +19,8 @@ from .config_rag import (
     # 软保留策略参数
     SOFT_KEEP_MIN_CHUNKS, SOFT_KEEP_RATIO,
     # 有用性判断并发上限
-    USEFULNESS_MAX_CONCURRENT_REQUESTS
+    USEFULNESS_MAX_CONCURRENT_REQUESTS,
+    FINAL_CONTEXT_TOP_K
 )
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,20 @@ async def execute_rag_flow(
     
 
     candidate_chunks_for_reranker = list(all_retrieved_chunks_map.values())
+    if isinstance(FINAL_CONTEXT_TOP_K, int) and FINAL_CONTEXT_TOP_K > 0 and len(candidate_chunks_for_reranker) > FINAL_CONTEXT_TOP_K:
+        def __pool_score(c):
+            scores = []
+            rp = c.get("retrieved_from_paths", {})
+            if isinstance(rp, dict):
+                for s in rp.values():
+                    if isinstance(s, (int, float)):
+                        scores.append(float(s))
+            s_top = c.get("retrieval_score")
+            if isinstance(s_top, (int, float)):
+                scores.append(float(s_top))
+            return max(scores) if scores else 0.0
+        candidate_chunks_for_reranker = sorted(candidate_chunks_for_reranker, key=__pool_score, reverse=True)[:FINAL_CONTEXT_TOP_K]
+        
     retrieval_duration = time.time() - retrieval_start_time
     logger.info(
         f"[{flow_request_id}] RAG Flow STAGE: Retrieval complete. Found {len(candidate_chunks_for_reranker)} unique candidates. Duration: {retrieval_duration:.3f}s")

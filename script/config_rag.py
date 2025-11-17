@@ -22,13 +22,14 @@ SPARSE_KEYWORD_RETRIEVAL_TOP_K = 10
 DENSE_CHUNK_THRESHOLD = 0.3
 DENSE_QUESTION_THRESHOLD = 0.3
 SPARSE_KEYWORD_THRESHOLD = 0.3
+FINAL_CONTEXT_TOP_K = 10
 
 BM25_TOKENIZER_LANG = "auto"
 BM25_TOKENIZER_SOURCE = "hf"
 EN_STOPWORDS_FILE = ""
 
 # BM25和语义搜索融合参数
-RRF_K = 30
+RRF_K = 60
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
@@ -146,7 +147,7 @@ USEFULNESS_MAX_CONCURRENT_REQUESTS = 1000      # 有用性判断最大并发请�
 
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
-EVALUATION_CONCURRENCY_LIMIT = 100            # 评判请求的客户端并发上限（信号量）
+EVALUATION_CONCURRENCY_LIMIT = 20            # 评判请求的客户端并发上限（信号量）
 EVALUATION_MAX_TOKENS = 10240                   # 单次评判的最大生成 tokens，用于限制长输出
 
 # --- Ragas评估上下文输入限制 ---
