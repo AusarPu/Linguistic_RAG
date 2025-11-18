@@ -15,8 +15,6 @@ import pandas as pd
 import importlib
 import statistics
 import urllib.request
-import aiohttp
-from pydantic import BaseModel
 from tqdm import tqdm
 
 # Ragas & wrappers
@@ -26,6 +24,7 @@ from ragas.metrics import (
     answer_relevancy,
     context_precision,
     context_recall,
+    answer_correctness,
 )
 from datasets import Dataset
 from ragas.run_config import RunConfig
@@ -42,24 +41,6 @@ from preprocess.vllm_tokenizer import fast_token_length
 # 设置日志
 config.setup_logging()
 logger = logging.getLogger(__name__)
-
-# === LLM返回内容日志开关与辅助 ===
-_EVAL_LOG_ENABLED = str(os.getenv("EVAL_LOG_LLM", "")).strip().lower() in ("1","true","yes","on")
-_EVAL_LOG_FILE = os.getenv("EVAL_LOG_FILE", os.path.join(project_root, "Reports", "experiments", "evaluation", "llm_return_log.txt"))
-
-def _append_llm_log(gt: str, ans: str, content: str, raw_obj: any, tag: str) -> None:
-    if not _EVAL_LOG_ENABLED:
-        return
-    os.makedirs(os.path.dirname(_EVAL_LOG_FILE), exist_ok=True)
-    record = {
-        "tag": tag,
-        "ground_truth": gt,
-        "system_answer": ans,
-        "llm_content": content,
-        "raw": raw_obj,
-    }
-    with open(_EVAL_LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 # === Ragas 集成辅助逻辑 ===
 def _get_dataset_name_from_path(input_file: str) -> str:
@@ -145,150 +126,8 @@ def _prepare_ragas_dataset(results: List[Dict[str, Any]], kb) -> Dataset:
         "ground_truth": ground_truths,
     })
 
-_CORRECTNESS_PROMPT = (
-    "你是一位严格的正确性判别器。\n"
-    "给定标准答案（ground truth）和系统回答（system answer），请基于事实一致性进行判断。\n"
-    "输出格式要求：优先输出 JSON：{\"verdict\": \"correct\" 或 \"incorrect\", \"reason\": \"简短说明关键证据或缺失点\"}。若无法输出 JSON，则仅输出 `correct` 或 `incorrect`。\n"
-    "判定规则：\n"
-    "- 忽略措辞差异与同义表达；\n"
-    "- 若系统回答与标准答案语义等价或包含完整核心事实，判为 `correct`；\n"
-    "- 若系统回答与标准答案矛盾、缺失关键事实，或系统回答为拒答/信息不足类而 ground truth 为具体事实，判为 `incorrect`。\n"
-)
 
-class _CorrectnessOutput(BaseModel):
-    verdict: str
-    reason: str
-
-def _gt_is_no_answer(gt: str) -> bool:
-    s = (gt or "").strip().lower()
-    no_answer_set = {
-        "no answer presented",
-    }
-    return s in no_answer_set
-
-def _ans_is_insufficient(ans: str) -> bool:
-    s = (ans or "").strip().lower()
-    patterns = [
-        "信息不足",
-    ]
-    return any(p in s for p in patterns)
-
-def _llm_classify_correctness(gt: str, ans: str) -> str:
-    base_url = config.get_eval_llm_base_url()
-    url = f"{base_url}/chat/completions"
-    model = config.API_PLATFORM_GENERATOR_MODEL if getattr(config, "USE_API_PLATFORM_FOR_ACC", False) else config.GENERATOR_MODEL_NAME_FOR_API
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _CORRECTNESS_PROMPT},
-            {"role": "user", "content": f"[Ground Truth]\n{gt}\n[System Answer]\n{ans}"},
-        ],
-        "temperature": 0.6,
-        "top_p": 0.95,
-        "max_tokens": getattr(config, "EVALUATION_MAX_TOKENS", 10240),
-        "chat_template_kwargs": {"enable_thinking": False}
-    }
-    data = json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
-    auth = config.get_eval_llm_auth_header()
-    for k, v in auth.items():
-        headers[k] = v
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req) as resp:
-        resp_json = json.loads(resp.read().decode("utf-8"))
-    content = resp_json["choices"][0]["message"]["content"]
-    _append_llm_log(gt, ans, content, resp_json, "sync")
-    s = (content or "").strip()
-    v = s.strip().lower()
-    try:
-        parsed = _CorrectnessOutput.model_validate_json(s)
-        v = (parsed.verdict or "").strip().lower()
-    except Exception:
-        pass
-    return v
-
-async def _async_llm_classify_correctness(gt: str, ans: str, session: aiohttp.ClientSession, url: str) -> str:
-    """异步版本的正确性判别，返回 'correct' 或 'incorrect'。"""
-    model = config.API_PLATFORM_GENERATOR_MODEL if getattr(config, "USE_API_PLATFORM_FOR_ACC", False) else config.GENERATOR_MODEL_NAME_FOR_API
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _CORRECTNESS_PROMPT},
-            {"role": "user", "content": f"[Ground Truth]\n{gt}\n[System Answer]\n{ans}"},
-        ],
-        "temperature": 0.6,
-        "top_p": 0.95,
-        "max_tokens": getattr(config, "EVALUATION_MAX_TOKENS", 20480),
-    }
-    headers = {"Content-Type": "application/json"}
-    auth = config.get_eval_llm_auth_header()
-    for k, v in auth.items():
-        headers[k] = v
-    async with session.post(url, json=payload, headers=headers) as resp:
-        result = await resp.json()
-    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-    _append_llm_log(gt, ans, content, result, "async")
-    s = (content or "").strip()
-    v = s.strip().lower()
-    try:
-        parsed = _CorrectnessOutput.model_validate_json(s)
-        v = (parsed.verdict or "").strip().lower()
-    except Exception:
-        pass
-    return v
-
-def _judge_correctness(gt: str, ans: str) -> str:
-    # 特殊规则：ground truth 标记“无答案”，系统回答为“信息不足”类表述，判为正确
-    if _gt_is_no_answer(gt) and _ans_is_insufficient(ans):
-        return "correct"
-    return _llm_classify_correctness(gt, ans)
-
-async def _compute_llm_accuracy_async(results: List[Dict[str, Any]], concurrency_limit: Optional[int] = None, max_retries: int = 3) -> List[int]:
-    """使用异步并发与信号量计算逐条准确率。
-
-    - 并发量由 config.EVALUATION_CONCURRENCY_LIMIT 控制，或传入覆盖。
-    - 默认重试 3 次（用户要求）。
-    """
-    base_url = config.get_eval_llm_base_url()
-    url = f"{base_url}/chat/completions"
-    limit = concurrency_limit or getattr(config, "EVALUATION_CONCURRENCY_LIMIT", 100)
-    sem = asyncio.Semaphore(limit)
-    timeout_cfg = aiohttp.ClientTimeout(total=getattr(config, "VLLM_REQUEST_TIMEOUT", 60*20),
-                                        connect=getattr(config, "VLLM_REQUEST_TIMEOUT", 60*20),
-                                        sock_read=getattr(config, "VLLM_REQUEST_TIMEOUT", 60*20))
-    async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
-        acc: List[int] = [0] * len(results)
-
-        async def run_one(idx: int) -> None:
-            item = results[idx]
-            gt = item.get("ground_truth_answer", "")
-            ans = item.get("system_answer", "")
-            # 特殊规则优先
-            if _gt_is_no_answer(gt) and _ans_is_insufficient(ans):
-                acc[idx] = 1
-                return
-            attempt = 0
-            while attempt < max_retries:
-                attempt += 1
-                try:
-                    async with sem:
-                        verdict = await _async_llm_classify_correctness(gt, ans, session, url)
-                    acc[idx] = 1 if verdict == "correct" else 0
-                    return
-                except Exception:
-                    # 显式重试（需求：默认3次），简单退避
-                    if attempt >= max_retries:
-                        acc[idx] = 0
-                    else:
-                        await asyncio.sleep(min(0.2 * attempt, 2.0))
-
-        tasks = [asyncio.create_task(run_one(i)) for i in range(len(results))]
-        progress = tqdm(total=len(results), desc="Computing accuracy (LLM)", unit="item")
-        for t in asyncio.as_completed(tasks):
-            await t
-            progress.update(1)
-        progress.close()
-        return acc
+ 
 
 
 def _get_ragas_clients():
@@ -313,8 +152,7 @@ def _get_ragas_clients():
 
 def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
                         summary_csv_path: Optional[str] = None, limit: Optional[int] = None,
-                        max_workers: int = 8, timeout: int = 120, max_retries: int = 2, max_wait: int = 10,
-                        llm_max_retries: int = 3) -> Optional[pd.DataFrame]:
+                        max_workers: int = 8, timeout: int = 120, max_retries: int = 2, max_wait: int = 10) -> Optional[pd.DataFrame]:
     """运行 Ragas 评估并写出 CSV（以及可选的汇总 CSV）"""
     with open(input_file, "r", encoding="utf-8") as f:
         results = json.load(f)
@@ -343,6 +181,7 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
         answer_relevancy,
         context_recall,
         context_precision,
+        answer_correctness,
     ]
 
     # 配置并发和重试运行参数
@@ -382,10 +221,11 @@ def evaluate_with_ragas(input_file: str, csv_output_file: Optional[str] = None,
         )
     os.makedirs(os.path.dirname(csv_output_file), exist_ok=True)
 
-    # === 新增：LLM 正确率列（accuracy） — 异步并发 + 重试 ===
-    # 并发量：config.EVALUATION_CONCURRENCY_LIMIT；重试：默认3次
-    llm_accuracy = asyncio.run(_compute_llm_accuracy_async(results, getattr(config, "EVALUATION_CONCURRENCY_LIMIT", 100), llm_max_retries))
-    df["accuracy"] = llm_accuracy
+    # 使用 Ragas 的 answer_correctness 指标作为 accuracy 值
+    if "answer_correctness" in df.columns:
+        df["accuracy"] = pd.to_numeric(df["answer_correctness"], errors="coerce")
+    else:
+        df["accuracy"] = float("nan")
 
     df.to_csv(csv_output_file, index=False)
     logger.info(f"Ragas评估CSV已保存: {csv_output_file}")
@@ -529,7 +369,6 @@ def run_repeated_evaluation(input_file: str,
             timeout=timeout,
             max_retries=max_retries,
             max_wait=max_wait,
-            llm_max_retries=3,
         )
         if df is None:
             logger.error("评估返回空结果，停止重复执行")
@@ -560,69 +399,7 @@ def run_repeated_evaluation(input_file: str,
     logger.info(f"重复实验方差已输出: {var_file}")
 
 
-def _attach_accuracy_to_existing_csv(dataset_dir: str, summary_csv_path: Optional[str] = None,
-                                     llm_max_retries: int = 3) -> None:
-    """在指定数据集目录下，读取 ragas_metrics.csv 并附加 accuracy 列（异步并发 + 重试）。
-
-    若提供 summary_csv_path，则追加该数据集的均值到 ragas_summary（含 accuracy）。
-    """
-    csv_path = os.path.join(dataset_dir, "ragas_metrics.csv")
-    if not os.path.exists(csv_path):
-        return
-    df = pd.read_csv(csv_path)
-    cols = list(df.columns)
-    gt_col = "reference" if "reference" in cols else ("ground_truth" if "ground_truth" in cols else None)
-    ans_col = "response" if "response" in cols else ("answer" if "answer" in cols else None)
-    if gt_col is None or ans_col is None:
-        return
-    gt_list = df[gt_col].astype(str).tolist()
-    ans_list = df[ans_col].astype(str).tolist()
-    results = [{"ground_truth_answer": g, "system_answer": a} for g, a in zip(gt_list, ans_list)]
-    llm_accuracy = asyncio.run(_compute_llm_accuracy_async(results, getattr(config, "EVALUATION_CONCURRENCY_LIMIT", 100), llm_max_retries))
-    df["accuracy"] = llm_accuracy
-    df.to_csv(csv_path, index=False)
-
-    if summary_csv_path:
-        dataset_name = os.path.basename(dataset_dir.rstrip("/"))
-        metrics_cols = [
-            "answer_relevancy",
-            "faithfulness",
-            "context_precision",
-            "context_recall",
-            "accuracy",
-        ]
-        means = {col: float(pd.to_numeric(df[col], errors="coerce").mean()) if col in df.columns else float("nan") for col in metrics_cols}
-        numeric_df = df[[c for c in metrics_cols if c in df.columns]].apply(pd.to_numeric, errors="coerce")
-        nan_counts = {col: int(numeric_df[col].isna().sum()) if col in numeric_df.columns else 0 for col in metrics_cols}
-        nan_rows_total = int(numeric_df.isna().any(axis=1).sum()) if not numeric_df.empty else 0
-        summary_row = {
-            "dataset": dataset_name,
-            **means,
-            "total_questions": len(df),
-            "nan_rows_total": nan_rows_total,
-            **{f"nan_count_{col}": nan_counts[col] for col in metrics_cols},
-        }
-        os.makedirs(os.path.dirname(summary_csv_path), exist_ok=True)
-        write_header = not os.path.exists(summary_csv_path)
-        with open(summary_csv_path, "a", encoding="utf-8") as f:
-            if write_header:
-                header = [
-                    "dataset",
-                    *metrics_cols,
-                    "total_questions",
-                    "nan_rows_total",
-                    *[f"nan_count_{col}" for col in metrics_cols],
-                ]
-                f.write(",".join(header) + "\n")
-            f.write(
-                ",".join([
-                    summary_row["dataset"],
-                    *[f"{summary_row[col]:.6f}" if isinstance(summary_row[col], float) else str(summary_row[col]) for col in metrics_cols],
-                    str(summary_row["total_questions"]),
-                    str(summary_row["nan_rows_total"]),
-                    *[str(summary_row[f"nan_count_{col}"]) for col in metrics_cols],
-                ]) + "\n"
-            )
+ 
 
 
 
@@ -636,17 +413,12 @@ def main():
     parser.add_argument("--summary-csv", type=str, help="Ragas汇总CSV输出路径（写在原txt目录）")
     parser.add_argument("--limit", type=int, help="限制处理的结果数量（用于测试）")
     # Ragas加速相关参数
-    parser.add_argument("--max-workers", type=int, default=40, help="Ragas并发工作数")
+    parser.add_argument("--max-workers", type=int, default=100, help="Ragas并发工作数")
     parser.add_argument("--timeout", type=int, default=1200, help="Ragas评判请求超时（秒）")
     parser.add_argument("--max-retries", type=int, default=10, help="Ragas请求失败重试次数")
     parser.add_argument("--max-wait", type=int, default=1200, help="Ragas遇到限流时的最大等待（秒）")
     # 重复实验控制
     parser.add_argument("--repeat", type=int, default=1, help="重复实验次数（默认3）")
-    # 独立运行：指定数据集目录，对现有 ragas_metrics.csv 附加 accuracy
-    parser.add_argument("--attach-accuracy-dir", type=str, help="指定数据集父目录（包含各子数据集），对其中的 ragas_metrics.csv 附加 accuracy 列")
-    parser.add_argument("--llm-max-retries", type=int, default=3, help="LLM 正确性判别的重试次数（默认3）")
-    parser.add_argument("--test-api-jsonschema", action="store_true", help="测试外部 API 平台对严格 JSON Schema 的支持")
-    parser.add_argument("--test-api-plain", action="store_true", help="测试外部 API 平台的通用聊天接口连通性")
     
     args = parser.parse_args()
     
@@ -655,79 +427,12 @@ def main():
         logger.error(f"输入文件不存在: {args.input_file}")
         return
     
-    # 独立运行：附加 accuracy 到指定目录的现有 CSV（优先执行）
-    if args.attach_accuracy_dir:
-        base_dir = args.attach_accuracy_dir
-        if os.path.isdir(base_dir):
-            for d in os.listdir(base_dir):
-                dataset_dir = os.path.join(base_dir, d)
-                if os.path.isdir(dataset_dir):
-                    candidate = os.path.join(dataset_dir, "ragas_metrics.csv")
-                    if os.path.exists(candidate):
-                        _attach_accuracy_to_existing_csv(dataset_dir, summary_csv_path=args.summary_csv, llm_max_retries=args.llm_max_retries)
-        else:
-            logger.error(f"attach_accuracy_dir 非目录: {base_dir}")
-        return
-
-    # 可选：测试外部 API 平台 严格 JSON Schema 支持
-    if args.test_api_jsonschema:
-        base_url = config.API_PLATFORM_BASE_URL
-        url = f"{base_url}/chat/completions"
-        model = config.API_PLATFORM_GENERATOR_MODEL
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": _CORRECTNESS_PROMPT},
-                {"role": "user", "content": "[Ground Truth]\nA\n[System Answer]\nA"},
-            ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "correctness_output",
-                    "schema": _CorrectnessOutput.model_json_schema()
-                }
-            },
-            "temperature": 0.0,
-            "top_p": 0.9,
-            "max_tokens": 256,
-        }
-        data = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {config.read_api_platform_key()}"}
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req) as resp:
-            resp_json = json.loads(resp.read().decode("utf-8"))
-        message = resp_json.get("choices", [{}])[0].get("message", {})
-        parsed_present = isinstance(message.get("parsed"), dict)
-        logger.info(f"API 平台 严格 JSON Schema 支持测试: parsed_present={parsed_present}")
-        return
-
-    # 可选：测试外部 API 平台 通用聊天接口
-    if args.test_api_plain:
-        base_url = config.API_PLATFORM_BASE_URL
-        url = f"{base_url}/chat/completions"
-        model = config.API_PLATFORM_GENERATOR_MODEL
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "user", "content": "ping"},
-            ],
-            "temperature": 0.0,
-            "top_p": 0.9,
-            "max_tokens": getattr(config, "EVALUATION_MAX_TOKENS", 8192),
-        }
-        data = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {config.read_api_platform_key()}"}
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req) as resp:
-            resp_json = json.loads(resp.read().decode("utf-8"))
-        content = resp_json.get("choices", [{}])[0].get("message", {}).get("content", "")
-        logger.info(f"API 平台 通用聊天测试: ok, content_len={len(content)}")
-        return
+ 
 
     # 根据 repeat 控制单次或重复评估
     if args.repeat and args.repeat > 1:
         if not args.input_file:
-            logger.error("未提供 input_file，在重复评估模式下无法运行。若仅需为现有CSV附加accuracy，请使用 --attach-accuracy-dir")
+            logger.error("未提供 input_file，在重复评估模式下无法运行。")
             return
         run_repeated_evaluation(
             input_file=args.input_file,
@@ -743,7 +448,7 @@ def main():
     else:
         # 运行Ragas评估，并导出CSV（以及可选的根汇总CSV）
         if not args.input_file:
-            logger.error("未提供 --input-file，无法执行评估模式。若仅需为现有CSV附加accuracy，请使用 --attach-accuracy-dir")
+            logger.error("未提供 --input-file，无法执行评估模式。")
             return
         evaluate_with_ragas(
             input_file=args.input_file,
@@ -754,7 +459,6 @@ def main():
             timeout=args.timeout,
             max_retries=args.max_retries,
             max_wait=args.max_wait,
-            llm_max_retries=args.llm_max_retries,
         )
 
 if __name__ == "__main__":

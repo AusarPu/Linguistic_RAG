@@ -58,8 +58,8 @@ VLLM_METADATA_API_URL = config.GENERATOR_API_URL
 METADATA_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
 METADATA_GENERATION_CONFIG = {
     "temperature": 0.6,  # 对于信息提取和遵循指令，较低的温度可能更好
-    "max_tokens": 10240,  # 需要足够容纳关键词、问题和JSON结构
-    "chat_template_kwargs": {"enable_thinking": False}
+    "max_tokens": 8192,  # 需要足够容纳关键词、问题和JSON结构
+    "chat_template_kwargs": {"enable_thinking": True}
 }
 METADATA_BATCH_SIZE = config.OPTIMIZATION_BATCH_SIZE
 
@@ -308,6 +308,11 @@ def get_optimization_prompt_template(language: str) -> str:
 
 3. **格式和错误修正**：你可以改写你认为的由OCR识别错误的部分，并进行格式优化，把格式不清楚的部分，都用markdown格式转写一遍
 
+4. 如果文本块内容非常稀疏、几乎没有信息量（例如，可能只是页眉、页脚、孤立的图表编号、空白内容，或非常零碎以至于无法理解的片段），请直接返回
+{{
+  "optimized_chunk_B_text": "无意义"
+}}
+
 注意：不要添加任何新的、源于外部的信息，也不要对块B的内容进行实质性的重写或总结。优化后的块B应忠于原文的意义和风格，并且长度应与原始块B大致相似。
 
 块A (前文内容，如果块B是文档的第一个块，则此部分内容为 "None" 或非常简短):
@@ -348,6 +353,11 @@ Optimization Requirements:
 
 3. **Format and Error Correction**: You can rewrite parts that you believe are OCR recognition errors, and perform format optimization, converting unclear formatting parts to markdown format.
 
+4. If the text chunk content is extremely sparse and contains almost no information (for example, it may just be headers, footers, isolated chart numbers, blank content, or fragments too fragmented to understand), please directly return
+{{
+  "optimized_chunk_B_text": "meaningless"
+}}
+
 Note: Do not add any new information from external sources, nor substantially rewrite or summarize the content of Chunk B. The optimized Chunk B should remain faithful to the original meaning and style, and its length should be roughly similar to the original Chunk B.
 
 Chunk A (preceding content, if Chunk B is the first chunk of the document, this part will be "None" or very brief):
@@ -381,6 +391,10 @@ Ensure that the value of the "optimized_chunk_B_text" field is a JSON-compliant 
 同样地，处理块B和块C之间的边界。
 不要添加任何新的、源于外部的信息，也不要对块B的内容进行实质性的重写或总结。优化后的块B应忠于原文的意义和风格，并且长度应与原始块B大致相似。
 但是注意，你可以改写你认为的由OCR识别错误的部分，并进行格式优化，把格式不清楚的部分，都用markdown格式转写一遍。对于中英文混合内容，请保持原有的语言分布和风格。
+4. 如果文本块内容非常稀疏、几乎没有信息量（例如，可能只是页眉、页脚、孤立的图表编号、空白内容，或非常零碎以至于无法理解的片段），请直接返回
+{{
+  "optimized_chunk_B_text": "无意义"
+}}
 
 块A (前文内容，如果块B是文档的第一个块，则此部分内容为 "None" 或非常简短):
 ```
@@ -576,7 +590,7 @@ async def _optimize_chunk_b_via_vllm_impl(
         text_c: Optional[str],
         session: aiohttp.ClientSession,
         request_id: str = "N/A",
-        max_retries: int = 3
+        max_retries: int = 1
 ) -> Dict[str, Any]:
     """
     优化块B的实际实现函数
@@ -832,9 +846,10 @@ async def refine_all_chunks_with_llm(
     # single_timeout = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT_SINGLE)  # 注释掉，改为请求级别设置
     # 优化连接器配置以支持高并发
     connector = aiohttp.TCPConnector(
-        limit=2000,                # 减少连接池大小，避免连接过多
-        limit_per_host=2000,        # 每个主机的连接限制
-        enable_cleanup_closed=True, # 启用清理已关闭的连接
+        limit=MAX_CONCURRENT_REQUESTS,
+        limit_per_host=MAX_CONCURRENT_REQUESTS,
+        enable_cleanup_closed=True,
+        force_close=True,
     )
     async with aiohttp.ClientSession(connector=connector) as session:
         all_tasks_info = []

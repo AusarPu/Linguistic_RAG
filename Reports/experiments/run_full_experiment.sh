@@ -44,7 +44,7 @@ show_help() {
     echo "  --test              启用测试模式（用于index阶段）"
     echo "  --no-filter         不过滤没有答案的数据（用于converter阶段）"
     echo "  --enhance-mode      增强模式 (optimize|metadata|pipeline，默认：pipeline)"
-    echo "  --batch-size        评估最大并发数（默认：10）"
+    echo "  --batch-size        评估最大并发数"
     echo "  --verbose           启用详细日志输出"
     echo ""
     echo "消融实验选项（用于evaluation阶段）:"
@@ -247,7 +247,7 @@ main() {
     local test_mode=false
     local no_filter=false
     local enhance_mode="pipeline"
-    local batch_size=10
+    local batch_size=50
     local verbose=false
     local ablation_args=""
     local latency_suite=false

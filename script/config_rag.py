@@ -99,17 +99,10 @@ EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH # 用于发送给 Embedding 
 API_PLATFORM_BASE_URL = "https://api.deepseek.com/v1"
 API_PLATFORM_API_KEY_FILE = "/home/pushihao/RAG/script/api_keys/deepseek_api.txt"
 API_PLATFORM_GENERATOR_MODEL = "deepseek-chat"
-USE_API_PLATFORM_FOR_ACC = True
-USE_API_PLATFORM_FOR_RAGAS = False
+USE_API_PLATFORM_FOR_RAGAS = True
 
 def read_api_platform_key():
     return open(API_PLATFORM_API_KEY_FILE, "r", encoding="utf-8").read().strip()
-
-def get_eval_llm_base_url():
-    return API_PLATFORM_BASE_URL if USE_API_PLATFORM_FOR_ACC else GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
-
-def get_eval_llm_auth_header():
-    return {"Authorization": f"Bearer {read_api_platform_key()}"} if USE_API_PLATFORM_FOR_ACC else {}
 
 def get_ragas_llm_base_url():
     return API_PLATFORM_BASE_URL if USE_API_PLATFORM_FOR_RAGAS else GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
@@ -165,13 +158,13 @@ VLLM_REQUEST_TIMEOUT_TOTAL = 3600*8         # 超时A：整体流程超时(8小�
 OPTIMIZATION_BATCH_SIZE = 1000                # 分批处理大小
 
 # --- 并发控制配置 ---
-MAX_CONCURRENT_REQUESTS = 250                # 最大文本块并发请求
+MAX_CONCURRENT_REQUESTS = 500                # 最大文本块并发请求
 METADATA_MAX_CONCURRENT_REQUESTS = 1000       # 元数据生成的最大并发请求数
 USEFULNESS_MAX_CONCURRENT_REQUESTS = 1000      # 有用性判断最大并发请求数
 
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
-EVALUATION_CONCURRENCY_LIMIT = 40            # 评判请求的客户端并发上限（信号量）
+EVALUATION_CONCURRENCY_LIMIT = 100            # 评判请求的客户端并发上限（信号量）
 EVALUATION_MAX_TOKENS = 8192                   # 单次评判的最大生成 tokens，用于限制长输出
 
 # --- Ragas评估上下文输入限制 ---
@@ -197,7 +190,7 @@ def setup_logging():
     """
     # 根日志：只输出 WARNING 及以上
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARN,
         format=LOG_FORMAT,
         datefmt=LOG_DATE_FORMAT,
         handlers=[logging.StreamHandler(sys.stdout)],
