@@ -174,10 +174,11 @@ def _ans_is_insufficient(ans: str) -> bool:
     return any(p in s for p in patterns)
 
 def _llm_classify_correctness(gt: str, ans: str) -> str:
-    base_url = config.GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
+    base_url = config.get_eval_llm_base_url()
     url = f"{base_url}/chat/completions"
+    model = config.API_PLATFORM_GENERATOR_MODEL if getattr(config, "USE_API_PLATFORM_FOR_ACC", False) else config.GENERATOR_MODEL_NAME_FOR_API
     payload = {
-        "model": config.GENERATOR_MODEL_NAME_FOR_API,
+        "model": model,
         "messages": [
             {"role": "system", "content": _CORRECTNESS_PROMPT},
             {"role": "user", "content": f"[Ground Truth]\n{gt}\n[System Answer]\n{ans}"},
@@ -185,9 +186,14 @@ def _llm_classify_correctness(gt: str, ans: str) -> str:
         "temperature": 0.6,
         "top_p": 0.95,
         "max_tokens": getattr(config, "EVALUATION_MAX_TOKENS", 10240),
+        "chat_template_kwargs": {"enable_thinking": False}
     }
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    headers = {"Content-Type": "application/json"}
+    auth = config.get_eval_llm_auth_header()
+    for k, v in auth.items():
+        headers[k] = v
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     with urllib.request.urlopen(req) as resp:
         resp_json = json.loads(resp.read().decode("utf-8"))
     content = resp_json["choices"][0]["message"]["content"]
@@ -203,8 +209,9 @@ def _llm_classify_correctness(gt: str, ans: str) -> str:
 
 async def _async_llm_classify_correctness(gt: str, ans: str, session: aiohttp.ClientSession, url: str) -> str:
     """异步版本的正确性判别，返回 'correct' 或 'incorrect'。"""
+    model = config.API_PLATFORM_GENERATOR_MODEL if getattr(config, "USE_API_PLATFORM_FOR_ACC", False) else config.GENERATOR_MODEL_NAME_FOR_API
     payload = {
-        "model": config.GENERATOR_MODEL_NAME_FOR_API,
+        "model": model,
         "messages": [
             {"role": "system", "content": _CORRECTNESS_PROMPT},
             {"role": "user", "content": f"[Ground Truth]\n{gt}\n[System Answer]\n{ans}"},
@@ -214,6 +221,9 @@ async def _async_llm_classify_correctness(gt: str, ans: str, session: aiohttp.Cl
         "max_tokens": getattr(config, "EVALUATION_MAX_TOKENS", 20480),
     }
     headers = {"Content-Type": "application/json"}
+    auth = config.get_eval_llm_auth_header()
+    for k, v in auth.items():
+        headers[k] = v
     async with session.post(url, json=payload, headers=headers) as resp:
         result = await resp.json()
     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -239,7 +249,7 @@ async def _compute_llm_accuracy_async(results: List[Dict[str, Any]], concurrency
     - 并发量由 config.EVALUATION_CONCURRENCY_LIMIT 控制，或传入覆盖。
     - 默认重试 3 次（用户要求）。
     """
-    base_url = config.GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
+    base_url = config.get_eval_llm_base_url()
     url = f"{base_url}/chat/completions"
     limit = concurrency_limit or getattr(config, "EVALUATION_CONCURRENCY_LIMIT", 100)
     sem = asyncio.Semaphore(limit)
@@ -283,15 +293,12 @@ async def _compute_llm_accuracy_async(results: List[Dict[str, Any]], concurrency
 
 def _get_ragas_clients():
     """初始化 Ragas 评估所需的 LLM 与 Embeddings 客户端"""
-    # 从项目配置读取 API 地址与模型名
-    generator_base_url = config.GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
+    generator_base_url = config.get_ragas_llm_base_url()
     embedding_base_url = config.EMBEDDING_API_URL.rsplit("/embeddings", 1)[0]
-
-    # 使用自定义封装，直接走 OpenAI 兼容接口，支持 n>1
     llm = RagasOpenAICompatLLMWrapper(
         base_url=generator_base_url,
-        model=config.GENERATOR_MODEL_NAME_FOR_API,
-        api_key="-",
+        model=config.get_ragas_llm_model(),
+        api_key=config.get_ragas_llm_api_key(),
         temperature=0,
         top_p=0.9,
     )
@@ -300,7 +307,7 @@ def _get_ragas_clients():
         api_key="-",
         model=config.EMBEDDING_MODEL_NAME_FOR_API,
     )
-
+    
     return llm, embeddings
 
 
@@ -629,7 +636,7 @@ def main():
     parser.add_argument("--summary-csv", type=str, help="Ragas汇总CSV输出路径（写在原txt目录）")
     parser.add_argument("--limit", type=int, help="限制处理的结果数量（用于测试）")
     # Ragas加速相关参数
-    parser.add_argument("--max-workers", type=int, default=20, help="Ragas并发工作数")
+    parser.add_argument("--max-workers", type=int, default=40, help="Ragas并发工作数")
     parser.add_argument("--timeout", type=int, default=1200, help="Ragas评判请求超时（秒）")
     parser.add_argument("--max-retries", type=int, default=10, help="Ragas请求失败重试次数")
     parser.add_argument("--max-wait", type=int, default=1200, help="Ragas遇到限流时的最大等待（秒）")
@@ -638,6 +645,8 @@ def main():
     # 独立运行：指定数据集目录，对现有 ragas_metrics.csv 附加 accuracy
     parser.add_argument("--attach-accuracy-dir", type=str, help="指定数据集父目录（包含各子数据集），对其中的 ragas_metrics.csv 附加 accuracy 列")
     parser.add_argument("--llm-max-retries", type=int, default=3, help="LLM 正确性判别的重试次数（默认3）")
+    parser.add_argument("--test-api-jsonschema", action="store_true", help="测试外部 API 平台对严格 JSON Schema 的支持")
+    parser.add_argument("--test-api-plain", action="store_true", help="测试外部 API 平台的通用聊天接口连通性")
     
     args = parser.parse_args()
     
@@ -658,6 +667,61 @@ def main():
                         _attach_accuracy_to_existing_csv(dataset_dir, summary_csv_path=args.summary_csv, llm_max_retries=args.llm_max_retries)
         else:
             logger.error(f"attach_accuracy_dir 非目录: {base_dir}")
+        return
+
+    # 可选：测试外部 API 平台 严格 JSON Schema 支持
+    if args.test_api_jsonschema:
+        base_url = config.API_PLATFORM_BASE_URL
+        url = f"{base_url}/chat/completions"
+        model = config.API_PLATFORM_GENERATOR_MODEL
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _CORRECTNESS_PROMPT},
+                {"role": "user", "content": "[Ground Truth]\nA\n[System Answer]\nA"},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "correctness_output",
+                    "schema": _CorrectnessOutput.model_json_schema()
+                }
+            },
+            "temperature": 0.0,
+            "top_p": 0.9,
+            "max_tokens": 256,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {config.read_api_platform_key()}"}
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        with urllib.request.urlopen(req) as resp:
+            resp_json = json.loads(resp.read().decode("utf-8"))
+        message = resp_json.get("choices", [{}])[0].get("message", {})
+        parsed_present = isinstance(message.get("parsed"), dict)
+        logger.info(f"API 平台 严格 JSON Schema 支持测试: parsed_present={parsed_present}")
+        return
+
+    # 可选：测试外部 API 平台 通用聊天接口
+    if args.test_api_plain:
+        base_url = config.API_PLATFORM_BASE_URL
+        url = f"{base_url}/chat/completions"
+        model = config.API_PLATFORM_GENERATOR_MODEL
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": "ping"},
+            ],
+            "temperature": 0.0,
+            "top_p": 0.9,
+            "max_tokens": getattr(config, "EVALUATION_MAX_TOKENS", 8192),
+        }
+        data = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {config.read_api_platform_key()}"}
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        with urllib.request.urlopen(req) as resp:
+            resp_json = json.loads(resp.read().decode("utf-8"))
+        content = resp_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+        logger.info(f"API 平台 通用聊天测试: ok, content_len={len(content)}")
         return
 
     # 根据 repeat 控制单次或重复评估

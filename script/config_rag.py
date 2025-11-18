@@ -96,6 +96,30 @@ REWRITER_MODEL_NAME_FOR_API = VLLM_REWRITE_MODEL_LOCAL_PATH
 
 EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH # 用于发送给 Embedding API 的模型名
 
+API_PLATFORM_BASE_URL = "https://api.deepseek.com/v1"
+API_PLATFORM_API_KEY_FILE = "/home/pushihao/RAG/script/api_keys/deepseek_api.txt"
+API_PLATFORM_GENERATOR_MODEL = "deepseek-chat"
+USE_API_PLATFORM_FOR_ACC = True
+USE_API_PLATFORM_FOR_RAGAS = False
+
+def read_api_platform_key():
+    return open(API_PLATFORM_API_KEY_FILE, "r", encoding="utf-8").read().strip()
+
+def get_eval_llm_base_url():
+    return API_PLATFORM_BASE_URL if USE_API_PLATFORM_FOR_ACC else GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
+
+def get_eval_llm_auth_header():
+    return {"Authorization": f"Bearer {read_api_platform_key()}"} if USE_API_PLATFORM_FOR_ACC else {}
+
+def get_ragas_llm_base_url():
+    return API_PLATFORM_BASE_URL if USE_API_PLATFORM_FOR_RAGAS else GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
+
+def get_ragas_llm_api_key():
+    return read_api_platform_key() if USE_API_PLATFORM_FOR_RAGAS else "-"
+
+def get_ragas_llm_model():
+    return API_PLATFORM_GENERATOR_MODEL if USE_API_PLATFORM_FOR_RAGAS else GENERATOR_MODEL_NAME_FOR_API
+
 # --- Prompt 文件路径 (使用绝对路径或相对于 config.py 的路径) ---
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATOR_SYSTEM_PROMPT_FILE = os.path.join(_CONFIG_DIR, "../prompts/generator_system_prompt_eval.txt")
@@ -105,7 +129,7 @@ USEFUL_JUDGER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/useful_ju
 
 # --- 生成参数配置 ---
 GENERATION_CONFIG = { # 用于生成器 vLLM API
-    "max_tokens": 20480,
+    "max_tokens": 8192,
     "temperature": 0.9,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
@@ -113,7 +137,7 @@ GENERATION_CONFIG = { # 用于生成器 vLLM API
     "chat_template_kwargs": {"enable_thinking": True}
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
-    "max_tokens": 10240,
+    "max_tokens": 4096,
     "temperature": 1.1,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
@@ -121,7 +145,7 @@ REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "chat_template_kwargs": {"enable_thinking": True}
 }
 USEFULNESS_GENERATION_CONFIG = { # 用于有用性判断 vLLM API
-    "max_tokens": 20480,
+    "max_tokens": 4096,
     "temperature": 0.6,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
@@ -147,8 +171,8 @@ USEFULNESS_MAX_CONCURRENT_REQUESTS = 1000      # 有用性判断最大并发请�
 
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
-EVALUATION_CONCURRENCY_LIMIT = 20            # 评判请求的客户端并发上限（信号量）
-EVALUATION_MAX_TOKENS = 10240                   # 单次评判的最大生成 tokens，用于限制长输出
+EVALUATION_CONCURRENCY_LIMIT = 40            # 评判请求的客户端并发上限（信号量）
+EVALUATION_MAX_TOKENS = 8192                   # 单次评判的最大生成 tokens，用于限制长输出
 
 # --- Ragas评估上下文输入限制 ---
 # 在构造传入 Ragas 的 contexts 列表时，基于 token 总量和最大块数进行裁剪，

@@ -79,7 +79,7 @@ def _build_dataset_paths() -> Dict[str, Dict[str, str]]:
 DATASETS = _build_dataset_paths()
 
 # 并发配置
-DEFAULT_BATCH_SIZE = 10  # 默认并发数（同时运行的任务数）
+DEFAULT_BATCH_SIZE = 40  # 默认并发数（同时运行的任务数）
 DEFAULT_MAX_QUESTIONS = 20  # 默认不限制问题数量（按数据集配置与文件决定）
 
 # 线程锁用于保护共享资源

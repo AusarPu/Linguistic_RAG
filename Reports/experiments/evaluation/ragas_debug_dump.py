@@ -156,13 +156,13 @@ def _get_ragas_clients() -> Tuple:
         EMBEDDING_MODEL_NAME_FOR_API,
     )
 
-    generator_base_url = GENERATOR_API_URL.rsplit("/chat/completions", 1)[0]
+    generator_base_url = config.get_ragas_llm_base_url()
     embedding_base_url = EMBEDDING_API_URL.rsplit("/embeddings", 1)[0]
 
     llm = RagasOpenAICompatLLMWrapper(
         base_url=generator_base_url,
-        model=GENERATOR_MODEL_NAME_FOR_API,
-        api_key="-",
+        model=config.get_ragas_llm_model(),
+        api_key=config.get_ragas_llm_api_key(),
         temperature=0.2,
         top_p=0.9,
     )

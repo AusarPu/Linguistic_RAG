@@ -210,7 +210,9 @@ async def generate_rewritten_query_async(
     logger.info(f"[{time.time():.3f}] ASYNC 查询重写完成 (总耗时: {time.time() - func_start_time:.3f}s)。")
 
     # 解析JSON响应为rewrite_output对象
-    response_json = json.loads(completion.choices[0].message.content)
+    choice = completion.choices[0].message
+    raw_text = choice.content if choice.content else choice.reasoning_content
+    response_json = json.loads(raw_text)
     return response_json
 
 
