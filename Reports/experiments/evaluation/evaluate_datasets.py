@@ -156,10 +156,7 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
         tb_text = traceback.format_exc()
         system_answer = f"处理错误: {str(e) or type(e).__name__}. Traceback: {tb_text}"
         pipeline_end_reason = "error"
-    
-
-    with open("/home/pushihao/RAG/001.txt", "a+") as f:
-            f.write("reasoning_text:\n"+reasoning_text+"\n"+"system_answer:\n"+system_answer+"\n"+"-"*40+"\n"+"pipeline_end_reason:\n"+pipeline_end_reason+"\n")
+        
     if not system_answer.strip():
         if pipeline_end_reason == "no_context_found_after_retrieval":
             system_answer = "抱歉，我没有找到与您问题相关的直接信息。"

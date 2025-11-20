@@ -16,13 +16,13 @@ PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 # 检索参数
 MAX_HISTORY = 10
-DENSE_CHUNK_RETRIEVAL_TOP_K = 10
-DENSE_QUESTION_RETRIEVAL_TOP_K = 10 # 可以与上面不同
-SPARSE_KEYWORD_RETRIEVAL_TOP_K = 10
+DENSE_CHUNK_RETRIEVAL_TOP_K = 15
+DENSE_QUESTION_RETRIEVAL_TOP_K = 8 # 可以与上面不同
+SPARSE_KEYWORD_RETRIEVAL_TOP_K = 8
 DENSE_CHUNK_THRESHOLD = 0.3
 DENSE_QUESTION_THRESHOLD = 0.3
-SPARSE_KEYWORD_THRESHOLD = 0.3
-FINAL_CONTEXT_TOP_K = 10
+SPARSE_KEYWORD_THRESHOLD = 0.5
+FINAL_CONTEXT_TOP_K = 15
 
 BM25_TOKENIZER_LANG = "auto"
 BM25_TOKENIZER_SOURCE = "hf"
@@ -130,10 +130,8 @@ GENERATION_CONFIG = { # 用于生成器 vLLM API
     "chat_template_kwargs": {"enable_thinking": True}
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
-    "max_tokens": 4096,
-    "temperature": 1.1,
-    "top_p": 0.95,
-    "repetition_penalty": 1.1,
+    "max_tokens": 8192,
+    "temperature": 1.5,
     "stop": None,
     "chat_template_kwargs": {"enable_thinking": True}
 }
@@ -153,18 +151,18 @@ VLLM_REQUEST_TIMEOUT = 60*20                 # 通用请求超时 (例如用于 
 VLLM_REQUEST_TIMEOUT_GENERATION = 60*20     # 为生成答案设置更长的超时时间
 
 # --- 块优化专用超时配置 ---
-VLLM_REQUEST_TIMEOUT_SINGLE = 60*5          # 超时B：单个块优化超时
-VLLM_REQUEST_TIMEOUT_TOTAL = 3600*8         # 超时A：整体流程超时(8小时)
-OPTIMIZATION_BATCH_SIZE = 1000                # 分批处理大小
+VLLM_REQUEST_TIMEOUT_SINGLE = 60*30          # 超时B：单个块优化超时
+VLLM_REQUEST_TIMEOUT_TOTAL = 3600*24         # 超时A：整体流程超时(8小时)
+OPTIMIZATION_BATCH_SIZE = 2000                # 分批处理大小
 
 # --- 并发控制配置 ---
-MAX_CONCURRENT_REQUESTS = 500                # 最大文本块并发请求
+MAX_CONCURRENT_REQUESTS = 750                # 最大文本块并发请求
 METADATA_MAX_CONCURRENT_REQUESTS = 1000       # 元数据生成的最大并发请求数
 USEFULNESS_MAX_CONCURRENT_REQUESTS = 1000      # 有用性判断最大并发请求数
 
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
-EVALUATION_CONCURRENCY_LIMIT = 100            # 评判请求的客户端并发上限（信号量）
+EVALUATION_CONCURRENCY_LIMIT = 50            # 评判请求的客户端并发上限（信号量）
 EVALUATION_MAX_TOKENS = 8192                   # 单次评判的最大生成 tokens，用于限制长输出
 
 # --- Ragas评估上下文输入限制 ---
@@ -190,7 +188,7 @@ def setup_logging():
     """
     # 根日志：只输出 WARNING 及以上
     logging.basicConfig(
-        level=logging.WARN,
+        level=logging.INFO,
         format=LOG_FORMAT,
         datefmt=LOG_DATE_FORMAT,
         handlers=[logging.StreamHandler(sys.stdout)],

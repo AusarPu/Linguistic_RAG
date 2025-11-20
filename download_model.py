@@ -2,6 +2,7 @@
 import logging
 import os
 import sys
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
 # 确保导入 huggingface_hub
 try:
@@ -34,7 +35,7 @@ HF_MIRROR_ENDPOINT = "https://hf-mirror.com"
 MODEL_ROOT_DIR = "/home/pushihao/RAG/models" # <--- 修改为你希望存放模型的本地根目录
 
 # 3. 配置要下载的模型列表
-LLM_MODEL_NAME = "Qwen/Qwen3-0.6B"
+LLM_MODEL_NAME = "openai/gpt-oss-120b"
 EMBED_MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 
 models_to_download = {

@@ -64,9 +64,9 @@ def extract_text_from_dataset_item(item: dict) -> str:
 
 
 def chunk_dataset(dataset_name: str, dataset_items: list, 
-                 chunk_size: int = 256, 
+                 chunk_size: int = 128, 
                  chunk_overlap: int = 0,
-                 min_chunk_length: int = 50) -> list:
+                 min_chunk_length: int = 10) -> list:
     """
     对数据集进行分块处理
     

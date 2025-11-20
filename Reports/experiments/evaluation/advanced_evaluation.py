@@ -413,7 +413,7 @@ def main():
     parser.add_argument("--summary-csv", type=str, help="Ragas汇总CSV输出路径（写在原txt目录）")
     parser.add_argument("--limit", type=int, help="限制处理的结果数量（用于测试）")
     # Ragas加速相关参数
-    parser.add_argument("--max-workers", type=int, default=100, help="Ragas并发工作数")
+    parser.add_argument("--max-workers", type=int, default=50, help="Ragas并发工作数")
     parser.add_argument("--timeout", type=int, default=1200, help="Ragas评判请求超时（秒）")
     parser.add_argument("--max-retries", type=int, default=10, help="Ragas请求失败重试次数")
     parser.add_argument("--max-wait", type=int, default=1200, help="Ragas遇到限流时的最大等待（秒）")

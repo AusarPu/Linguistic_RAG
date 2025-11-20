@@ -146,7 +146,7 @@ else
         --enforce-eager
         --max-model-len 40960
         --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
-        --max_num_seqs 1024
+        --max_num_seqs 1500
         --reasoning-parser deepseek_r1
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS" \
         #--quantization fp8
