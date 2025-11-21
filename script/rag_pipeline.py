@@ -91,7 +91,7 @@ async def execute_rag_flow(
     
     if use_dense_chunks:
         tasks.append(kb_instance.search_dense_chunks(
-            [_QUESTION] + _BROADENED_QUESTION,
+            [_QUESTION],
             DENSE_CHUNK_RETRIEVAL_TOP_K,
             DENSE_CHUNK_THRESHOLD
         ))
@@ -304,8 +304,8 @@ async def execute_rag_flow(
     ])
     
     # 构建基于broadened question的思考过程
-    thinking_process = f"<thinking>好的，我认为要回答这个问题，应该从这几个方面来回答：{', '.join(_BROADENED_QUESTION)}。" #</thinking>
-    # thinking_process = ""
+    # thinking_process = f"<thinking>好的，我认为要回答这个问题，应该从这几个方面来回答：{', '.join(_BROADENED_QUESTION)}。" #</thinking>
+    thinking_process = ""
     yield {"type": "useful_chunks_preview", "count": len(candidate_chunks_for_reranker),
            "preview": preview_for_ui_useful}
 
