@@ -147,8 +147,8 @@ else
         --max-model-len 40960
         --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
         --max_num_seqs 1500
-        --reasoning-parser deepseek_r1
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS" \
+        #--reasoning-parser deepseek_r1
         #--quantization fp8
         #--rope-scaling '{"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768}' \
     )
@@ -162,7 +162,7 @@ else
     (export CUDA_VISIBLE_DEVICES=${REWRITER_GPU_ID}; nohup "${REWRITER_CMD_ARRAY[@]}" > "$REWRITER_LOG" 2>&1 & echo $! > "$REWRITER_PID_FILE")
     echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_LOG"
     echo "    等待 Rewriter 服务启动 ..."
-    sleep 120
+    sleep 60
     
     # 启动日志过滤器
     echo ">>> 启动 vLLM 日志过滤器..."
@@ -199,7 +199,7 @@ else
         --trust-remote-code
         --disable-log-requests
         --enforce-eager
-        --max-model-len 4096
+        --max-model-len 512
         --max_num_seqs 1024
         --quantization fp8
         --tensor-parallel-size "$EMBEDDING_TENSOR_PARALLEL_SIZE"

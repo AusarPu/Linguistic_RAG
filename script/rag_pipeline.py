@@ -20,7 +20,8 @@ from .config_rag import (
     SOFT_KEEP_MIN_CHUNKS, SOFT_KEEP_RATIO,
     # 有用性判断并发上限
     USEFULNESS_MAX_CONCURRENT_REQUESTS,
-    FINAL_CONTEXT_TOP_K
+    FINAL_CONTEXT_TOP_K,
+    RRF_K
 )
 
 logger = logging.getLogger(__name__)
@@ -124,11 +125,13 @@ async def execute_rag_flow(
 
     all_retrieved_chunks_map: Dict[str, Dict[str, Any]] = {}
 
+    path_rankings = {}
     for i, res_or_exc in enumerate(retrieval_outputs):
         path_name = retrieval_paths_display_names[i]
         if res_or_exc:
             logger.info(f"[{flow_request_id}] 召回路径 '{path_name}' 返回 {len(res_or_exc)} 个结果。")
-            for chunk_data in res_or_exc:
+            ranks_for_path = {}
+            for rank, chunk_data in enumerate(res_or_exc, start=1):
                 chunk_id = chunk_data.get("chunk_id")
                 retrieval_score = chunk_data.get('retrieval_score')
                 if chunk_id not in all_retrieved_chunks_map:
@@ -139,22 +142,28 @@ async def execute_rag_flow(
                     # 如果块已通过其他路径召回，添加来源并记录分数
                     all_retrieved_chunks_map[chunk_id].setdefault('retrieved_from_paths', {})[
                         path_name] = retrieval_score
+                if chunk_id and chunk_id not in ranks_for_path:
+                    ranks_for_path[chunk_id] = rank
+            path_rankings[path_name] = ranks_for_path
     
 
     candidate_chunks_for_reranker = list(all_retrieved_chunks_map.values())
     if isinstance(FINAL_CONTEXT_TOP_K, int) and FINAL_CONTEXT_TOP_K > 0 and len(candidate_chunks_for_reranker) > FINAL_CONTEXT_TOP_K:
-        def __pool_score(c):
-            scores = []
-            rp = c.get("retrieved_from_paths", {})
-            if isinstance(rp, dict):
-                for s in rp.values():
-                    if isinstance(s, (int, float)):
-                        scores.append(float(s))
-            s_top = c.get("retrieval_score")
-            if isinstance(s_top, (int, float)):
-                scores.append(float(s_top))
-            return max(scores) if scores else 0.0
-        candidate_chunks_for_reranker = sorted(candidate_chunks_for_reranker, key=__pool_score, reverse=True)[:FINAL_CONTEXT_TOP_K]
+        id_to_rrf_score = {}
+        for c in candidate_chunks_for_reranker:
+            cid = c.get("chunk_id")
+            s = 0.0
+            if cid:
+                for ranks in path_rankings.values():
+                    r = ranks.get(cid)
+                    if isinstance(r, int):
+                        s += 1.0 / (RRF_K + r)
+            id_to_rrf_score[cid] = s
+        candidate_chunks_for_reranker = sorted(
+            candidate_chunks_for_reranker,
+            key=lambda c: id_to_rrf_score.get(c.get("chunk_id"), 0.0),
+            reverse=True
+        )[:FINAL_CONTEXT_TOP_K]
         
     retrieval_duration = time.time() - retrieval_start_time
     logger.info(

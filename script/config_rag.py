@@ -16,24 +16,24 @@ PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 # 检索参数
 MAX_HISTORY = 10
-DENSE_CHUNK_RETRIEVAL_TOP_K = 15
-DENSE_QUESTION_RETRIEVAL_TOP_K = 8 # 可以与上面不同
-SPARSE_KEYWORD_RETRIEVAL_TOP_K = 8
+DENSE_CHUNK_RETRIEVAL_TOP_K = 20
+DENSE_QUESTION_RETRIEVAL_TOP_K = 10 # 可以与上面不同
+SPARSE_KEYWORD_RETRIEVAL_TOP_K = 10
 DENSE_CHUNK_THRESHOLD = 0.3
 DENSE_QUESTION_THRESHOLD = 0.3
-SPARSE_KEYWORD_THRESHOLD = 0.5
-FINAL_CONTEXT_TOP_K = 15
+SPARSE_KEYWORD_THRESHOLD = 0.3
+FINAL_CONTEXT_TOP_K = 20
 
 BM25_TOKENIZER_LANG = "auto"
 BM25_TOKENIZER_SOURCE = "hf"
 EN_STOPWORDS_FILE = ""
 
 # BM25和语义搜索融合参数
-RRF_K = 60
+RRF_K = 100 
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
-VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-30B-A3B-FP8"
+VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/openai/gpt-oss-120b"
 EMBEDDING_MODEL_PATH = "./models/Qwen/Qwen3-Embedding-8B"
 VLLM_REWRITER_LORA_LOCAL_PATH = ""              
 
@@ -81,7 +81,7 @@ VLLM_MAX_LORA_RANK = 32           # 支持的最大 LoRA Rank
 VLLM_EMBEDDING_HOST = "localhost"  # Embedding 服务部署在本地
 VLLM_EMBEDDING_PORT = 8850       # 为 Embedding 分配端口 8850
 VLLM_EMBEDDING_GPU_ID = GPU_ID        # 分配给 Embedding 的 GPU ID
-VLLM_EMBEDDING_MEM_UTILIZATION = 0.2 
+VLLM_EMBEDDING_MEM_UTILIZATION = 0.15 
 VLLM_EMBEDDING_TENSOR_PARALLEL_SIZE = 2 # Embedding的张量并行数
 
 # --- API 端点 (根据上面配置自动生成) ---
@@ -99,7 +99,7 @@ EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH # 用于发送给 Embedding 
 API_PLATFORM_BASE_URL = "https://api.deepseek.com/v1"
 API_PLATFORM_API_KEY_FILE = "/home/pushihao/RAG/script/api_keys/deepseek_api.txt"
 API_PLATFORM_GENERATOR_MODEL = "deepseek-chat"
-USE_API_PLATFORM_FOR_RAGAS = True
+USE_API_PLATFORM_FOR_RAGAS = False
 
 def read_api_platform_key():
     return open(API_PLATFORM_API_KEY_FILE, "r", encoding="utf-8").read().strip()
