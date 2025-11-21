@@ -29,7 +29,7 @@ BM25_TOKENIZER_SOURCE = "hf"
 EN_STOPWORDS_FILE = ""
 
 # BM25和语义搜索融合参数
-RRF_K = 100 
+RRF_K = 60 
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
@@ -123,7 +123,7 @@ USEFUL_JUDGER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/useful_ju
 # --- 生成参数配置 ---
 GENERATION_CONFIG = { # 用于生成器 vLLM API
     "max_tokens": 8192,
-    "temperature": 0.9,
+    "temperature": 0.6,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
     "stop": None,
@@ -131,7 +131,7 @@ GENERATION_CONFIG = { # 用于生成器 vLLM API
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "max_tokens": 8192,
-    "temperature": 1.5,
+    "temperature": 0.6,
     "stop": None,
     "chat_template_kwargs": {"enable_thinking": True}
 }

@@ -8,6 +8,7 @@ from .config_rag import MAX_HISTORY,REWRITER_INSTRUCTION_FILE,REWRITER_GENERATIO
 import json
 import re
 import os
+from preprocess.llm_chunk_processor import extract_content_from_vllm_response
 
 logger = logging.getLogger(__name__)
 
@@ -209,11 +210,36 @@ async def generate_rewritten_query_async(
 
     logger.info(f"[{time.time():.3f}] ASYNC 查询重写完成 (总耗时: {time.time() - func_start_time:.3f}s)。")
 
-    # 解析JSON响应为rewrite_output对象
-    choice = completion.choices[0].message
-    raw_text = choice.content if choice.content else choice.reasoning_content
-    response_json = json.loads(raw_text)
-    return response_json
+    # 解析响应：优先使用 parsed；缺失时回退到文本内容
+    message_obj = completion.choices[0].message
+    try:
+        parsed = getattr(message_obj, "parsed", None)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        return parsed
+
+    # 构造可供通用提取函数使用的字典视图
+    try:
+        content_val = getattr(message_obj, "content", None)
+        reasoning_val = getattr(message_obj, "reasoning_content", None)
+    except Exception:
+        content_val = None
+        reasoning_val = None
+    message_dict = {
+        "content": content_val if isinstance(content_val, str) else "",
+        "reasoning_content": reasoning_val if isinstance(reasoning_val, str) else "",
+    }
+
+    cleaned_content = extract_content_from_vllm_response(message_dict, REWRITER_GENERATION_CONFIG)
+    left = cleaned_content.find("{")
+    right = cleaned_content.rfind("}")
+    if left != -1 and right != -1 and right >= left:
+        json_str = cleaned_content[left:right + 1]
+        return json.loads(json_str)
+
+    return json.loads(cleaned_content)
 
 
 def generate_rewritten_query(
@@ -284,9 +310,36 @@ def generate_rewritten_query(
 
     logger.info(f"[{time.time():.3f}] ASYNC 查询重写完成 (总耗时: {time.time() - func_start_time:.3f}s)。")
 
-    # 解析JSON响应为rewrite_output对象
-    response_json = json.loads(completion.choices[0].message.content)
-    return response_json
+    # 解析响应：优先使用 parsed；缺失时回退到文本内容
+    message_obj = completion.choices[0].message
+    try:
+        parsed = getattr(message_obj, "parsed", None)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        return parsed
+
+    # 构造字典视图用于通用提取
+    try:
+        content_val = getattr(message_obj, "content", None)
+        reasoning_val = getattr(message_obj, "reasoning_content", None)
+    except Exception:
+        content_val = None
+        reasoning_val = None
+    message_dict = {
+        "content": content_val if isinstance(content_val, str) else "",
+        "reasoning_content": reasoning_val if isinstance(reasoning_val, str) else "",
+    }
+
+    cleaned_content = extract_content_from_vllm_response(message_dict, REWRITER_GENERATION_CONFIG)
+    left = cleaned_content.find("{")
+    right = cleaned_content.rfind("}")
+    if left != -1 and right != -1 and right >= left:
+        json_str = cleaned_content[left:right + 1]
+        return json.loads(json_str)
+
+    return json.loads(cleaned_content)
 
 
 if __name__ == "__main__":

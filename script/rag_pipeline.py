@@ -99,7 +99,7 @@ async def execute_rag_flow(
     
     if use_dense_keywords:
         tasks.append(kb_instance.search_dense_keywords(
-            _KEYWORD + _BROADENED_QUESTION,
+            _KEYWORD,
             SPARSE_KEYWORD_RETRIEVAL_TOP_K,
             SPARSE_KEYWORD_THRESHOLD
         ))
@@ -199,7 +199,7 @@ async def execute_rag_flow(
             """包装器以限制并发"""
             async with semaphore:
                 return await judge_knowledge_usefulness(
-                    questions=[_QUESTION] + _BROADENED_QUESTION,
+                    questions=[_QUESTION],
                     knowledge_content=chunk_obj.get("text", "")
                 )
 
