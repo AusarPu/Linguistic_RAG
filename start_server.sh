@@ -146,7 +146,7 @@ else
         --enforce-eager
         --max-model-len 40960
         --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
-        --max_num_seqs 256
+        --max_num_seqs 2048
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS" \
         #--reasoning-parser deepseek_r1
         #--quantization fp8
@@ -200,7 +200,7 @@ else
         --disable-log-requests
         --enforce-eager
         --max-model-len 512
-        --max_num_seqs 1024
+        --max_num_seqs 2048
         --quantization fp8
         --tensor-parallel-size "$EMBEDDING_TENSOR_PARALLEL_SIZE"
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"
@@ -245,7 +245,7 @@ else
         --enforce-eager \
         --max-model-len 512 \
         --tensor-parallel-size "$RERANKER_TENSOR_PARALLEL_SIZE" \
-        --max_num_seqs 1024 \
+        --max_num_seqs 2048 \
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"\
         --quantization fp8
     )
