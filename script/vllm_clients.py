@@ -17,6 +17,9 @@ from .config_rag import (
     VLLM_REQUEST_TIMEOUT_GENERATION,
     EMBEDDING_API_URL,
     EMBEDDING_MODEL_NAME_FOR_API,
+    RERANKER_API_URL,
+    RERANKER_MODEL_NAME_FOR_API,
+    RERANKER_GENERATION_CONFIG,
 )
 
 logger = logging.getLogger(__name__)
@@ -123,6 +126,69 @@ class EmbeddingAPIClient:
             "dense_vecs": dense_vecs
         }
 
+
+async def async_rank_with_reranker(
+        pairs: List[Dict[str, str]],
+        instruction: Optional[str] = None,
+        api_url: str = RERANKER_API_URL,
+        model_name: str = RERANKER_MODEL_NAME_FOR_API,
+        generation_config: Dict[str, Any] = None,
+        request_timeout: float = VLLM_REQUEST_TIMEOUT
+) -> List[float]:
+    effective_generation_config = RERANKER_GENERATION_CONFIG.copy()
+    if generation_config:
+        effective_generation_config.update(generation_config)
+
+    if instruction is None:
+        instruction = (
+            "Given a web search query and a candidate passage, return a relevance score between 0 and 1 "
+            "indicating how well the passage answers the query. Respond strictly as {\"score\": <float>}"
+        )
+
+    headers = {"Content-Type": "application/json"}
+
+    timeout_cfg = aiohttp.ClientTimeout(total=request_timeout, connect=request_timeout, sock_read=request_timeout)
+    async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+        async def _post_one(pair: Dict[str, str]) -> float:
+            q = pair.get("query", "")
+            d = pair.get("doc", "")
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": f"<Query>: {q}\n<Document>: {d}"}
+                ],
+                **{k: v for k, v in effective_generation_config.items() if v is not None},
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "rerank_output",
+                        "schema": {
+                            "type": "object",
+                            "properties": {"score": {"type": "number"}},
+                            "required": ["score"]
+                        }
+                    }
+                }
+            }
+            async with session.post(api_url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    raise RuntimeError(f"Reranker API failed: {resp.status}: {body}")
+                result = await resp.json()
+            message_obj = result["choices"][0]["message"]
+            parsed = message_obj.get("parsed")
+            if isinstance(parsed, dict) and "score" in parsed:
+                s = float(parsed["score"])
+            else:
+                content = message_obj.get("content", "").strip()
+                data = json.loads(content)
+                s = float(data["score"])
+            return 0.0 if s < 0 else (1.0 if s > 1 else s)
+
+        coros = [_post_one(p) for p in pairs]
+        scores = await asyncio.gather(*coros)
+        return list(scores)
 
 
 async def call_generator_vllm_stream(

@@ -64,13 +64,13 @@ GPU_ID = "4,5"
 VLLM_GENERATOR_HOST = "localhost" # vLLM 监听的主机名 (通常 localhost 即可，因为 Gradio 和 vLLM 在同一容器/机器)
 VLLM_GENERATOR_PORT = 8001        # vLLM 生成器监听的端口
 VLLM_GENERATOR_GPU_ID = GPU_ID        # 分配给生成器的 GPU ID
-VLLM_GENERATOR_MEM_UTILIZATION = 0.65 # GPU 显存使用率 (例如 0.9 for 90%)
+VLLM_GENERATOR_MEM_UTILIZATION = 0.5 # GPU 显存使用率 (例如 0.9 for 90%)
 
 # 重写器服务配置
 VLLM_REWRITER_HOST = "localhost"
 VLLM_REWRITER_PORT = 8001         # vLLM 重写器监听的端口
 VLLM_REWRITER_GPU_ID = GPU_ID        # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
-VLLM_REWRITER_MEM_UTILIZATION = 0.65 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
+VLLM_REWRITER_MEM_UTILIZATION = 0.5 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
 VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 2 # 新增：Rewriter的张量并行数
 
 # 重写器 LoRA 配置
@@ -81,20 +81,28 @@ VLLM_MAX_LORA_RANK = 32           # 支持的最大 LoRA Rank
 VLLM_EMBEDDING_HOST = "localhost"  # Embedding 服务部署在本地
 VLLM_EMBEDDING_PORT = 8850       # 为 Embedding 分配端口 8850
 VLLM_EMBEDDING_GPU_ID = GPU_ID        # 分配给 Embedding 的 GPU ID
-VLLM_EMBEDDING_MEM_UTILIZATION = 0.15 
-VLLM_EMBEDDING_TENSOR_PARALLEL_SIZE = 2 # Embedding的张量并行数
+VLLM_EMBEDDING_MEM_UTILIZATION = 0.1
+VLLM_EMBEDDING_TENSOR_PARALLEL_SIZE = 2
+
+VLLM_RERANKER_HOST = "localhost"
+VLLM_RERANKER_PORT = 8860
+VLLM_RERANKER_GPU_ID = GPU_ID
+VLLM_RERANKER_MEM_UTILIZATION = 0.15
+VLLM_RERANKER_TENSOR_PARALLEL_SIZE = 2
 
 # --- API 端点 (根据上面配置自动生成) ---
 GENERATOR_API_URL = f"http://{VLLM_GENERATOR_HOST}:{VLLM_GENERATOR_PORT}/v1/chat/completions"
 REWRITER_API_URL = f"http://{VLLM_REWRITER_HOST}:{VLLM_REWRITER_PORT}/v1/chat/completions"
 
 EMBEDDING_API_URL = f"http://{VLLM_EMBEDDING_HOST}:{VLLM_EMBEDDING_PORT}/v1/embeddings"
+RERANKER_API_URL = f"http://{VLLM_RERANKER_HOST}:{VLLM_RERANKER_PORT}/v1/chat/completions"
 
 # --- vLLM 使用的模型标识符 (用于 API 请求中的 'model' 字段) ---
 GENERATOR_MODEL_NAME_FOR_API = VLLM_BASE_MODEL_LOCAL_PATH 
 REWRITER_MODEL_NAME_FOR_API = VLLM_REWRITE_MODEL_LOCAL_PATH 
 
-EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH # 用于发送给 Embedding API 的模型名
+EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH
+RERANKER_MODEL_NAME_FOR_API = "./models/Qwen/Qwen3-Reranker-8B"
 
 API_PLATFORM_BASE_URL = "https://api.deepseek.com/v1"
 API_PLATFORM_API_KEY_FILE = "/home/pushihao/RAG/script/api_keys/deepseek_api.txt"
@@ -131,7 +139,7 @@ GENERATION_CONFIG = { # 用于生成器 vLLM API
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "max_tokens": 8192,
-    "temperature": 0.6,
+    "temperature": 0.1,
     "stop": None,
     "chat_template_kwargs": {"enable_thinking": True}
 }
@@ -140,6 +148,14 @@ USEFULNESS_GENERATION_CONFIG = { # 用于有用性判断 vLLM API
     "temperature": 0.6,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
+    "stop": None,
+    "chat_template_kwargs": {"enable_thinking": False}
+}
+
+RERANKER_GENERATION_CONFIG = {
+    "max_tokens": 32,
+    "temperature": 0.0,
+    "top_p": 1.0,
     "stop": None,
     "chat_template_kwargs": {"enable_thinking": False}
 }

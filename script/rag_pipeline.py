@@ -9,7 +9,7 @@ from typing import List, Dict, Any,AsyncGenerator, Optional
 from .knowledge_base import KnowledgeBase
 from .query_rewriter import  generate_rewritten_query_async
 from .useful_judger import judge_knowledge_usefulness
-from .vllm_clients import call_generator_vllm_stream
+from .vllm_clients import call_generator_vllm_stream, async_rank_with_reranker
 
 
 from .config_rag import (
@@ -148,22 +148,21 @@ async def execute_rag_flow(
     
 
     candidate_chunks_for_reranker = list(all_retrieved_chunks_map.values())
-    if isinstance(FINAL_CONTEXT_TOP_K, int) and FINAL_CONTEXT_TOP_K > 0 and len(candidate_chunks_for_reranker) > FINAL_CONTEXT_TOP_K:
-        id_to_rrf_score = {}
-        for c in candidate_chunks_for_reranker:
-            cid = c.get("chunk_id")
-            s = 0.0
-            if cid:
-                for ranks in path_rankings.values():
-                    r = ranks.get(cid)
-                    if isinstance(r, int):
-                        s += 1.0 / (RRF_K + r)
-            id_to_rrf_score[cid] = s
+    if len(candidate_chunks_for_reranker) > 0:
+        rerank_start_time = time.time()
+        pairs = [{"query": _QUESTION, "doc": c.get("text", "")} for c in candidate_chunks_for_reranker]
+        scores = await async_rank_with_reranker(pairs, instruction=None)
+        for c, s in zip(candidate_chunks_for_reranker, scores):
+            c["reranker_score"] = float(s)
         candidate_chunks_for_reranker = sorted(
             candidate_chunks_for_reranker,
-            key=lambda c: id_to_rrf_score.get(c.get("chunk_id"), 0.0),
+            key=lambda c: c.get("reranker_score", 0.0),
             reverse=True
-        )[:FINAL_CONTEXT_TOP_K]
+        )
+        if isinstance(FINAL_CONTEXT_TOP_K, int) and FINAL_CONTEXT_TOP_K > 0:
+            candidate_chunks_for_reranker = candidate_chunks_for_reranker[:FINAL_CONTEXT_TOP_K]
+        rerank_duration = time.time() - rerank_start_time
+        logger.info(f"[{flow_request_id}] Reranker scoring complete. Duration: {rerank_duration:.3f}s. Kept {len(candidate_chunks_for_reranker)} candidates.")
         
     retrieval_duration = time.time() - retrieval_start_time
     logger.info(
@@ -173,7 +172,7 @@ async def execute_rag_flow(
     preview_for_ui_retrieved = [{"id": c.get("chunk_id"),
                                     "text_preview": c.get("text", ""),
                                     "from_paths": list(c.get("retrieved_from_paths", {}).keys()),
-                                    "scores": c.get("retrieved_from_paths", {})  # 也发送原始分数
+                                    "scores": {**c.get("retrieved_from_paths", {}), "reranker_score": c.get("reranker_score", 0.0)}
                                     } for c in candidate_chunks_for_reranker]
     yield {"type": "retrieved_chunks_preview", "count": len(candidate_chunks_for_reranker),
             "preview": preview_for_ui_retrieved}

@@ -146,7 +146,7 @@ else
         --enforce-eager
         --max-model-len 40960
         --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
-        --max_num_seqs 1500
+        --max_num_seqs 256
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS" \
         #--reasoning-parser deepseek_r1
         #--quantization fp8
@@ -214,8 +214,48 @@ else
     # 使用 nohup 和正确的变量展开来启动服务
     (export CUDA_VISIBLE_DEVICES=${EMBEDDING_GPU_ID}; nohup "${EMBEDDING_CMD_ARRAY[@]}" > "$EMBEDDING_LOG" 2>&1 & echo $! > "$EMBEDDING_PID_FILE")
     echo "    Embedding 服务 PID: $(cat "$EMBEDDING_PID_FILE")，日志: $EMBEDDING_LOG"
-    echo "    等待 Embedding 服务启动 ..."
-    sleep 2
+echo "    等待 Embedding 服务启动 ..."
+    sleep 60
+fi
+
+## --- 启动 Reranker vLLM 服务（在 Embedding 之后 60s 启动） ---
+RERANKER_MODEL_PATH=$(read_config RERANKER_MODEL_NAME_FOR_API)
+RERANKER_PORT=$(read_config VLLM_RERANKER_PORT)
+RERANKER_GPU_ID=$(read_config VLLM_RERANKER_GPU_ID)
+RERANKER_MEM_UTILIZATION=$(read_config VLLM_RERANKER_MEM_UTILIZATION)
+RERANKER_TENSOR_PARALLEL_SIZE=$(read_config VLLM_RERANKER_TENSOR_PARALLEL_SIZE)
+RERANKER_LOG="$LOG_DIR/vllm_reranker.log"
+RERANKER_PID_FILE="$PID_DIR/vllm_reranker.pid"
+
+if [ -z "$RERANKER_MODEL_PATH" ] || [ -z "$RERANKER_PORT" ]; then
+    echo "错误: Reranker 服务配置不完整 (模型路径或端口缺失)，跳过启动。" >&2
+else
+    echo ">>> 正在后台启动 Reranker vLLM 服务..."
+    echo "    模型路径: $RERANKER_MODEL_PATH"
+    echo "    端口: $RERANKER_PORT"
+    echo "    分配 GPU: ${RERANKER_GPU_ID:-默认所有可见GPU}"
+    echo "    显存限制: ${RERANKER_MEM_UTILIZATION:-默认}"
+    echo "    张量并行数: ${RERANKER_TENSOR_PARALLEL_SIZE}"
+
+    RERANKER_CMD_ARRAY=(
+        vllm serve "$RERANKER_MODEL_PATH" \
+        --port "$RERANKER_PORT" \
+        --trust-remote-code \
+        --disable-log-requests \
+        --enforce-eager \
+        --max-model-len 512 \
+        --tensor-parallel-size "$RERANKER_TENSOR_PARALLEL_SIZE" \
+        --max_num_seqs 1024 \
+        --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"\
+        --quantization fp8
+    )
+
+    if [ ! -z "$RERANKER_MEM_UTILIZATION" ] && [ "$RERANKER_MEM_UTILIZATION" != "None" ]; then
+      RERANKER_CMD_ARRAY+=(--gpu-memory-utilization "$RERANKER_MEM_UTILIZATION")
+    fi
+
+    (export CUDA_VISIBLE_DEVICES=${RERANKER_GPU_ID}; nohup "${RERANKER_CMD_ARRAY[@]}" > "$RERANKER_LOG" 2>&1 & echo $! > "$RERANKER_PID_FILE")
+    echo "    Reranker 服务 PID: $(cat "$RERANKER_PID_FILE")，日志: $RERANKER_LOG"
 fi
 
 echo ">>> vLLM 服务启动完成。"
