@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CONFIG_FILE="$PROJECT_ROOT/script/config_rag.py"
 RUN_COMPARE="$SCRIPT_DIR/run_compare_experiments.sh"
-DEFAULT_JSON="$SCRIPT_DIR/grid_params.json"
+DEFAULT_JSON="$SCRIPT_DIR/params_grid.json"
 
 if [ $# -lt 1 ]; then
   echo "缺少必需参数: 问题数"
