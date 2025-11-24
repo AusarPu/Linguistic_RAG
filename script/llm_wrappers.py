@@ -108,6 +108,7 @@ class RagasOpenAICompatLLMWrapper(BaseRagasLLM):
             "temperature": temperature if temperature is not None else self.temperature,
             "top_p": self.top_p,
             "max_tokens": EVALUATION_MAX_TOKENS,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         if stop is not None:
             payload["stop"] = stop
@@ -162,6 +163,7 @@ class RagasOpenAICompatLLMWrapper(BaseRagasLLM):
             "temperature": temperature if temperature is not None else self.temperature,
             "top_p": self.top_p,
             "max_tokens": EVALUATION_MAX_TOKENS,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         if stop is not None:
             payload["stop"] = stop
