@@ -21,7 +21,7 @@ from .config_rag import (
     # 有用性判断并发上限
     USEFULNESS_MAX_CONCURRENT_REQUESTS,
     FINAL_CONTEXT_TOP_K,
-    RRF_K
+    RERANKER_SCORE_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,6 +154,10 @@ async def execute_rag_flow(
         scores = await async_rank_with_reranker(pairs, instruction=None)
         for c, s in zip(candidate_chunks_for_reranker, scores):
             c["reranker_score"] = float(s)
+        candidate_chunks_for_reranker = [
+            c for c in candidate_chunks_for_reranker
+            if c.get("reranker_score", 0.0) >= RERANKER_SCORE_THRESHOLD
+        ]
         candidate_chunks_for_reranker = sorted(
             candidate_chunks_for_reranker,
             key=lambda c: c.get("reranker_score", 0.0),
@@ -163,6 +167,12 @@ async def execute_rag_flow(
             candidate_chunks_for_reranker = candidate_chunks_for_reranker[:FINAL_CONTEXT_TOP_K]
         rerank_duration = time.time() - rerank_start_time
         logger.info(f"[{flow_request_id}] Reranker scoring complete. Duration: {rerank_duration:.3f}s. Kept {len(candidate_chunks_for_reranker)} candidates.")
+        if candidate_chunks_for_reranker:
+            summary = ", ".join([
+                f"{c.get('chunk_id')}({c.get('doc_name', '未知')})={c.get('reranker_score', 0.0):.3f}"
+                for c in candidate_chunks_for_reranker
+            ])
+            logger.info(f"[{flow_request_id}] Reranker kept: {summary}")
         
     retrieval_duration = time.time() - retrieval_start_time
     logger.info(
