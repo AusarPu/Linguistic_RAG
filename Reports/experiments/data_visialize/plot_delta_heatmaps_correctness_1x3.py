@@ -53,7 +53,9 @@ def main():
         mats.append(mat)
         tau_orders.append(tau_order)
     norm = build_global_norm(mats)
-    fig, axs = plt.subplots(1, 3, figsize=(18, 6), dpi=480)
+    fig = plt.figure(figsize=(24, 6), dpi=480, constrained_layout=True)
+    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 1, 0.05])
+    axs = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1]), fig.add_subplot(gs[0, 2])]
     for i, ds in enumerate(DATASETS):
         ax = axs[i]
         mat = mats[i]
@@ -68,11 +70,11 @@ def main():
         ax.set_title(ds)
         if i == 0:
             ax.set_ylabel("Threshold")
+    cax = fig.add_subplot(gs[0, 3])
     sm = plt.cm.ScalarMappable(cmap="seismic", norm=norm)
     sm.set_array([])
-    cbar = fig.colorbar(sm, ax=axs, location="right")
+    cbar = fig.colorbar(sm, cax=cax)
     cbar.set_label("Delta")
-    plt.tight_layout()
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     plt.savefig(OUTPUT_PATH)
     plt.close(fig)
