@@ -109,8 +109,8 @@ wait_for_eval_start() {
 }
 
 run_one_combo() {
-  local TC="$1"; local TQ="$2"; local TK="$3"; local CTP="$4"; local QTP="$5"; local KTP="$6"; local FTP="$7"
-  local RUN_NAME="thr_chunk_${TC}_thr_question_${TQ}_thr_keyword_${TK}_topk_chunk_${CTP}_topk_question_${QTP}_topk_keyword_${KTP}_topk_final_${FTP}"
+  local TC="$1"; local TQ="$2"; local TK="$3"; local CTP="$4"; local QTP="$5"; local KTP="$6"; local FTP="$7"; local RR="$8"
+  local RUN_NAME="thr_chunk_${TC}_thr_question_${TQ}_thr_keyword_${TK}_topk_chunk_${CTP}_topk_question_${QTP}_topk_keyword_${KTP}_topk_final_${FTP}_thr_reranker_${RR}"
 
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do sleep 1; done
   cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
@@ -121,6 +121,7 @@ run_one_combo() {
   update_py_const DENSE_QUESTION_RETRIEVAL_TOP_K "$QTP"
   update_py_const SPARSE_KEYWORD_RETRIEVAL_TOP_K "$KTP"
   update_py_const FINAL_CONTEXT_TOP_K "$FTP"
+  update_py_const RERANKER_SCORE_THRESHOLD "$RR"
 
   bash "$RUN_COMPARE" "$MAX_QUESTIONS" "$RUN_NAME" &
   local child_pid=$!
@@ -173,17 +174,21 @@ else:
     ))
 
 vals_topk = [data[k] for k in topk_keys]
-for comb in itertools.product(thr_tuples, *vals_topk):
-    (tc, tq, tk), ctp, qtp, ktp, ftp = comb
-    print(f"{tc} {tq} {tk} {int(ctp)} {int(qtp)} {int(ktp)} {int(ftp)}")
+rr_vals = data.get("RERANKER_SCORE_THRESHOLD")
+if not isinstance(rr_vals, list) or len(rr_vals) == 0:
+    print("参数缺失或为空: RERANKER_SCORE_THRESHOLD", file=sys.stderr)
+    sys.exit(2)
+for comb in itertools.product(thr_tuples, *vals_topk, rr_vals):
+    (tc, tq, tk), ctp, qtp, ktp, ftp, rr = comb
+    print(f"{tc} {tq} {tk} {int(ctp)} {int(qtp)} {int(ktp)} {int(ftp)} {rr}")
 PY
 )
 
 declare -a PIDS=()
 
 for line in "${COMBOS[@]}"; do
-  read -r TC TQ TK CTP QTP KTP FTP <<< "$line"
-  run_one_combo "$TC" "$TQ" "$TK" "$CTP" "$QTP" "$KTP" "$FTP" &
+  read -r TC TQ TK CTP QTP KTP FTP RR <<< "$line"
+  run_one_combo "$TC" "$TQ" "$TK" "$CTP" "$QTP" "$KTP" "$FTP" "$RR" &
   PIDS+=("$!")
 
   while [ "${#PIDS[@]}" -ge "$MAX_PARALLEL" ]; do

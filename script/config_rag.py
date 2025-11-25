@@ -34,7 +34,7 @@ RRF_K = 60
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
-VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-30B-A3B-FP8"
+VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/openai/gpt-oss-120b"
 EMBEDDING_MODEL_PATH = "./models/Qwen/Qwen3-Embedding-8B"
 VLLM_REWRITER_LORA_LOCAL_PATH = ""              
 
