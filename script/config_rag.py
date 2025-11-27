@@ -158,6 +158,7 @@ RERANKER_GENERATION_CONFIG = {
     "temperature": 0.0,
     "top_p": 1.0,
     "stop": None,
+    "chat_template_kwargs": {"enable_thinking": False}
 }
 
 # -----------------

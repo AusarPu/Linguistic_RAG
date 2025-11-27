@@ -149,7 +149,7 @@ else
         --max_num_seqs 1024
         --kv-cache-dtype fp8
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"
-        --reasoning-parser deepseek_r1 \
+        #--reasoning-parser deepseek_r1 \
         #--quantization fp8
         #--rope-scaling '{"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768}' \
     )
