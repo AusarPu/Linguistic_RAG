@@ -34,8 +34,9 @@ RRF_K = 60
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
-VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/openai/gpt-oss-120b"
-EMBEDDING_MODEL_PATH = "./models/Qwen/Qwen3-Embedding-8B"
+VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-0.6B"
+EMBEDDING_MODEL_PATH = "./models/Qwen/Qwen3-Embedding-0.6B"
+RERANKER_MODEL_NAME_FOR_API = "./models/Qwen/Qwen3-Reranker-0.6B"
 VLLM_REWRITER_LORA_LOCAL_PATH = ""              
 
 # --- Tokenizer 并行配置 ---
@@ -103,7 +104,6 @@ GENERATOR_MODEL_NAME_FOR_API = VLLM_BASE_MODEL_LOCAL_PATH
 REWRITER_MODEL_NAME_FOR_API = VLLM_REWRITE_MODEL_LOCAL_PATH 
 
 EMBEDDING_MODEL_NAME_FOR_API = EMBEDDING_MODEL_PATH
-RERANKER_MODEL_NAME_FOR_API = "./models/Qwen/Qwen3-Reranker-8B"
 
 API_PLATFORM_BASE_URL = "https://api.deepseek.com/v1"
 API_PLATFORM_API_KEY_FILE = "/home/pushihao/RAG/script/api_keys/deepseek_api.txt"
