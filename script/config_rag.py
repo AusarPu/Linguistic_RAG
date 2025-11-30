@@ -127,6 +127,11 @@ _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 GENERATOR_SYSTEM_PROMPT_FILE = os.path.join(_CONFIG_DIR, "../prompts/generator_system_prompt_eval.txt")
 REWRITER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/rewriter_instruction.txt")
 USEFUL_JUDGER_INSTRUCTION_FILE = os.path.join(_CONFIG_DIR, "../prompts/useful_judge_v2.txt")
+# 新增：块优化与元数据生成提示词文件路径
+METADATA_PROMPT_ZH_FILE = os.path.join(_CONFIG_DIR, "../prompts/metadata_prompt_zh.txt")
+METADATA_PROMPT_EN_FILE = os.path.join(_CONFIG_DIR, "../prompts/metadata_prompt_en.txt")
+OPTIMIZATION_PROMPT_ZH_FILE = os.path.join(_CONFIG_DIR, "../prompts/chunk_optimization_prompt_zh.txt")
+OPTIMIZATION_PROMPT_EN_FILE = os.path.join(_CONFIG_DIR, "../prompts/chunk_optimization_prompt_en.txt")
 # -------------------------
 
 # --- 生成参数配置 ---
