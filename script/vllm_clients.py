@@ -2,11 +2,13 @@ import asyncio
 import time
 import logging
 import json
+import math
 import requests
 import numpy as np
 from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 
 import aiohttp  # 用于异步HTTP请求
+import re
 
 # --- 从项目中导入配置 ---
 from .config_rag import (
@@ -127,6 +129,17 @@ class EmbeddingAPIClient:
         }
 
 
+_TOKENIZER_CACHE: Dict[str, Any] = {}
+
+def _get_yes_no_token_ids(model_name: str) -> Dict[str, int]:
+    if model_name not in _TOKENIZER_CACHE:
+        from transformers import AutoTokenizer
+        tok = AutoTokenizer.from_pretrained(model_name)
+        yes_id = tok("yes", add_special_tokens=False).input_ids[0]
+        no_id = tok("no", add_special_tokens=False).input_ids[0]
+        _TOKENIZER_CACHE[model_name] = {"yes": yes_id, "no": no_id}
+    return _TOKENIZER_CACHE[model_name]
+
 async def async_rank_with_reranker(
         pairs: List[Dict[str, str]],
         instruction: Optional[str] = None,
@@ -140,12 +153,12 @@ async def async_rank_with_reranker(
         effective_generation_config.update(generation_config)
 
     if instruction is None:
-        instruction = (
-            "Given a web search query and a candidate passage, return a relevance score between 0 and 1 "
-            "indicating how well the passage answers the query. Respond strictly as {\"score\": <float>}"
-        )
+        instruction = 'Given a web search query, retrieve relevant passages that answer the query'
 
     headers = {"Content-Type": "application/json"}
+
+    ids = _get_yes_no_token_ids(model_name)
+    yes_id, no_id = ids["yes"], ids["no"]
 
     timeout_cfg = aiohttp.ClientTimeout(total=request_timeout, connect=request_timeout, sock_read=request_timeout)
     async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
@@ -155,36 +168,116 @@ async def async_rank_with_reranker(
             payload = {
                 "model": model_name,
                 "messages": [
-                    {"role": "system", "content": instruction},
-                    {"role": "user", "content": f"<Query>: {q}\n<Document>: {d}"}
+                    {"role": "system", "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."},
+                    {"role": "user", "content": f"<Instruct>: {instruction}\n\n<Query>: {q}\n\n<Document>: {d}"}
                 ],
                 **{k: v for k, v in effective_generation_config.items() if v is not None},
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "rerank_output",
-                        "schema": {
-                            "type": "object",
-                            "properties": {"score": {"type": "number"}},
-                            "required": ["score"]
-                        }
-                    }
-                }
+                "allowed_token_ids": [yes_id, no_id],
             }
             async with session.post(api_url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     raise RuntimeError(f"Reranker API failed: {resp.status}: {body}")
                 result = await resp.json()
-            message_obj = result["choices"][0]["message"]
-            parsed = message_obj.get("parsed")
-            if isinstance(parsed, dict) and "score" in parsed:
-                s = float(parsed["score"])
-            else:
-                content = message_obj.get("content", "").strip()
-                data = json.loads(content)
-                s = float(data["score"])
-            return 0.0 if s < 0 else (1.0 if s > 1 else s)
+            choice = result["choices"][0]
+            lp = choice.get("logprobs")
+            if not lp or "content" not in lp or not lp["content"]:
+                raise RuntimeError("Missing logprobs content in response")
+            last = lp["content"][-1]
+            top = last.get("top_logprobs") or []
+            prob_yes = 0.0
+            prob_no = 0.0
+            for item in top:
+                tok = str(item.get("token", ""))
+                val = float(item.get("logprob", -100))
+                if tok.startswith("token_id:"):
+                    try:
+                        tid = int(tok.split(":", 1)[1])
+                        if tid == yes_id:
+                            prob_yes = math.exp(val)
+                        elif tid == no_id:
+                            prob_no = math.exp(val)
+                    except Exception:
+                        pass
+                else:
+                    t = tok.strip().lower()
+                    if t in ("yes", "▁yes", "Ġyes"):
+                        prob_yes = math.exp(val)
+                    elif t in ("no", "▁no", "Ġno"):
+                        prob_no = math.exp(val)
+            total = prob_yes + prob_no
+            if total == 0.0:
+                raise RuntimeError("Missing yes/no in top_logprobs")
+            return prob_yes / total
+
+        coros = [_post_one(p) for p in pairs]
+        scores = await asyncio.gather(*coros)
+        return list(scores)
+
+
+async def async_rank_with_yesno_api(
+        pairs: List[Dict[str, str]],
+        instruction: Optional[str] = None,
+        api_url: str = RERANKER_API_URL,
+        model_name: str = RERANKER_MODEL_NAME_FOR_API,
+        request_timeout: float = VLLM_REQUEST_TIMEOUT
+) -> List[float]:
+    if instruction is None:
+        instruction = 'Given a web search query, retrieve relevant passages that answer the query'
+    gen = dict(RERANKER_GENERATION_CONFIG)
+    gen.update({"max_tokens": 1, "temperature": 0, "top_p": 1.0, "logprobs": True, "top_logprobs": 20, "chat_template_kwargs": {"enable_thinking": False}})
+    headers = {"Content-Type": "application/json"}
+    timeout_cfg = aiohttp.ClientTimeout(total=request_timeout, connect=request_timeout, sock_read=request_timeout)
+    async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+        async def _post_one(pair: Dict[str, str]) -> float:
+            q = pair.get("query", "")
+            d = pair.get("doc", "")
+            ids = _get_yes_no_token_ids(model_name)
+            yes_id, no_id = ids["yes"], ids["no"]
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."},
+                    {"role": "user", "content": f"<Instruct>: {instruction}\n\n<Query>: {q}\n\n<Document>: {d}"}
+                ],
+                **{k: v for k, v in gen.items() if v is not None},
+                "allowed_token_ids": [yes_id, no_id]
+            }
+            async with session.post(api_url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    raise RuntimeError(f"Reranker API failed: {resp.status}: {body}")
+                result = await resp.json()
+            choice = result["choices"][0]
+            lp = choice.get("logprobs")
+            if not lp or "content" not in lp or not lp["content"]:
+                raise RuntimeError("Missing logprobs content in response")
+            last = lp["content"][-1]
+            top = last.get("top_logprobs") or []
+            prob_yes = 0.0
+            prob_no = 0.0
+            for item in top:
+                tok = str(item.get("token", ""))
+                val = float(item.get("logprob", -100))
+                if tok.startswith("token_id:"):
+                    try:
+                        tid = int(tok.split(":", 1)[1])
+                        if tid == yes_id:
+                            prob_yes = math.exp(val)
+                        elif tid == no_id:
+                            prob_no = math.exp(val)
+                    except Exception:
+                        pass
+                else:
+                    t = tok.strip().lower()
+                    if t in ("yes", "▁yes", "Ġyes"):
+                        prob_yes = math.exp(val)
+                    elif t in ("no", "▁no", "Ġno"):
+                        prob_no = math.exp(val)
+            total = prob_yes + prob_no
+            if total == 0.0:
+                raise RuntimeError("Missing yes/no in top_logprobs")
+            return prob_yes / total
 
         coros = [_post_one(p) for p in pairs]
         scores = await asyncio.gather(*coros)

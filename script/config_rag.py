@@ -34,7 +34,7 @@ RRF_K = 60
 # -----------------------------
 
 # --- 模型本地路径配置 (保持不变) ---
-VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-0.6B"
+VLLM_BASE_MODEL_LOCAL_PATH = VLLM_REWRITE_MODEL_LOCAL_PATH = "./models/Qwen/Qwen3-30B-A3B-FP8"
 EMBEDDING_MODEL_PATH = "./models/Qwen/Qwen3-Embedding-0.6B"
 RERANKER_MODEL_NAME_FOR_API = "./models/Qwen/Qwen3-Reranker-0.6B"
 VLLM_REWRITER_LORA_LOCAL_PATH = ""              
@@ -159,9 +159,11 @@ USEFULNESS_GENERATION_CONFIG = { # 用于有用性判断 vLLM API
 }
 
 RERANKER_GENERATION_CONFIG = {
-    "max_tokens": 32,
-    "temperature": 0.0,
+    "max_tokens": 1,
+    "temperature": 0,
     "top_p": 1.0,
+    "logprobs": True,
+    "top_logprobs": 20,
     "stop": None,
     "chat_template_kwargs": {"enable_thinking": False}
 }

@@ -244,7 +244,7 @@ else
         --trust-remote-code \
         --disable-log-requests \
         --enforce-eager \
-        --max-model-len 512 \
+        --max-model-len 2048 \
         --tensor-parallel-size "$RERANKER_TENSOR_PARALLEL_SIZE" \
         --max_num_seqs 1024 \
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"\
