@@ -16,9 +16,9 @@ PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------
 # 检索参数
 MAX_HISTORY = 10
-DENSE_CHUNK_RETRIEVAL_TOP_K = 20
-DENSE_QUESTION_RETRIEVAL_TOP_K = 10 # 可以与上面不同
-SPARSE_KEYWORD_RETRIEVAL_TOP_K = 10
+DENSE_CHUNK_RETRIEVAL_TOP_K = 10
+DENSE_QUESTION_RETRIEVAL_TOP_K = 5 # 可以与上面不同
+SPARSE_KEYWORD_RETRIEVAL_TOP_K = 5
 DENSE_CHUNK_THRESHOLD = 0.5
 DENSE_QUESTION_THRESHOLD = 0.5
 SPARSE_KEYWORD_THRESHOLD = 0.5
@@ -150,9 +150,9 @@ GENERATION_CONFIG = { # 用于生成器 vLLM API
 }
 REWRITER_GENERATION_CONFIG = { # 用于重写器 vLLM API
     "max_tokens": 8192,
-    "temperature": 0.1,
+    "temperature": 0.6,
     "stop": None,
-    "chat_template_kwargs": {"enable_thinking": True}
+    "chat_template_kwargs": {"enable_thinking": False}
 }
 USEFULNESS_GENERATION_CONFIG = { # 用于有用性判断 vLLM API
     "max_tokens": 4096,

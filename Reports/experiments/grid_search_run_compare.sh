@@ -119,6 +119,28 @@ stop_eval_llm() {
   sleep 10
 }
 
+stop_reranker_vllm() {
+  local reranker_port; reranker_port=$(read_config VLLM_RERANKER_PORT)
+  if [ -f "$PROJECT_ROOT/pids/vllm_reranker.pid" ]; then
+    local pid; pid=$(cat "$PROJECT_ROOT/pids/vllm_reranker.pid")
+    kill "$pid" 2>/dev/null || true
+    rm -f "$PROJECT_ROOT/pids/vllm_reranker.pid"
+  fi
+  pgrep -f "vllm serve .*--port $reranker_port" | xargs -r kill 2>/dev/null || true
+  sleep 10
+}
+
+stop_embedding_vllm() {
+  local embedding_port; embedding_port=$(read_config VLLM_EMBEDDING_PORT)
+  if [ -f "$PROJECT_ROOT/pids/vllm_embedding.pid" ]; then
+    local pid; pid=$(cat "$PROJECT_ROOT/pids/vllm_embedding.pid")
+    kill "$pid" 2>/dev/null || true
+    rm -f "$PROJECT_ROOT/pids/vllm_embedding.pid"
+  fi
+  pgrep -f "vllm serve .*--port $embedding_port" | xargs -r kill 2>/dev/null || true
+  sleep 10
+}
+
 start_generator_vllm() {
   nohup bash "$PROJECT_ROOT/start_server.sh" > "$PROJECT_ROOT/logs/start_server_restore.log" 2>&1 &
   sleep 60
@@ -290,6 +312,8 @@ for pid in "${ADV_PIDS[@]}"; do
   wait "$pid"
 done
 
-# 评估完成，恢复生成器
 stop_eval_llm
-start_generator_vllm
+stop_reranker_vllm
+stop_embedding_vllm
+rm -f "$RUNS_LIST_FILE"
+rm -f "$SCRIPT_DIR"/.grid_runs_*.list
