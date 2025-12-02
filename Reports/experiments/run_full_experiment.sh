@@ -228,6 +228,10 @@ run_advanced_evaluation() {
     fi
     
     # 运行高级评估脚本，评估所有数据集
+    if [ "${DEFER_ADVANCED_EVAL:-false}" = true ]; then
+        print_warning "高级评估已延迟到批次协调器执行，当前运行跳过"
+        return 0
+    fi
     local cmd="bash $SCRIPT_DIR/run_advanced_evaluation.sh -a"
     
     print_info "执行命令: $cmd"

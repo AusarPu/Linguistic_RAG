@@ -97,22 +97,7 @@ def _prepare_ragas_dataset(results: List[Dict[str, Any]], kb) -> Dataset:
             if text_val:
                 raw_ctx_texts.append(text_val)
 
-        # 基于配置进行上下文裁剪：按顺序保留，直到达到 token 总量与最大块数的上限
-        max_tokens = getattr(config, "EVALUATION_CONTEXTS_MAX_INPUT_TOKENS", None)
-        max_chunks = getattr(config, "EVALUATION_CONTEXTS_MAX_CHUNKS", None)
-        ctx_texts: List[str] = []
-        total_tokens = 0
-        for t in raw_ctx_texts:
-            # 如果达到最大块数限制则停止
-            if isinstance(max_chunks, int) and max_chunks > 0 and len(ctx_texts) >= max_chunks:
-                break
-            # 如果达到最大token限制则停止
-            if isinstance(max_tokens, int) and max_tokens > 0:
-                tlen = fast_token_length(t)
-                if total_tokens + tlen > max_tokens:
-                    break
-                total_tokens += tlen
-            ctx_texts.append(t)
+        ctx_texts: List[str] = raw_ctx_texts
 
         questions.append(q)
         answers.append(a)
@@ -132,12 +117,12 @@ def _prepare_ragas_dataset(results: List[Dict[str, Any]], kb) -> Dataset:
 
 def _get_ragas_clients():
     """初始化 Ragas 评估所需的 LLM 与 Embeddings 客户端"""
-    generator_base_url = config.get_ragas_llm_base_url()
+    generator_base_url = config.EVALUATION_LLM_API_URL.rsplit("/chat/completions", 1)[0]
     embedding_base_url = config.EMBEDDING_API_URL.rsplit("/embeddings", 1)[0]
     llm = RagasOpenAICompatLLMWrapper(
         base_url=generator_base_url,
-        model=config.get_ragas_llm_model(),
-        api_key=config.get_ragas_llm_api_key(),
+        model=config.EVALUATION_LLM_MODEL_LOCAL_PATH,
+        api_key="-",
         temperature=0,
         top_p=0.9,
     )

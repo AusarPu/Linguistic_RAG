@@ -48,8 +48,8 @@ mkdir -p "$LOG_DIR"
 
 BASE_OPTS="-s converter -s chunk -s enhance -s index"
 
-CMD_R1="bash \"$EXPERIMENT_SCRIPT\" $BASE_OPTS --no-usefulness-judger --no-dense-keywords --no-dense-questions \"$MAX_QUESTIONS\""
-CMD_R4="bash \"$EXPERIMENT_SCRIPT\" $BASE_OPTS --no-usefulness-judger \"$MAX_QUESTIONS\""
+CMD_R1="DEFER_ADVANCED_EVAL=true bash \"$EXPERIMENT_SCRIPT\" $BASE_OPTS --no-usefulness-judger --no-dense-keywords --no-dense-questions \"$MAX_QUESTIONS\""
+CMD_R4="DEFER_ADVANCED_EVAL=true bash \"$EXPERIMENT_SCRIPT\" $BASE_OPTS --no-usefulness-judger \"$MAX_QUESTIONS\""
 
 print_info "启动 r1 实验: $CMD_R1"
 eval "$CMD_R1" > "$LOG_DIR/r1.log" 2>&1 &

@@ -6,6 +6,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CONFIG_FILE="$PROJECT_ROOT/script/config_rag.py"
 RUN_COMPARE="$SCRIPT_DIR/run_compare_experiments.sh"
 DEFAULT_JSON="$SCRIPT_DIR/params_grid.json"
+RUNS_LIST_FILE="$SCRIPT_DIR/.grid_runs_$$.list"
 
 if [ $# -lt 1 ]; then
   echo "缺少必需参数: 问题数"
@@ -65,6 +66,64 @@ on_interrupt() {
 }
 trap 'on_interrupt' INT TERM
 
+# 记录本批次运行的组合名称列表
+rm -f "$RUNS_LIST_FILE"
+
+# 读取配置常量（从 Python 模块）
+read_config() {
+  local var_name="$1"
+  python3 -c "import sys; sys.path.insert(0, '$PROJECT_ROOT'); from script.config_rag import $var_name; print($var_name)" 2>/dev/null
+}
+
+# 等待缓冲 & Kill 生成器 vLLM（释放 GPU 显存）
+kill_generator_vllm() {
+  local gen_port; gen_port=$(read_config VLLM_GENERATOR_PORT)
+  sleep 30
+  if [ -f "$PROJECT_ROOT/pids/vllm_rewriter.pid" ]; then
+    local pid; pid=$(cat "$PROJECT_ROOT/pids/vllm_rewriter.pid")
+    kill "$pid" 2>/dev/null || true
+    rm -f "$PROJECT_ROOT/pids/vllm_rewriter.pid"
+  fi
+  pgrep -f "vllm serve .*--port $gen_port" | xargs -r kill 2>/dev/null || true
+}
+
+# 启动评估 LLM（gpt-oss-120b，端口 8003），等待 120s 就绪
+start_eval_llm() {
+  local eval_model; eval_model=$(read_config EVALUATION_LLM_MODEL_LOCAL_PATH)
+  local eval_port; eval_port=$(read_config EVALUATION_LLM_PORT)
+  local gen_gpu_ids; gen_gpu_ids=$(read_config VLLM_GENERATOR_GPU_ID)
+  local gen_mem_util; gen_mem_util=$(read_config VLLM_GENERATOR_MEM_UTILIZATION)
+  local parallel_workers; parallel_workers=$(read_config VLLM_REWRITER_TENSOR_PARALLEL_SIZE)
+  mkdir -p "$PROJECT_ROOT/logs" "$PROJECT_ROOT/pids"
+  (export CUDA_VISIBLE_DEVICES=${gen_gpu_ids}; nohup vllm serve "$eval_model" \
+    --port "$eval_port" \
+    --trust-remote-code \
+    --disable-log-requests \
+    --enforce-eager \
+    --gpu-memory-utilization "${gen_mem_util}" \
+    --tensor-parallel-size "${parallel_workers}" \
+    --max-model-len 8192 \
+    --max_num_seqs 512 \
+    > "$PROJECT_ROOT/logs/vllm_eval_llm.log" 2>&1 & echo $! > "$PROJECT_ROOT/pids/vllm_eval_llm.pid")
+  sleep 120
+}
+
+stop_eval_llm() {
+  local eval_port; eval_port=$(read_config EVALUATION_LLM_PORT)
+  if [ -f "$PROJECT_ROOT/pids/vllm_eval_llm.pid" ]; then
+    local pid; pid=$(cat "$PROJECT_ROOT/pids/vllm_eval_llm.pid")
+    kill "$pid" 2>/dev/null || true
+    rm -f "$PROJECT_ROOT/pids/vllm_eval_llm.pid"
+  fi
+  pgrep -f "vllm serve .*--port $eval_port" | xargs -r kill 2>/dev/null || true
+  sleep 10
+}
+
+start_generator_vllm() {
+  nohup bash "$PROJECT_ROOT/start_server.sh" > "$PROJECT_ROOT/logs/start_server_restore.log" 2>&1 &
+  sleep 60
+}
+
 update_py_const() {
   local name="$1"; local val="$2"
   if [[ "$val" =~ ^[0-9]+$ ]]; then
@@ -111,6 +170,7 @@ wait_for_eval_start() {
 run_one_combo() {
   local TC="$1"; local TQ="$2"; local TK="$3"; local CTP="$4"; local QTP="$5"; local KTP="$6"; local FTP="$7"; local RR="$8"
   local RUN_NAME="thr_chunk_${TC}_thr_question_${TQ}_thr_keyword_${TK}_topk_chunk_${CTP}_topk_question_${QTP}_topk_keyword_${KTP}_topk_final_${FTP}_thr_reranker_${RR}"
+  echo "$RUN_NAME" >> "$RUNS_LIST_FILE"
 
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do sleep 1; done
   cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
@@ -206,3 +266,30 @@ done
 for pid in "${PIDS[@]}"; do
   wait "$pid"
 done
+
+# 所有组合的生成阶段已完成，切换到评估模式
+kill_generator_vllm
+start_eval_llm
+
+# 并行运行高级评估（不设并发上限）
+declare -a ADV_PIDS=()
+while read -r RUN_NAME; do
+  [ -z "$RUN_NAME" ] && continue
+  for variant in r1 r4; do
+    results_dir="$SCRIPT_DIR/datasets/runs/$RUN_NAME/$variant/rag_evaluation_results"
+    output_dir="$SCRIPT_DIR/datasets/runs/$RUN_NAME/$variant/advanced_evaluation_results"
+    if [ -d "$results_dir" ]; then
+      RUN_RESULTS_DIR="$results_dir" RUN_ADV_OUTPUT_DIR="$output_dir" \
+        bash "$SCRIPT_DIR/run_advanced_evaluation.sh" -a > "$SCRIPT_DIR/logs/$RUN_NAME/${variant}_advanced.log" 2>&1 &
+      ADV_PIDS+=("$!")
+    fi
+  done
+done < "$RUNS_LIST_FILE"
+
+for pid in "${ADV_PIDS[@]}"; do
+  wait "$pid"
+done
+
+# 评估完成，恢复生成器
+stop_eval_llm
+start_generator_vllm

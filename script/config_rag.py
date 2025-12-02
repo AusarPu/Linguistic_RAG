@@ -110,6 +110,11 @@ API_PLATFORM_API_KEY_FILE = "/home/pushihao/RAG/script/api_keys/deepseek_api.txt
 API_PLATFORM_GENERATOR_MODEL = "deepseek-chat"
 USE_API_PLATFORM_FOR_RAGAS = False
 
+EVALUATION_LLM_MODEL_LOCAL_PATH = "/home/pushihao/RAG/models/openai/gpt-oss-120b"
+EVALUATION_LLM_HOST = "localhost"
+EVALUATION_LLM_PORT = 8003
+EVALUATION_LLM_API_URL = f"http://{EVALUATION_LLM_HOST}:{EVALUATION_LLM_PORT}/v1/chat/completions"
+
 def read_api_platform_key():
     return open(API_PLATFORM_API_KEY_FILE, "r", encoding="utf-8").read().strip()
 
@@ -186,14 +191,9 @@ USEFULNESS_MAX_CONCURRENT_REQUESTS = 1000      # 有用性判断最大并发请�
 
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
-EVALUATION_CONCURRENCY_LIMIT = 20            # 评判请求的客户端并发上限（信号量）
+EVALUATION_CONCURRENCY_LIMIT = 5            # 评判请求的客户端并发上限（信号量）
 EVALUATION_MAX_TOKENS = 8192                   # 单次评判的最大生成 tokens，用于限制长输出
 
-# --- Ragas评估上下文输入限制 ---
-# 在构造传入 Ragas 的 contexts 列表时，基于 token 总量和最大块数进行裁剪，
-# 防止评估阶段提示过长导致超时或错误。
-EVALUATION_CONTEXTS_MAX_INPUT_TOKENS = 120000    # contexts 输入的最大 token 总量（fast tokenizer 估算）
-EVALUATION_CONTEXTS_MAX_CHUNKS = 50             # contexts 输入的最大块数上限
 
 # --- 有用性判断软保留策略 ---
 # 在多跳或不确定场景，避免过度过滤导致证据链断裂
