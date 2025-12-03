@@ -12,7 +12,7 @@ import re
 
 # --- 从项目中导入配置 ---
 from .config_rag import (
-    VLLM_REQUEST_TIMEOUT,  # 通用请求超时
+    VLLM_REQUEST_TIMEOUT,
     GENERATOR_API_URL,
     GENERATOR_MODEL_NAME_FOR_API,
     GENERATION_CONFIG,
@@ -22,9 +22,51 @@ from .config_rag import (
     RERANKER_API_URL,
     RERANKER_MODEL_NAME_FOR_API,
     RERANKER_GENERATION_CONFIG,
+    RERANKER_CONCURRENCY_LIMIT,
+    RERANKER_CONNECTOR_LIMIT,
+    RERANKER_CONNECTOR_LIMIT_PER_HOST,
+    RERANKER_KEEPALIVE_TIMEOUT,
+    RERANKER_FORCE_CLOSE,
+    RERANKER_ENABLE_CLEANUP_CLOSED,
+    RERANKER_CLIENT_TIMEOUT_TOTAL,
+    RERANKER_CLIENT_TIMEOUT_CONNECT,
+    RERANKER_CLIENT_TIMEOUT_SOCK_READ,
 )
 
 logger = logging.getLogger(__name__)
+
+_reranker_session: Optional[aiohttp.ClientSession] = None
+_reranker_sem: Optional[asyncio.Semaphore] = None
+
+def _get_shared_reranker_session() -> aiohttp.ClientSession:
+    global _reranker_session
+    if _reranker_session is None:
+        timeout = aiohttp.ClientTimeout(
+            total=RERANKER_CLIENT_TIMEOUT_TOTAL,
+            connect=RERANKER_CLIENT_TIMEOUT_CONNECT,
+            sock_read=RERANKER_CLIENT_TIMEOUT_SOCK_READ,
+        )
+        connector = aiohttp.TCPConnector(
+            limit=int(RERANKER_CONNECTOR_LIMIT),
+            limit_per_host=int(RERANKER_CONNECTOR_LIMIT_PER_HOST),
+            keepalive_timeout=float(RERANKER_KEEPALIVE_TIMEOUT),
+            force_close=bool(RERANKER_FORCE_CLOSE),
+            enable_cleanup_closed=bool(RERANKER_ENABLE_CLEANUP_CLOSED),
+        )
+        _reranker_session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+    return _reranker_session
+
+def _get_reranker_semaphore() -> asyncio.Semaphore:
+    global _reranker_sem
+    if _reranker_sem is None:
+        _reranker_sem = asyncio.Semaphore(int(RERANKER_CONCURRENCY_LIMIT))
+    return _reranker_sem
+
+async def close_reranker_session():
+    global _reranker_session
+    if _reranker_session is not None:
+        await _reranker_session.close()
+        _reranker_session = None
 
 def get_vllm_models_endpoint_url_from_generator(api_url: str = GENERATOR_API_URL) -> str:
     """
@@ -160,59 +202,61 @@ async def async_rank_with_reranker(
     ids = _get_yes_no_token_ids(model_name)
     yes_id, no_id = ids["yes"], ids["no"]
 
-    timeout_cfg = aiohttp.ClientTimeout(total=request_timeout, connect=request_timeout, sock_read=request_timeout)
-    async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
-        async def _post_one(pair: Dict[str, str]) -> float:
-            q = pair.get("query", "")
-            d = pair.get("doc", "")
-            payload = {
-                "model": model_name,
-                "messages": [
-                    {"role": "system", "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."},
-                    {"role": "user", "content": f"<Instruct>: {instruction}\n\n<Query>: {q}\n\n<Document>: {d}"}
-                ],
-                **{k: v for k, v in effective_generation_config.items() if v is not None},
-                "allowed_token_ids": [yes_id, no_id],
-            }
+    session = _get_shared_reranker_session()
+    sem = _get_reranker_semaphore()
+
+    async def _post_one(pair: Dict[str, str]) -> float:
+        q = pair.get("query", "")
+        d = pair.get("doc", "")
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."},
+                {"role": "user", "content": f"<Instruct>: {instruction}\n\n<Query>: {q}\n\n<Document>: {d}"}
+            ],
+            **{k: v for k, v in effective_generation_config.items() if v is not None},
+            "allowed_token_ids": [yes_id, no_id],
+        }
+        async with sem:
             async with session.post(api_url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     raise RuntimeError(f"Reranker API failed: {resp.status}: {body}")
                 result = await resp.json()
-            choice = result["choices"][0]
-            lp = choice.get("logprobs")
-            if not lp or "content" not in lp or not lp["content"]:
-                raise RuntimeError("Missing logprobs content in response")
-            last = lp["content"][-1]
-            top = last.get("top_logprobs") or []
-            prob_yes = 0.0
-            prob_no = 0.0
-            for item in top:
-                tok = str(item.get("token", ""))
-                val = float(item.get("logprob", -100))
-                if tok.startswith("token_id:"):
-                    try:
-                        tid = int(tok.split(":", 1)[1])
-                        if tid == yes_id:
-                            prob_yes = math.exp(val)
-                        elif tid == no_id:
-                            prob_no = math.exp(val)
-                    except Exception:
-                        pass
-                else:
-                    t = tok.strip().lower()
-                    if t in ("yes", "▁yes", "Ġyes"):
+        choice = result["choices"][0]
+        lp = choice.get("logprobs")
+        if not lp or "content" not in lp or not lp["content"]:
+            raise RuntimeError("Missing logprobs content in response")
+        last = lp["content"][-1]
+        top = last.get("top_logprobs") or []
+        prob_yes = 0.0
+        prob_no = 0.0
+        for item in top:
+            tok = str(item.get("token", ""))
+            val = float(item.get("logprob", -100))
+            if tok.startswith("token_id:"):
+                try:
+                    tid = int(tok.split(":", 1)[1])
+                    if tid == yes_id:
                         prob_yes = math.exp(val)
-                    elif t in ("no", "▁no", "Ġno"):
+                    elif tid == no_id:
                         prob_no = math.exp(val)
-            total = prob_yes + prob_no
-            if total == 0.0:
-                raise RuntimeError("Missing yes/no in top_logprobs")
-            return prob_yes / total
+                except Exception:
+                    pass
+            else:
+                t = tok.strip().lower()
+                if t in ("yes", "▁yes", "Ġyes"):
+                    prob_yes = math.exp(val)
+                elif t in ("no", "▁no", "Ġno"):
+                    prob_no = math.exp(val)
+        total = prob_yes + prob_no
+        if total == 0.0:
+            raise RuntimeError("Missing yes/no in top_logprobs")
+        return prob_yes / total
 
-        coros = [_post_one(p) for p in pairs]
-        scores = await asyncio.gather(*coros)
-        return list(scores)
+    coros = [_post_one(p) for p in pairs]
+    scores = await asyncio.gather(*coros)
+    return list(scores)
 
 
 async def async_rank_with_yesno_api(
@@ -227,61 +271,63 @@ async def async_rank_with_yesno_api(
     gen = dict(RERANKER_GENERATION_CONFIG)
     gen.update({"max_tokens": 1, "temperature": 0, "top_p": 1.0, "logprobs": True, "top_logprobs": 20, "chat_template_kwargs": {"enable_thinking": False}})
     headers = {"Content-Type": "application/json"}
-    timeout_cfg = aiohttp.ClientTimeout(total=request_timeout, connect=request_timeout, sock_read=request_timeout)
-    async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
-        async def _post_one(pair: Dict[str, str]) -> float:
-            q = pair.get("query", "")
-            d = pair.get("doc", "")
-            ids = _get_yes_no_token_ids(model_name)
-            yes_id, no_id = ids["yes"], ids["no"]
-            payload = {
-                "model": model_name,
-                "messages": [
-                    {"role": "system", "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."},
-                    {"role": "user", "content": f"<Instruct>: {instruction}\n\n<Query>: {q}\n\n<Document>: {d}"}
-                ],
-                **{k: v for k, v in gen.items() if v is not None},
-                "allowed_token_ids": [yes_id, no_id]
-            }
+    session = _get_shared_reranker_session()
+    sem = _get_reranker_semaphore()
+
+    async def _post_one(pair: Dict[str, str]) -> float:
+        q = pair.get("query", "")
+        d = pair.get("doc", "")
+        ids = _get_yes_no_token_ids(model_name)
+        yes_id, no_id = ids["yes"], ids["no"]
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."},
+                {"role": "user", "content": f"<Instruct>: {instruction}\n\n<Query>: {q}\n\n<Document>: {d}"}
+            ],
+            **{k: v for k, v in gen.items() if v is not None},
+            "allowed_token_ids": [yes_id, no_id]
+        }
+        async with sem:
             async with session.post(api_url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     raise RuntimeError(f"Reranker API failed: {resp.status}: {body}")
                 result = await resp.json()
-            choice = result["choices"][0]
-            lp = choice.get("logprobs")
-            if not lp or "content" not in lp or not lp["content"]:
-                raise RuntimeError("Missing logprobs content in response")
-            last = lp["content"][-1]
-            top = last.get("top_logprobs") or []
-            prob_yes = 0.0
-            prob_no = 0.0
-            for item in top:
-                tok = str(item.get("token", ""))
-                val = float(item.get("logprob", -100))
-                if tok.startswith("token_id:"):
-                    try:
-                        tid = int(tok.split(":", 1)[1])
-                        if tid == yes_id:
-                            prob_yes = math.exp(val)
-                        elif tid == no_id:
-                            prob_no = math.exp(val)
-                    except Exception:
-                        pass
-                else:
-                    t = tok.strip().lower()
-                    if t in ("yes", "▁yes", "Ġyes"):
+        choice = result["choices"][0]
+        lp = choice.get("logprobs")
+        if not lp or "content" not in lp or not lp["content"]:
+            raise RuntimeError("Missing logprobs content in response")
+        last = lp["content"][-1]
+        top = last.get("top_logprobs") or []
+        prob_yes = 0.0
+        prob_no = 0.0
+        for item in top:
+            tok = str(item.get("token", ""))
+            val = float(item.get("logprob", -100))
+            if tok.startswith("token_id:"):
+                try:
+                    tid = int(tok.split(":", 1)[1])
+                    if tid == yes_id:
                         prob_yes = math.exp(val)
-                    elif t in ("no", "▁no", "Ġno"):
+                    elif tid == no_id:
                         prob_no = math.exp(val)
-            total = prob_yes + prob_no
-            if total == 0.0:
-                raise RuntimeError("Missing yes/no in top_logprobs")
-            return prob_yes / total
+                except Exception:
+                    pass
+            else:
+                t = tok.strip().lower()
+                if t in ("yes", "▁yes", "Ġyes"):
+                    prob_yes = math.exp(val)
+                elif t in ("no", "▁no", "Ġno"):
+                    prob_no = math.exp(val)
+        total = prob_yes + prob_no
+        if total == 0.0:
+            raise RuntimeError("Missing yes/no in top_logprobs")
+        return prob_yes / total
 
-        coros = [_post_one(p) for p in pairs]
-        scores = await asyncio.gather(*coros)
-        return list(scores)
+    coros = [_post_one(p) for p in pairs]
+    scores = await asyncio.gather(*coros)
+    return list(scores)
 
 
 async def call_generator_vllm_stream(

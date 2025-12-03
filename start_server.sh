@@ -144,7 +144,7 @@ else
         --trust-remote-code
         --disable-log-requests
         --enforce-eager
-        --max-model-len 40960
+        --max-model-len 10240
         --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
         --max_num_seqs 1024
         --kv-cache-dtype fp8
@@ -203,6 +203,7 @@ else
         --max-model-len 2048
         --max_num_seqs 2048
         --quantization fp8
+        --kv-cache-dtype fp8
         --tensor-parallel-size "$EMBEDDING_TENSOR_PARALLEL_SIZE"
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"
     )
@@ -244,11 +245,12 @@ else
         --trust-remote-code \
         --disable-log-requests \
         --enforce-eager \
-        --max-model-len 2048 \
+        --max-model-len 550 \
         --tensor-parallel-size "$RERANKER_TENSOR_PARALLEL_SIZE" \
         --max_num_seqs 1024 \
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"\
         --quantization fp8
+        --kv-cache-dtype fp8
     )
 
     if [ ! -z "$RERANKER_MEM_UTILIZATION" ] && [ "$RERANKER_MEM_UTILIZATION" != "None" ]; then

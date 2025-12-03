@@ -66,13 +66,13 @@ GPU_ID = "4,5"
 VLLM_GENERATOR_HOST = "localhost" # vLLM 监听的主机名 (通常 localhost 即可，因为 Gradio 和 vLLM 在同一容器/机器)
 VLLM_GENERATOR_PORT = 8001        # vLLM 生成器监听的端口
 VLLM_GENERATOR_GPU_ID = GPU_ID        # 分配给生成器的 GPU ID
-VLLM_GENERATOR_MEM_UTILIZATION = 0.6 # GPU 显存使用率 (例如 0.9 for 90%)
+VLLM_GENERATOR_MEM_UTILIZATION = 0.5 # GPU 显存使用率 (例如 0.9 for 90%)
 
 # 重写器服务配置
 VLLM_REWRITER_HOST = "localhost"
 VLLM_REWRITER_PORT = 8001         # vLLM 重写器监听的端口
 VLLM_REWRITER_GPU_ID = GPU_ID        # 分配给重写器的 GPU ID (如果只有一块 GPU, 设为 0)
-VLLM_REWRITER_MEM_UTILIZATION = 0.6 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
+VLLM_REWRITER_MEM_UTILIZATION = 0.5 # 如果独占 GPU 可设高，共享则需调低 (例如 0.45)
 VLLM_REWRITER_TENSOR_PARALLEL_SIZE = 2 # 新增：Rewriter的张量并行数
 
 # 重写器 LoRA 配置
@@ -89,7 +89,7 @@ VLLM_EMBEDDING_TENSOR_PARALLEL_SIZE = 2
 VLLM_RERANKER_HOST = "localhost"
 VLLM_RERANKER_PORT = 8860
 VLLM_RERANKER_GPU_ID = GPU_ID
-VLLM_RERANKER_MEM_UTILIZATION = 0.15
+VLLM_RERANKER_MEM_UTILIZATION = 0.25
 VLLM_RERANKER_TENSOR_PARALLEL_SIZE = 2
 
 # --- API 端点 (根据上面配置自动生成) ---
@@ -141,7 +141,7 @@ OPTIMIZATION_PROMPT_EN_FILE = os.path.join(_CONFIG_DIR, "../prompts/chunk_optimi
 
 # --- 生成参数配置 ---
 GENERATION_CONFIG = { # 用于生成器 vLLM API
-    "max_tokens": 8192,
+    "max_tokens": 4096,
     "temperature": 0.6,
     "top_p": 0.95,
     "repetition_penalty": 1.1,
@@ -193,6 +193,16 @@ USEFULNESS_MAX_CONCURRENT_REQUESTS = 1000      # 有用性判断最大并发请�
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
 EVALUATION_CONCURRENCY_LIMIT = 5            # 评判请求的客户端并发上限（信号量）
 EVALUATION_MAX_TOKENS = 8192                   # 单次评判的最大生成 tokens，用于限制长输出
+
+RERANKER_CONCURRENCY_LIMIT = 1024
+RERANKER_CONNECTOR_LIMIT = 1024
+RERANKER_CONNECTOR_LIMIT_PER_HOST = 1024
+RERANKER_KEEPALIVE_TIMEOUT = 20
+RERANKER_FORCE_CLOSE = False
+RERANKER_ENABLE_CLEANUP_CLOSED = True
+RERANKER_CLIENT_TIMEOUT_TOTAL = 180
+RERANKER_CLIENT_TIMEOUT_CONNECT = 15
+RERANKER_CLIENT_TIMEOUT_SOCK_READ = 180
 
 
 # --- 有用性判断软保留策略 ---

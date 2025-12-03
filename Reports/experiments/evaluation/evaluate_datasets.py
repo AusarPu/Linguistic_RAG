@@ -23,6 +23,7 @@ project_root = "/home/pushihao/RAG"
 sys.path.insert(0, project_root)
 
 from script.rag_pipeline import execute_rag_flow
+from script.vllm_clients import close_reranker_session
 from script.knowledge_base import KnowledgeBase
 from script.config_rag import PROCESSED_DATA_DIR
 
@@ -494,6 +495,7 @@ async def main():
         use_usefulness_judger,
         args.run_label
     )
+    await close_reranker_session()
     
     total_time = time.time() - start_time
     logger.info(f"所有数据集并发评估完成，总耗时: {total_time:.2f}s")

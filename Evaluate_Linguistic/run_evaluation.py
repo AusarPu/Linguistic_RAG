@@ -32,6 +32,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from script import config_rag as config
 from script.rag_pipeline import execute_rag_flow
+from script.vllm_clients import close_reranker_session
 
 
 def _eval_paths() -> dict:
@@ -293,3 +294,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    import asyncio as _asyncio
+    _asyncio.run(close_reranker_session())
