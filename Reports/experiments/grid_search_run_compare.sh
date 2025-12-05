@@ -78,7 +78,7 @@ read_config() {
 # 等待缓冲 & Kill 生成器 vLLM（释放 GPU 显存）
 kill_generator_vllm() {
   local gen_port; gen_port=$(read_config VLLM_GENERATOR_PORT)
-  sleep 30
+  sleep 10
   if [ -f "$PROJECT_ROOT/pids/vllm_rewriter.pid" ]; then
     local pid; pid=$(cat "$PROJECT_ROOT/pids/vllm_rewriter.pid")
     kill "$pid" 2>/dev/null || true
@@ -87,12 +87,23 @@ kill_generator_vllm() {
   pgrep -f "vllm serve .*--port $gen_port" | xargs -r kill 2>/dev/null || true
 }
 
+kill_reranker_vllm() {
+  local reranker_port; reranker_port=$(read_config VLLM_RERANKER_PORT)
+  sleep 10
+  if [ -f "$PROJECT_ROOT/pids/vllm_reranker.pid" ]; then
+    local pid; pid=$(cat "$PROJECT_ROOT/pids/vllm_reranker.pid")
+    kill "$pid" 2>/dev/null || true
+    rm -f "$PROJECT_ROOT/pids/vllm_reranker.pid"
+  fi
+  pgrep -f "vllm serve .*--port $reranker_port" | xargs -r kill 2>/dev/null || true
+}
+
 # 启动评估 LLM（gpt-oss-120b，端口 8003），等待 120s 就绪
 start_eval_llm() {
   local eval_model; eval_model=$(read_config EVALUATION_LLM_MODEL_LOCAL_PATH)
   local eval_port; eval_port=$(read_config EVALUATION_LLM_PORT)
   local gen_gpu_ids; gen_gpu_ids=$(read_config VLLM_GENERATOR_GPU_ID)
-  local gen_mem_util; gen_mem_util=$(read_config VLLM_GENERATOR_MEM_UTILIZATION)
+  local eval_mem_util="0.7"
   local parallel_workers; parallel_workers=$(read_config VLLM_REWRITER_TENSOR_PARALLEL_SIZE)
   mkdir -p "$PROJECT_ROOT/logs" "$PROJECT_ROOT/pids"
   (export CUDA_VISIBLE_DEVICES=${gen_gpu_ids}; nohup vllm serve "$eval_model" \
@@ -100,7 +111,7 @@ start_eval_llm() {
     --trust-remote-code \
     --disable-log-requests \
     --enforce-eager \
-    --gpu-memory-utilization "${gen_mem_util}" \
+    --gpu-memory-utilization "${eval_mem_util}" \
     --tensor-parallel-size "${parallel_workers}" \
     --max-model-len 8192 \
     --max_num_seqs 512 \
@@ -291,6 +302,8 @@ done
 
 # 所有组合的生成阶段已完成，切换到评估模式
 kill_generator_vllm
+kill_reranker_vllm
+sleep 10
 start_eval_llm
 
 # 并行运行高级评估（不设并发上限）

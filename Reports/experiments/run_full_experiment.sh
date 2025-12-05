@@ -251,7 +251,7 @@ main() {
     local test_mode=false
     local no_filter=false
     local enhance_mode="pipeline"
-    local batch_size=20
+    local batch_size=3
     local verbose=false
     local ablation_args=""
     local latency_suite=false

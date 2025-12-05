@@ -247,7 +247,7 @@ else
         --enforce-eager \
         --max-model-len 550 \
         --tensor-parallel-size "$RERANKER_TENSOR_PARALLEL_SIZE" \
-        --max_num_seqs 1024 \
+        --max_num_seqs 2048 \
         --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"\
         --quantization fp8
         --kv-cache-dtype fp8

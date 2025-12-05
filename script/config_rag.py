@@ -191,7 +191,7 @@ USEFULNESS_MAX_CONCURRENT_REQUESTS = 1000      # 有用性判断最大并发请�
 
 # --- 评估并发与输出限制 (Ragas 评估专用) ---
 # 说明：用于在评估阶段（Ragas）控制客户端并发与单次评判的最大生成长度。
-EVALUATION_CONCURRENCY_LIMIT = 5            # 评判请求的客户端并发上限（信号量）
+EVALUATION_CONCURRENCY_LIMIT = 15           # 评判请求的客户端并发上限（信号量）
 EVALUATION_MAX_TOKENS = 8192                   # 单次评判的最大生成 tokens，用于限制长输出
 
 RERANKER_CONCURRENCY_LIMIT = 1024
