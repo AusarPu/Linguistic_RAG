@@ -15,13 +15,14 @@ from .vllm_clients import EmbeddingAPIClient
 from .config_rag import (
     FAISS_INDEX_CHUNKS_SAVE_PATH,
     INDEXED_CHUNKS_METADATA_SAVE_PATH,
-    PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH,
+    RRF_K,
     PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH,
     BM25_INDEX_SAVE_PATH,
     FAISS_INDEX_QUESTIONS_SAVE_PATH,
     QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH,
-    ALL_QUESTION_TEXTS_SAVE_PATH,  # 用于加载问题文本的路径
-
+    ALL_QUESTION_TEXTS_SAVE_PATH,
+    CHUNK_BM25_INDEX_SAVE_PATH,
+    SPARSE_KEYWORD_THRESHOLD,
     DENSE_CHUNK_RETRIEVAL_TOP_K,
     DENSE_QUESTION_RETRIEVAL_TOP_K,
     SPARSE_KEYWORD_RETRIEVAL_TOP_K,
@@ -59,7 +60,7 @@ class KnowledgeBase:
         self.indexed_chunks_metadata: List[Dict[str, Any]] = []
         self.chunk_id_to_metadata_map: Dict[str, Dict[str, Any]] = {}
 
-        self.phrase_to_sparse_weights_map: Dict[str, Dict[int, float]] = {}
+        # self.phrase_to_sparse_weights_map: Dict[str, Dict[int, float]] = {}
         self.phrase_to_dense_embeddings_map: Dict[str, np.ndarray] = {}
         
         # BM25索引
@@ -82,19 +83,17 @@ class KnowledgeBase:
         required_files_paths = [
             Path(FAISS_INDEX_CHUNKS_SAVE_PATH),
             Path(INDEXED_CHUNKS_METADATA_SAVE_PATH),
-            Path(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH),
             Path(PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH),
             Path(BM25_INDEX_SAVE_PATH),
             Path(FAISS_INDEX_QUESTIONS_SAVE_PATH),
             Path(QUESTION_INDEX_TO_CHUNK_ID_MAP_SAVE_PATH),
-            Path(ALL_QUESTION_TEXTS_SAVE_PATH) # 这个是可选的
+            Path(ALL_QUESTION_TEXTS_SAVE_PATH)
         ]
 
         missing = [p.name for p in required_files_paths if not p.is_file()]
         if missing:
             raise FileNotFoundError(f"Required index files not found: {missing}")
 
-        # 直接加载，不使用try-except
         # 1. 加载块文本稠密检索资源
         logger.info(f"Loading Faiss index for chunk texts from '{FAISS_INDEX_CHUNKS_SAVE_PATH}'...")
         self.faiss_chunks_index = faiss.read_index(FAISS_INDEX_CHUNKS_SAVE_PATH)  # faiss需要str路径
@@ -116,28 +115,8 @@ class KnowledgeBase:
         }
         logger.info(f"Built chunk_id_to_metadata_map with {len(self.chunk_id_to_metadata_map)} entries.")
 
-        # 2. 加载关键词短语稀疏权重映射
-        logger.info(f"Loading phrase sparse weights map from '{PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH}'...")
-        with open(PHRASE_SPARSE_WEIGHTS_MAP_SAVE_PATH, "rb") as f:
-            self.phrase_to_sparse_weights_map = pickle.load(f)
-        logger.info(f"Loaded sparse weights for {len(self.phrase_to_sparse_weights_map)} unique phrases.")
-
-        # 2.5. 加载关键词短语稠密向量映射
-        logger.info(f"Loading phrase dense embeddings map from '{PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH}'...")
-        with open(PHRASE_DENSE_EMBEDDINGS_MAP_SAVE_PATH, "rb") as f:
-            self.phrase_to_dense_embeddings_map = pickle.load(f)
-        logger.info(f"Loaded dense embeddings for {len(self.phrase_to_dense_embeddings_map)} unique phrases.")
-
-        # 2. 加载BM25索引
-        logger.info(f"Loading BM25 index from '{BM25_INDEX_SAVE_PATH}'...")
-        with open(BM25_INDEX_SAVE_PATH, "rb") as f:
-            bm25_data = pickle.load(f)
-            self.bm25_index = bm25_data["bm25_model"]
-            self.bm25_phrase_list = bm25_data["phrase_list"]
-        logger.info(f"Loaded BM25 index with {len(self.bm25_phrase_list)} phrases.")
-        
-        # 2.1. 加载文本块BM25索引
-        chunk_bm25_path = "/home/pushihao/RAG/processed_knowledge_base/chunk_bm25_index.pkl"
+        # 2.加载文本块BM25索引
+        chunk_bm25_path = CHUNK_BM25_INDEX_SAVE_PATH
         logger.info(f"Loading chunk BM25 index from '{chunk_bm25_path}'...")
         with open(chunk_bm25_path, "rb") as f:
             chunk_bm25_data = pickle.load(f)
@@ -158,17 +137,16 @@ class KnowledgeBase:
                          f"vs. question_idx_to_chunk_id_map length ({len(self.question_idx_to_chunk_id_map)}).")
         logger.info(f"Loaded {self.faiss_questions_index.ntotal} question vectors and their chunk_id map.")
 
-        # 4. 加载问题文本列表 (如果存在)
+        # 4. 加载问题文本列表
         all_q_texts_file_path = Path(ALL_QUESTION_TEXTS_SAVE_PATH)  # 使用Path对象进行检查
         if all_q_texts_file_path.is_file():
             logger.info(f"Loading all question texts from '{all_q_texts_file_path}'...")
             with open(all_q_texts_file_path, 'r', encoding='utf-8') as f:
-                self.question_idx_to_text_map = json.load(f)  # 假设它是一个列表
+                self.question_idx_to_text_map = json.load(f)
             if len(self.question_idx_to_text_map) != self.faiss_questions_index.ntotal:
                 logger.warning(f"Mismatch: Loaded question texts count ({len(self.question_idx_to_text_map)}) "
                                f"vs. question Faiss index ntotal ({self.faiss_questions_index.ntotal}). Map may not align.")
-                # 你可以选择清空它或接受不匹配
-                # self.question_idx_to_text_map = []
+
         else:
             logger.info(f"Optional file '{ALL_QUESTION_TEXTS_SAVE_PATH}' not found, "
                         "retrieved question texts will not be directly available for display from this map.")
@@ -176,7 +154,7 @@ class KnowledgeBase:
         logger.info("All search indexes and necessary data loaded successfully.")
 
     # --- 检索方法 ---
-    def search_dense_chunks(self, query_text: Union[str, List[str]], top_k: int = DENSE_CHUNK_RETRIEVAL_TOP_K,
+    async def search_dense_chunks(self, query_text: Union[str, List[str]], top_k: int = DENSE_CHUNK_RETRIEVAL_TOP_K,
                             threshold: float = DENSE_CHUNK_THRESHOLD) -> List[Dict[str, Any]]:
         """
         使用Faiss基于块文本的稠密向量进行检索。
@@ -196,7 +174,7 @@ class KnowledgeBase:
         all_results = {}  # chunk_id -> chunk_meta 的映射，用于去重
         
         for query in queries:
-            query_output = self.embedding_model.encode(
+            query_output = await self.embedding_model.async_encode(
                 instruct="Given a question, retrieve relevant text passages that contain information to answer the question.",
                 texts=query
             )
@@ -243,7 +221,7 @@ class KnowledgeBase:
         
         return final_results
 
-    def search_dense_questions(self, query_text: Union[str, List[str]], top_k: int = DENSE_QUESTION_RETRIEVAL_TOP_K,
+    async def search_dense_questions(self, query_text: Union[str, List[str]], top_k: int = DENSE_QUESTION_RETRIEVAL_TOP_K,
                                threshold: float = DENSE_QUESTION_THRESHOLD) -> List[Dict[str, Any]]:
         """
         使用Faiss基于预生成问题的稠密向量进行检索。
@@ -263,7 +241,7 @@ class KnowledgeBase:
         chunk_id_to_best_q_match_info: Dict[str, Dict[str, Any]] = {}
         
         for query in queries:
-            query_output = self.embedding_model.encode(
+            query_output = await self.embedding_model.async_encode(
                 instruct="Given a question, retrieve similar or related questions that address the same topic or domain.",
                 texts=query
             )
@@ -317,7 +295,7 @@ class KnowledgeBase:
             f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold})")
         return final_results
 
-    def search_dense_keywords(self, query_text: Union[str, List[str]], top_k: int = SPARSE_KEYWORD_RETRIEVAL_TOP_K,
+    async def search_dense_keywords(self, query_text: Union[str, List[str]], top_k: int = SPARSE_KEYWORD_RETRIEVAL_TOP_K,
                      threshold: Optional[float] = None) -> List[Dict[str, Any]]:
         """
         使用RRF（Reciprocal Rank Fusion）融合BM25和语义搜索的方式进行关键词检索。
@@ -346,9 +324,11 @@ class KnowledgeBase:
         # 用于存储所有查询的RRF融合结果
         chunk_id_to_rrf_info: Dict[str, Dict[str, Any]] = {}
         
+        from preprocess.build_core_indexes import tokenize_for_bm25
         for query in queries:        
             # 1. BM25检索 - 直接对文本块进行检索
-            bm25_scores = self.chunk_bm25_index.get_scores(query)
+            query_tokens = tokenize_for_bm25(query)
+            bm25_scores = self.chunk_bm25_index.get_scores(query_tokens)
             
             # 获取BM25排序结果（按分数降序）
             bm25_ranked_indices = np.argsort(bm25_scores)[::-1]
@@ -359,8 +339,8 @@ class KnowledgeBase:
             
             # 2. 语义检索 - 使用稠密向量检索
             embedding_chunk_rankings = {}
-            query_output = self.embedding_model.encode(
-                instruct="Given a question, retrieve relevant text passages that contain information to answer the question.",
+            query_output = await self.embedding_model.async_encode(
+                instruct="Given a keyword, retrieve similar keywords",
                 texts=query
             )
             query_vector = query_output.get("dense_vecs")
@@ -381,7 +361,7 @@ class KnowledgeBase:
                 logger.warning(f"未能为查询 '{query[:30]}...' 生成稠密向量，仅使用BM25结果。")
             
             # 3. RRF融合
-            k = 60  # RRF平滑因子
+            k = RRF_K  # RRF平滑因子
             chunk_rrf_scores = {}
             
             # 收集所有出现在任一排序中的chunk
@@ -433,10 +413,10 @@ class KnowledgeBase:
                     result['retrieval_score'] = normalized_score
                     result['original_rrf_score'] = original_score  # 保留原始分数用于调试
             else:
-                # 如果所有分数相同，设置为1.0
+                # 如果所有分数相同，设置为SPARSE_KEYWORD_THRESHOLD
                 for result in results:
                     result['original_rrf_score'] = result['retrieval_score']
-                    result['retrieval_score'] = 1.0
+                    result['retrieval_score'] = SPARSE_KEYWORD_THRESHOLD
         
         # 6. 排序并返回结果
         results.sort(key=lambda x: x['retrieval_score'], reverse=True)
@@ -445,5 +425,5 @@ class KnowledgeBase:
         query_summary = f"{len(queries)} queries" if isinstance(query_text, list) else f"'{query_text[:30]}...'"
         logger.info(
             f"RRF融合检索 for {query_summary} (耗时: {time.time() - start_time:.3f}s) - "
-            f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold}, k={60})")
+            f"返回 {len(final_results)}/{top_k} 个结果 (阈值 {threshold}, k={RRF_K})")
         return final_results

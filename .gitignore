@@ -36,3 +36,19 @@ Thumbs.db
 
 .venv/
 Gradio_UI/app.log
+Reports/datasets/preparation_results.json
+
+Reports/experiments/datasets/
+Reports/experiments/test.py
+Reports/docs/
+001.txt
+002.txt
+WORKLOG.md
+Generate_Linguistic_Question/datasets
+Evaluate_Linguistic/datasets
+Evaluate_Linguistic/enhanced
+Evaluate_Linguistic/evaluation
+Evaluate_Linguistic/indexes
+.trae/
+script/api_keys
+Reports/experiments/params_grid.json

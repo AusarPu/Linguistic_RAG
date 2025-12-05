@@ -15,11 +15,22 @@ fi
 LOG_DIR="$PROJECT_ROOT/logs"
 PYTHON_CMD="python3" # 或你的 python 命令
 
+# 默认并发设置（可通过环境变量覆盖）；若未显式设置 CPU 线程控制，则默认 32
+TOKENIZER_POOL_SIZE="${TOKENIZER_POOL_SIZE:-32}"
+MAX_PARALLEL_LOADING_WORKERS="${MAX_PARALLEL_LOADING_WORKERS:-32}"
+export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-true}
+if [[ -z "${RAYON_NUM_THREADS}" ]]; then export RAYON_NUM_THREADS="$TOKENIZER_POOL_SIZE"; fi
+if [[ -z "${OMP_NUM_THREADS}" ]]; then export OMP_NUM_THREADS="$TOKENIZER_POOL_SIZE"; fi
+if [[ -z "${MKL_NUM_THREADS}" ]]; then export MKL_NUM_THREADS="$TOKENIZER_POOL_SIZE"; fi
+
 REWRITER_LOG="$LOG_DIR/vllm_rewriter.log"
+FILTERED_LOG="$LOG_DIR/vllm_filtered.log"
+FILTER_PROCESS_LOG="$LOG_DIR/filter_process.log"
 
 EMBEDDING_LOG="$LOG_DIR/vllm_embedding.log"
 PID_DIR="$PROJECT_ROOT/pids" # 定义 PID_DIR
 REWRITER_PID_FILE="$PID_DIR/vllm_rewriter.pid"
+FILTER_PID_FILE="$PID_DIR/filter.pid"
 
 EMBEDDING_PID_FILE="$PID_DIR/vllm_embedding.pid"
 
@@ -47,6 +58,7 @@ REWRITER_GPU_ID=$(read_config VLLM_REWRITER_GPU_ID)
 REWRITER_GPU_MEM_UTILIZATION=$(read_config VLLM_REWRITER_MEM_UTILIZATION)
 REWRITER_MAX_LORA_RANK=$(read_config VLLM_MAX_LORA_RANK)
 REWRITER_TENSOR_PARALLEL_SIZE=$(read_config VLLM_REWRITER_TENSOR_PARALLEL_SIZE)
+EMBEDDING_TENSOR_PARALLEL_SIZE=$(read_config VLLM_EMBEDDING_TENSOR_PARALLEL_SIZE)
 if [ -z "$REWRITER_TENSOR_PARALLEL_SIZE" ]; then REWRITER_TENSOR_PARALLEL_SIZE=2; fi # 默认值
 
 
@@ -78,6 +90,15 @@ echo "    配置读取完成。"
 # --- 清理函数 ---
 cleanup() {
     echo ">>> 收到退出信号，正在清理后台进程..."
+    
+    # 停止日志过滤器
+    if [ -f "$FILTER_PID_FILE" ]; then
+        FILTER_PID=$(cat "$FILTER_PID_FILE")
+        echo "    停止日志过滤器 (PID: $FILTER_PID)..."
+        kill "$FILTER_PID" &> /dev/null || echo "    日志过滤器进程 $FILTER_PID 可能已停止。"
+        rm -f "$FILTER_PID_FILE"
+    fi
+    
     if [ -f "$REWRITER_PID_FILE" ]; then
         REWRITER_PID=$(cat "$REWRITER_PID_FILE")
         echo "    停止 Rewriter (PID: $REWRITER_PID)..."
@@ -112,6 +133,9 @@ else
     echo "    分配 GPU: ${REWRITER_GPU_ID:-默认所有可见GPU}"
     echo "    显存限制: ${REWRITER_GPU_MEM_UTILIZATION:-默认}"
     echo "    张量并行数: ${REWRITER_TENSOR_PARALLEL_SIZE}"
+    echo "    分词池大小: ${TOKENIZER_POOL_SIZE}"
+    echo "    加载并行数: ${MAX_PARALLEL_LOADING_WORKERS}"
+    echo "    CPU线程(RAYON): ${RAYON_NUM_THREADS}"
 
     # 使用 bash 数组来安全地构建命令
     REWRITER_CMD_ARRAY=(
@@ -119,12 +143,15 @@ else
         --port "$REWRITER_PORT"
         --trust-remote-code
         --disable-log-requests
-        --max-model-len 40960
+        --enforce-eager
+        --max-model-len 10240
         --tensor-parallel-size "$REWRITER_TENSOR_PARALLEL_SIZE"
-        --max_num_seqs 2048
-        --quantization fp8
-        --enable-reasoning --reasoning-parser deepseek_r1
-        # --rope-scaling '{"rope_type": "yarn", "factor": 2.0, "original_max_position_embeddings": 32768}' \
+        --max_num_seqs 1024
+        --kv-cache-dtype fp8
+        --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"
+        --reasoning-parser deepseek_r1 \
+        #--quantization fp8
+        #--rope-scaling '{"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768}' \
     )
 
     # 有条件地添加内存参数
@@ -135,8 +162,20 @@ else
     # 使用 nohup 和正确的变量展开来启动服务
     (export CUDA_VISIBLE_DEVICES=${REWRITER_GPU_ID}; nohup "${REWRITER_CMD_ARRAY[@]}" > "$REWRITER_LOG" 2>&1 & echo $! > "$REWRITER_PID_FILE")
     echo "    Rewriter 服务 PID: $(cat "$REWRITER_PID_FILE")，日志: $REWRITER_LOG"
-    echo "    等待 Rewriter 服务启动 (约30-60秒)..."
-    sleep 5
+    echo "    等待 Rewriter 服务启动 ..."
+    sleep 60
+    
+    # 启动日志过滤器
+    echo ">>> 启动 vLLM 日志过滤器..."
+    nohup $PYTHON_CMD "$PROJECT_ROOT/filter_vllm_logs.py" \
+        --input "$REWRITER_LOG" \
+        --output "$FILTERED_LOG" \
+        --max-lines 100 \
+        --interval 30 \
+        > "$FILTER_PROCESS_LOG" 2>&1 &
+    FILTER_PID=$!
+    echo $FILTER_PID > "$FILTER_PID_FILE"
+    echo "    日志过滤器 PID: $FILTER_PID，过滤后日志: $FILTERED_LOG"
 fi
 
 
@@ -150,6 +189,9 @@ else
     echo "    端口: $EMBEDDING_PORT"
     echo "    分配 GPU: ${EMBEDDING_GPU_ID:-默认所有可见GPU}"
     echo "    显存限制: ${EMBEDDING_MEM_UTILIZATION:-默认}"
+    echo "    张量并行数: ${EMBEDDING_TENSOR_PARALLEL_SIZE}"
+    echo "    加载并行数: ${MAX_PARALLEL_LOADING_WORKERS}"
+    echo "    CPU线程(RAYON): ${RAYON_NUM_THREADS}"
 
     # 使用 bash 数组来安全地构建命令
     EMBEDDING_CMD_ARRAY=(
@@ -157,8 +199,12 @@ else
         --port "$EMBEDDING_PORT"
         --trust-remote-code
         --disable-log-requests
-        --max-model-len 8192
-        --max_num_seqs 1024
+        --enforce-eager
+        --max-model-len 2048
+        --max_num_seqs 2048
+        --kv-cache-dtype fp8
+        --tensor-parallel-size "$EMBEDDING_TENSOR_PARALLEL_SIZE"
+        --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"
     )
 
     # 有条件地添加内存参数
@@ -169,8 +215,48 @@ else
     # 使用 nohup 和正确的变量展开来启动服务
     (export CUDA_VISIBLE_DEVICES=${EMBEDDING_GPU_ID}; nohup "${EMBEDDING_CMD_ARRAY[@]}" > "$EMBEDDING_LOG" 2>&1 & echo $! > "$EMBEDDING_PID_FILE")
     echo "    Embedding 服务 PID: $(cat "$EMBEDDING_PID_FILE")，日志: $EMBEDDING_LOG"
-    echo "    等待 Embedding 服务启动 (约30-60秒)..."
-    sleep 5
+echo "    等待 Embedding 服务启动 ..."
+    sleep 60
+fi
+
+## --- 启动 Reranker vLLM 服务（在 Embedding 之后 60s 启动） ---
+RERANKER_MODEL_PATH=$(read_config RERANKER_MODEL_NAME_FOR_API)
+RERANKER_PORT=$(read_config VLLM_RERANKER_PORT)
+RERANKER_GPU_ID=$(read_config VLLM_RERANKER_GPU_ID)
+RERANKER_MEM_UTILIZATION=$(read_config VLLM_RERANKER_MEM_UTILIZATION)
+RERANKER_TENSOR_PARALLEL_SIZE=$(read_config VLLM_RERANKER_TENSOR_PARALLEL_SIZE)
+RERANKER_LOG="$LOG_DIR/vllm_reranker.log"
+RERANKER_PID_FILE="$PID_DIR/vllm_reranker.pid"
+
+if [ -z "$RERANKER_MODEL_PATH" ] || [ -z "$RERANKER_PORT" ]; then
+    echo "错误: Reranker 服务配置不完整 (模型路径或端口缺失)，跳过启动。" >&2
+else
+    echo ">>> 正在后台启动 Reranker vLLM 服务..."
+    echo "    模型路径: $RERANKER_MODEL_PATH"
+    echo "    端口: $RERANKER_PORT"
+    echo "    分配 GPU: ${RERANKER_GPU_ID:-默认所有可见GPU}"
+    echo "    显存限制: ${RERANKER_MEM_UTILIZATION:-默认}"
+    echo "    张量并行数: ${RERANKER_TENSOR_PARALLEL_SIZE}"
+
+    RERANKER_CMD_ARRAY=(
+        vllm serve "$RERANKER_MODEL_PATH" \
+        --port "$RERANKER_PORT" \
+        --trust-remote-code \
+        --disable-log-requests \
+        --enforce-eager \
+        --max-model-len 550 \
+        --tensor-parallel-size "$RERANKER_TENSOR_PARALLEL_SIZE" \
+        --max_num_seqs 2048 \
+        --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS"\
+        --kv-cache-dtype fp8
+    )
+
+    if [ ! -z "$RERANKER_MEM_UTILIZATION" ] && [ "$RERANKER_MEM_UTILIZATION" != "None" ]; then
+      RERANKER_CMD_ARRAY+=(--gpu-memory-utilization "$RERANKER_MEM_UTILIZATION")
+    fi
+
+    (export CUDA_VISIBLE_DEVICES=${RERANKER_GPU_ID}; nohup "${RERANKER_CMD_ARRAY[@]}" > "$RERANKER_LOG" 2>&1 & echo $! > "$RERANKER_PID_FILE")
+    echo "    Reranker 服务 PID: $(cat "$RERANKER_PID_FILE")，日志: $RERANKER_LOG"
 fi
 
 echo ">>> vLLM 服务启动完成。"

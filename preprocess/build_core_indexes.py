@@ -20,6 +20,46 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import jieba
+import re
+from pathlib import Path as _P
+from script.config_rag import BM25_TOKENIZER_LANG, BM25_TOKENIZER_SOURCE, EN_STOPWORDS_FILE
+from preprocess.vllm_tokenizer import get_local_hf_tokenizer
+
+_en_stopwords = set()
+if EN_STOPWORDS_FILE:
+    p = _P(EN_STOPWORDS_FILE)
+    if p.is_file():
+        with open(p, "r", encoding="utf-8") as f:
+            for line in f:
+                t = line.strip().lower()
+                if t:
+                    _en_stopwords.add(t)
+
+_hf_tok = None
+def _is_english(text: str) -> bool:
+    letters = re.findall(r"[A-Za-z]", text)
+    return len(letters) > 0 and (len(letters) / max(len(text), 1)) > 0.2
+
+def _tokenize_en(text: str) -> list:
+    if BM25_TOKENIZER_SOURCE == "hf":
+        global _hf_tok
+        if _hf_tok is None:
+            _hf_tok = get_local_hf_tokenizer()
+        toks = _hf_tok.tokenize(text)
+        toks = [t.lower() for t in toks if any(c.isalpha() for c in t)]
+    else:
+        toks = re.findall(r"[A-Za-z]+", text)
+        toks = [t.lower() for t in toks]
+    return [t for t in toks if len(t) > 1 and t not in _en_stopwords]
+
+def _tokenize_zh(text: str) -> list:
+    toks = list(jieba.cut(text))
+    return [t.strip() for t in toks if t.strip() and len(t.strip()) > 1]
+
+def tokenize_for_bm25(text: str) -> list:
+    if BM25_TOKENIZER_LANG == "en" or (BM25_TOKENIZER_LANG == "auto" and _is_english(text)):
+        return _tokenize_en(text)
+    return _tokenize_zh(text)
 
 
 
@@ -111,8 +151,8 @@ def build_all_search_indexes(
     question_to_chunk_id_map_filename: str,
     question_texts_list_filename: str,
     batch_size_embed: int = 128,
-    batch_size_phrases: int = 2048,
-    batch_size_questions: int = 1024 # 为问题编码新增批大小
+    batch_size_phrases: int = 256,
+    batch_size_questions: int = 256
 ):
     """
     构建核心的搜索索引：
@@ -243,9 +283,7 @@ def build_all_search_indexes(
                 tokenized_chunks = []
                 with tqdm(total=len(texts_for_chunk_dense_embedding), desc="文本块分词", unit="块") as pbar:
                     for text in texts_for_chunk_dense_embedding:
-                        tokens = list(jieba.cut(text))
-                        # 过滤掉空白符和单字符
-                        tokens = [token.strip() for token in tokens if token.strip() and len(token.strip()) > 1]
+                        tokens = tokenize_for_bm25(text)
                         tokenized_chunks.append(tokens)
                         pbar.update(1)
                 
@@ -486,6 +524,7 @@ if __name__ == '__main__':
     parser.add_argument("--test", action="store_true", help="启用测试模式")
     parser.add_argument("--test-limit", type=int, default=10, help="测试模式下限制处理的块数量（默认：10）")
     parser.add_argument("--input-file", type=str, help="自定义输入文件路径（可选）")
+    parser.add_argument("--output-dir", type=str, help="自定义输出目录路径（可选）")
     
     args = parser.parse_args()
     
@@ -493,8 +532,9 @@ if __name__ == '__main__':
     import logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    # 确定输入文件路径
+    # 确定输入文件路径和输出目录
     input_file = args.input_file or ENHANCED_CHUNKS_JSON_PATH
+    output_dir = args.output_dir or PROCESSED_DATA_DIR
     
     # 检查输入文件是否存在
     if not Path(input_file).is_file():
@@ -508,12 +548,12 @@ if __name__ == '__main__':
     else:
         # 正常模式
         logger.info("=========== 开始构建所有核心搜索索引 ===========")
-        Path(PROCESSED_DATA_DIR).mkdir(parents=True, exist_ok=True)
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         build_all_search_indexes(
             enhanced_chunks_path=input_file,
             embedding_model_name_or_path=EMBEDDING_MODEL_PATH,
-            output_dir=PROCESSED_DATA_DIR,
+            output_dir=output_dir,
             chunk_dense_emb_filename="dense_embeddings_chunks.npy",
             chunk_faiss_idx_filename="faiss_index_chunks_ip.idx",
             indexed_chunks_meta_filename="indexed_chunks_metadata.json",
@@ -523,6 +563,6 @@ if __name__ == '__main__':
             question_dense_emb_filename="dense_embeddings_questions.npy",
             question_faiss_idx_filename="faiss_index_questions_ip.idx",
             question_to_chunk_id_map_filename="question_index_to_chunk_id_map.json",
-            question_texts_list_filename=ALL_QUESTION_TEXTS_SAVE_PATH,
+            question_texts_list_filename="all_question_texts.json",
         )
         logger.info("=========== 所有核心搜索索引构建完成 ===========")

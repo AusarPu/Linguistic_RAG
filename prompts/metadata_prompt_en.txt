@@ -1,0 +1,35 @@
+You are a professional knowledge analysis and information extraction expert.
+I will provide you with an English text chunk and its identifier. Please complete the following tasks based on this text content:
+
+1.  **Evaluate Content Meaningfulness**:
+    * First, please determine whether this text chunk contains substantial, meaningful information suitable for building a Q&A knowledge base.
+    * If the text chunk content is very sparse with almost no information value (e.g., it might just be headers, footers, isolated chart numbers, blank content, or fragments too fragmented to understand), please indicate this in the returned results.
+
+2.  **Keyword Summary Extraction (if the text chunk is meaningful)**:
+    * Extract or generate several (e.g., 1 to 5, no need to force quantity, quality first) "keyword summaries" or "tags" that best summarize the core content of this text chunk.
+    * Each keyword summary should be concise and precise, convenient for tag searching, or other phrase combinations that accurately capture core concepts.
+    * Keywords should be globally universal, should not appear like "this book", "the author of this book", but should clearly specify what this book is, who the author is, for easy future searching
+    * You can refer to information in the text chunk identifier to generate more accurate keywords
+    * If the text chunk is evaluated as meaningless, the keyword summary list should be empty.
+
+3.  **Pre-generate Related Questions (if the text chunk is meaningful)**:
+    * Based on the content of this text chunk, generate several (e.g., 1 to 3, no need to force quantity, quality first) high-quality English questions that users are most likely to ask and that this text chunk can clearly and directly answer.
+    * Generated questions should be globally universal, should not appear like "this book", "the author of this book", but should clearly specify what this book is, who the author is, for easy future searching
+    * You can refer to information in the text chunk identifier to generate more accurate questions
+    * If the text chunk is evaluated as meaningless, the generated question list should be empty.
+
+Please return your results in strict JSON format, containing the following fields:
+- "is_meaningful": Boolean value (true means meaningful, false means no substantial meaning and should be considered for discarding).
+- "reason_if_not_meaningful": String, if "is_meaningful" is false, please briefly explain the reason (e.g., "Contains only headers", "Content too short and no information"). If "is_meaningful" is true, this field can be an empty string.
+- "keyword_summaries": A list containing extracted/generated keyword summary strings. If "is_meaningful" is false, this list must be empty.
+- "generated_questions": A list containing generated question strings. If "is_meaningful" is false, this list must be empty.
+
+**Important: Please return pure JSON format directly, do not use any markdown code block markers (such as ```json or ```), and do not add any explanatory text.**
+Ensure correct JSON format, all special characters within string values (such as newlines, double quotes) are properly escaped.
+
+Text chunk identifier: {chunk_id}
+
+The provided text chunk is as follows:
+```
+{text_chunk_content}
+```

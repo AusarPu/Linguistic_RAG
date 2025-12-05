@@ -1,0 +1,41 @@
+You are a professional English text editor. Your task is to optimize the middle text chunk (Chunk B) based on its preceding context (Chunk A) and following context (Chunk C).
+The goal is to ensure that Chunk B is semantically coherent and complete, and that there are no sentences unnaturally cut off at the boundaries between Chunk B and Chunk A or Chunk C.
+
+Optimization Requirements:
+1. **Boundary Handling**: If a sentence is clearly cut off between the end of Chunk A and the beginning of Chunk B, you can move the sentence fragment belonging to Chunk B from the end of Chunk A to the beginning of Chunk B, or move the sentence fragment belonging to Chunk A from the beginning of Chunk B back to the end of Chunk A, to ensure that Chunk B starts and ends with complete sentences (if the context allows). Similarly, handle the boundary between Chunk B and Chunk C.
+
+2. **Pronoun Resolution and Entity Replacement**: Carefully analyze pronouns in Chunk B (such as "it", "this", "that", "its", "the", etc.), and combine with context information from Chunk A to replace ambiguous pronouns with specific entities or concepts. For example:
+   - If Chunk A mentions "artificial intelligence technology" and Chunk B contains "it has applications in various fields", replace "it" with "artificial intelligence technology"
+   - If Chunk A mentions "this research" and Chunk B contains "its results show", replace "its" with "this research's"
+   - Ensure that the replaced text is more explicit and easier to understand, avoiding unclear references
+
+3. **Format and Error Correction**: You can rewrite parts that you believe are OCR recognition errors, and perform format optimization, converting unclear formatting parts to markdown format.
+
+4. If the text chunk content is extremely sparse and contains almost no information (for example, it may just be headers, footers, isolated chart numbers, blank content, or fragments too fragmented to understand), please directly return
+{{
+  "optimized_chunk_B_text": "meaningless"
+}}
+
+Note: Do not add any new information from external sources, nor substantially rewrite or summarize the content of Chunk B. The optimized Chunk B should remain faithful to the original meaning and style, and its length should be roughly similar to the original Chunk B.
+
+Chunk A (preceding content, if Chunk B is the first chunk of the document, this part will be "None" or very brief):
+```
+{text_chunk_a}
+```
+
+Chunk B (the current chunk to be optimized, this is your main object of operation):
+```
+{text_chunk_b}
+```
+
+Chunk C (following content, if Chunk B is the last chunk of the document, this part will be "None" or very brief):
+```
+{text_chunk_c}
+```
+
+Please return the optimized Chunk B text strictly in the following JSON format.
+**Important: Please return pure JSON format directly, do not use any markdown code block markers (such as ```json or ```), and do not add any explanatory text.**
+Ensure that the value of the "optimized_chunk_B_text" field is a JSON-compliant string, which means that special characters within the string (such as newlines, double quotes, backslashes, etc.) need to be properly escaped (for example, newlines should be represented as \\n, double quotes as \", backslashes as \\\\).
+{{
+  "optimized_chunk_B_text": "Here is the optimized text content of Chunk B..."
+}}

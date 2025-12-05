@@ -2,24 +2,96 @@ import asyncio
 import time
 import logging
 import json
+import math
 import requests
 import numpy as np
 from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 
 import aiohttp  # 用于异步HTTP请求
+import re
 
 # --- 从项目中导入配置 ---
 from .config_rag import (
-    VLLM_REQUEST_TIMEOUT,  # 通用请求超时
+    VLLM_REQUEST_TIMEOUT,
     GENERATOR_API_URL,
     GENERATOR_MODEL_NAME_FOR_API,
-    GENERATOR_RAG_CONFIG,
+    GENERATION_CONFIG,
     VLLM_REQUEST_TIMEOUT_GENERATION,
     EMBEDDING_API_URL,
-    EMBEDDING_MODEL_NAME_FOR_API
+    EMBEDDING_MODEL_NAME_FOR_API,
+    RERANKER_API_URL,
+    RERANKER_MODEL_NAME_FOR_API,
+    RERANKER_GENERATION_CONFIG,
+    RERANKER_CONCURRENCY_LIMIT,
+    RERANKER_CONNECTOR_LIMIT,
+    RERANKER_CONNECTOR_LIMIT_PER_HOST,
+    RERANKER_KEEPALIVE_TIMEOUT,
+    RERANKER_FORCE_CLOSE,
+    RERANKER_ENABLE_CLEANUP_CLOSED,
+    RERANKER_CLIENT_TIMEOUT_TOTAL,
+    RERANKER_CLIENT_TIMEOUT_CONNECT,
+    RERANKER_CLIENT_TIMEOUT_SOCK_READ,
 )
 
 logger = logging.getLogger(__name__)
+
+_reranker_session: Optional[aiohttp.ClientSession] = None
+_reranker_sem: Optional[asyncio.Semaphore] = None
+
+def _get_shared_reranker_session() -> aiohttp.ClientSession:
+    global _reranker_session
+    if _reranker_session is None:
+        timeout = aiohttp.ClientTimeout(
+            total=RERANKER_CLIENT_TIMEOUT_TOTAL,
+            connect=RERANKER_CLIENT_TIMEOUT_CONNECT,
+            sock_read=RERANKER_CLIENT_TIMEOUT_SOCK_READ,
+        )
+        connector = aiohttp.TCPConnector(
+            limit=int(RERANKER_CONNECTOR_LIMIT),
+            limit_per_host=int(RERANKER_CONNECTOR_LIMIT_PER_HOST),
+            keepalive_timeout=float(RERANKER_KEEPALIVE_TIMEOUT),
+            force_close=bool(RERANKER_FORCE_CLOSE),
+            enable_cleanup_closed=bool(RERANKER_ENABLE_CLEANUP_CLOSED),
+        )
+        _reranker_session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+    return _reranker_session
+
+def _get_reranker_semaphore() -> asyncio.Semaphore:
+    global _reranker_sem
+    if _reranker_sem is None:
+        _reranker_sem = asyncio.Semaphore(int(RERANKER_CONCURRENCY_LIMIT))
+    return _reranker_sem
+
+async def close_reranker_session():
+    global _reranker_session
+    if _reranker_session is not None:
+        await _reranker_session.close()
+        _reranker_session = None
+
+def get_vllm_models_endpoint_url_from_generator(api_url: str = GENERATOR_API_URL) -> str:
+    """
+    根据生成接口URL推导出 /v1/models 端点URL。
+    约定：GENERATOR_API_URL 为 OpenAI 兼容的 /v1/chat/completions。
+    """
+    return api_url.replace('/v1/chat/completions', '/v1/models')
+
+def get_vllm_current_model_name(api_url: str = GENERATOR_API_URL) -> str:
+    """
+    自动获取当前 vLLM 服务的模型名（端口通常为 8001），用于编程时动态确认模型。
+
+    使用方式示例：
+        from script.vllm_clients import get_vllm_current_model_name
+        name = get_vllm_current_model_name()  # 默认读取 config 中的 GENERATOR_API_URL
+
+    返回：模型 id 字符串（OpenAI 兼容接口 /v1/models 的 "data[0].id"）。
+    """
+    models_url = get_vllm_models_endpoint_url_from_generator(api_url)
+    headers = {"Accept": "application/json"}
+    response = requests.get(models_url, headers=headers, timeout=10)
+    result = response.json()
+    model_id = result["data"][0]["id"]
+    logger.info(f"[VLLM] 自动发现模型: {model_id} @ {models_url}")
+    return model_id
 
 
 # ===== EMBEDDING CLIENT =====
@@ -37,16 +109,16 @@ class EmbeddingAPIClient:
             return query
         return f'Instruct: {task_description}\nQuery:{query}'
     
-    def encode(self, texts: Union[str, List[str]], instruct: str = "") -> Dict[str, Any]:
+    async def async_encode(self, texts: Union[str, List[str]], instruct: str = "") -> Dict[str, Any]:
         """
-        编码文本为向量，兼容原BGE-M3的接口
+        编码文本为向量
         
         Args:
             texts: 单个文本或文本列表
             instruct: 指令文本
             
         Returns:
-            包含dense_vecs的字典，格式兼容BGE-M3
+            包含dense_vecs的字典
         """
         # 确保输入是列表格式
         if isinstance(texts, str):
@@ -67,13 +139,14 @@ class EmbeddingAPIClient:
             "Content-Type": "application/json"
         }
         
-        # 发送请求
-        response = requests.post(self.api_url, json=payload, headers=headers, timeout=60)
-        
-        if response.status_code != 200:
-            raise RuntimeError(f"Embedding API request failed with status {response.status_code}: {response.text}")
-        
-        result = response.json()
+        # 异步发送请求
+        timeout_config = aiohttp.ClientTimeout(total=VLLM_REQUEST_TIMEOUT, connect=VLLM_REQUEST_TIMEOUT, sock_read=VLLM_REQUEST_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout_config) as session:
+            async with session.post(self.api_url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    error_body = await resp.text()
+                    raise RuntimeError(f"Embedding API request failed with status {resp.status}: {error_body}")
+                result = await resp.json()
         
         if "data" not in result:
             raise RuntimeError(f"Invalid API response format: {result}")
@@ -92,12 +165,169 @@ class EmbeddingAPIClient:
         if is_single:
             dense_vecs = dense_vecs[0]
         
-        # 返回兼容BGE-M3格式的结果
+        # 返回结果
         return {
             "dense_vecs": dense_vecs
         }
-    
 
+
+_TOKENIZER_CACHE: Dict[str, Any] = {}
+
+def _get_yes_no_token_ids(model_name: str) -> Dict[str, int]:
+    if model_name not in _TOKENIZER_CACHE:
+        from transformers import AutoTokenizer
+        tok = AutoTokenizer.from_pretrained(model_name)
+        yes_id = tok("yes", add_special_tokens=False).input_ids[0]
+        no_id = tok("no", add_special_tokens=False).input_ids[0]
+        _TOKENIZER_CACHE[model_name] = {"yes": yes_id, "no": no_id}
+    return _TOKENIZER_CACHE[model_name]
+
+async def async_rank_with_reranker(
+        pairs: List[Dict[str, str]],
+        instruction: Optional[str] = None,
+        api_url: str = RERANKER_API_URL,
+        model_name: str = RERANKER_MODEL_NAME_FOR_API,
+        generation_config: Dict[str, Any] = None,
+        request_timeout: float = VLLM_REQUEST_TIMEOUT
+) -> List[float]:
+    effective_generation_config = RERANKER_GENERATION_CONFIG.copy()
+    if generation_config:
+        effective_generation_config.update(generation_config)
+
+    if instruction is None:
+        instruction = 'Given a web search query, retrieve relevant passages that answer the query'
+
+    headers = {"Content-Type": "application/json"}
+
+    ids = _get_yes_no_token_ids(model_name)
+    yes_id, no_id = ids["yes"], ids["no"]
+
+    session = _get_shared_reranker_session()
+    sem = _get_reranker_semaphore()
+
+    async def _post_one(pair: Dict[str, str]) -> float:
+        q = pair.get("query", "")
+        d = pair.get("doc", "")
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."},
+                {"role": "user", "content": f"<Instruct>: {instruction}\n\n<Query>: {q}\n\n<Document>: {d}"}
+            ],
+            **{k: v for k, v in effective_generation_config.items() if v is not None},
+            "allowed_token_ids": [yes_id, no_id],
+        }
+        async with sem:
+            async with session.post(api_url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    raise RuntimeError(f"Reranker API failed: {resp.status}: {body}")
+                result = await resp.json()
+        choice = result["choices"][0]
+        lp = choice.get("logprobs")
+        if not lp or "content" not in lp or not lp["content"]:
+            raise RuntimeError("Missing logprobs content in response")
+        last = lp["content"][-1]
+        top = last.get("top_logprobs") or []
+        prob_yes = 0.0
+        prob_no = 0.0
+        for item in top:
+            tok = str(item.get("token", ""))
+            val = float(item.get("logprob", -100))
+            if tok.startswith("token_id:"):
+                try:
+                    tid = int(tok.split(":", 1)[1])
+                    if tid == yes_id:
+                        prob_yes = math.exp(val)
+                    elif tid == no_id:
+                        prob_no = math.exp(val)
+                except Exception:
+                    pass
+            else:
+                t = tok.strip().lower()
+                if t in ("yes", "▁yes", "Ġyes"):
+                    prob_yes = math.exp(val)
+                elif t in ("no", "▁no", "Ġno"):
+                    prob_no = math.exp(val)
+        total = prob_yes + prob_no
+        if total == 0.0:
+            raise RuntimeError("Missing yes/no in top_logprobs")
+        return prob_yes / total
+
+    coros = [_post_one(p) for p in pairs]
+    scores = await asyncio.gather(*coros)
+    return list(scores)
+
+
+async def async_rank_with_yesno_api(
+        pairs: List[Dict[str, str]],
+        instruction: Optional[str] = None,
+        api_url: str = RERANKER_API_URL,
+        model_name: str = RERANKER_MODEL_NAME_FOR_API,
+        request_timeout: float = VLLM_REQUEST_TIMEOUT
+) -> List[float]:
+    if instruction is None:
+        instruction = 'Given a web search query, retrieve relevant passages that answer the query'
+    gen = dict(RERANKER_GENERATION_CONFIG)
+    gen.update({"max_tokens": 1, "temperature": 0, "top_p": 1.0, "logprobs": True, "top_logprobs": 20, "chat_template_kwargs": {"enable_thinking": False}})
+    headers = {"Content-Type": "application/json"}
+    session = _get_shared_reranker_session()
+    sem = _get_reranker_semaphore()
+
+    async def _post_one(pair: Dict[str, str]) -> float:
+        q = pair.get("query", "")
+        d = pair.get("doc", "")
+        ids = _get_yes_no_token_ids(model_name)
+        yes_id, no_id = ids["yes"], ids["no"]
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."},
+                {"role": "user", "content": f"<Instruct>: {instruction}\n\n<Query>: {q}\n\n<Document>: {d}"}
+            ],
+            **{k: v for k, v in gen.items() if v is not None},
+            "allowed_token_ids": [yes_id, no_id]
+        }
+        async with sem:
+            async with session.post(api_url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    raise RuntimeError(f"Reranker API failed: {resp.status}: {body}")
+                result = await resp.json()
+        choice = result["choices"][0]
+        lp = choice.get("logprobs")
+        if not lp or "content" not in lp or not lp["content"]:
+            raise RuntimeError("Missing logprobs content in response")
+        last = lp["content"][-1]
+        top = last.get("top_logprobs") or []
+        prob_yes = 0.0
+        prob_no = 0.0
+        for item in top:
+            tok = str(item.get("token", ""))
+            val = float(item.get("logprob", -100))
+            if tok.startswith("token_id:"):
+                try:
+                    tid = int(tok.split(":", 1)[1])
+                    if tid == yes_id:
+                        prob_yes = math.exp(val)
+                    elif tid == no_id:
+                        prob_no = math.exp(val)
+                except Exception:
+                    pass
+            else:
+                t = tok.strip().lower()
+                if t in ("yes", "▁yes", "Ġyes"):
+                    prob_yes = math.exp(val)
+                elif t in ("no", "▁no", "Ġno"):
+                    prob_no = math.exp(val)
+        total = prob_yes + prob_no
+        if total == 0.0:
+            raise RuntimeError("Missing yes/no in top_logprobs")
+        return prob_yes / total
+
+    coros = [_post_one(p) for p in pairs]
+    scores = await asyncio.gather(*coros)
+    return list(scores)
 
 
 async def call_generator_vllm_stream(
@@ -124,7 +354,7 @@ async def call_generator_vllm_stream(
         {"type": "error", "message": "..."}
         {"type": "stream_end", "reason": "..."}
     """
-    effective_generation_config = GENERATOR_RAG_CONFIG.copy()  # 从config获取基础RAG配置
+    effective_generation_config = GENERATION_CONFIG.copy()  # 从config获取基础RAG配置
     if generation_config:  # 如果调用时传入了特定配置，则更新/覆盖
         effective_generation_config.update(generation_config)
 
@@ -156,8 +386,15 @@ async def call_generator_vllm_stream(
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
     request_id = f"gen-{time.time_ns() // 1000000}"  # 简单的毫秒级请求ID
 
+    start_request_time = time.time()
     try:
-        timeout_config = aiohttp.ClientTimeout(total=request_timeout, connect=10.0)  # connect timeout可以短一些
+        # 统一各阶段超时为同一值，避免连接阶段过早超时
+        timeout_config = aiohttp.ClientTimeout(
+            total=request_timeout,
+            connect=request_timeout,
+            sock_connect=request_timeout,
+            sock_read=request_timeout,
+        )
         async with aiohttp.ClientSession(timeout=timeout_config) as session:
             # 构建日志信息
             if messages:
@@ -190,6 +427,9 @@ async def call_generator_vllm_stream(
                         chunk_data = json.loads(data_str)
                         delta = chunk_data.get("choices", [{}])[0].get("delta", {})
 
+                        # 添加详细的调试日志
+                        logger.debug(f"收到delta: {delta}")
+
                         emitted_in_this_delta = False
                         reasoning_text_fragment = delta.get("reasoning_content")
                         if reasoning_text_fragment is not None and isinstance(reasoning_text_fragment, str):
@@ -204,16 +444,25 @@ async def call_generator_vllm_stream(
                             # 只有当它实际有内容时，我们才认为 "emitted_in_this_delta" 为 True（用于调试日志）
                             if final_answer_text_fragment:
                                 emitted_in_this_delta = True
+                        elif "content" in delta:
+                            # content字段存在但为空，也记录一下
+                            logger.debug(f"收到空的content字段: {delta}")
 
                                 # 检查是否有其他意外的、或者需要处理的字段，例如 tool_calls
                         finish_reason = chunk_data.get("choices", [{}])[0].get("finish_reason")
                         if finish_reason and finish_reason != "stop":  # 例如 "length", "tool_calls"
-                            logger.info(
-                                f"[{request_id}] [VLLM_GENERATOR_CLIENT] 流结束原因非 'stop': {finish_reason}. Delta: {delta}")
-                            # 如果是tool_calls，你可能想yield一个特定的事件
+                            # 对于 "length"，通常意味着被 max_tokens 截断，提升为报警输出
+                            if finish_reason == "length":
+                                max_tok = effective_generation_config.get("max_tokens")
+                                logger.warning(
+                                    f"[{request_id}] [VLLM_GENERATOR_CLIENT] 检测到长度截断 (finish_reason=length). max_tokens={max_tok}. Delta: {delta}")
+                            else:
+                                # 其他非 stop 原因保留为信息日志（受全局 WARNING 过滤，不会输出）
+                                logger.info(
+                                    f"[{request_id}] [VLLM_GENERATOR_CLIENT] 流结束原因非 'stop': {finish_reason}. Delta: {delta}")
+                            # 如果是 tool_calls，额外透传事件
                             if finish_reason == "tool_calls" and "tool_calls" in delta:
                                 yield {"type": "tool_calls_delta", "data": delta["tool_calls"]}
-                            # 对于 "length"，通常意味着被max_tokens截断
                             yield {"type": "stream_end", "reason": finish_reason}
                             return  # 遇到明确的结束原因（非stop）就终止
 
@@ -228,7 +477,8 @@ async def call_generator_vllm_stream(
                             exc_info=False)
 
     except asyncio.TimeoutError:
-        logger.error(f"[{request_id}] [VLLM_GENERATOR_CLIENT] API请求超时 (>{request_timeout}s)。")
+        elapsed = time.time() - start_request_time
+        logger.error(f"[{request_id}] [VLLM_GENERATOR_CLIENT] API请求超时 (已耗时 {elapsed:.1f}s, >{request_timeout}s 设定)。")
         yield {"type": "error", "message": "LLM Generator 请求超时。"}
     except aiohttp.ClientConnectorError as e:  # 例如无法连接
         logger.error(f"[{request_id}] [VLLM_GENERATOR_CLIENT] 连接错误到 {api_url}: {e}")
