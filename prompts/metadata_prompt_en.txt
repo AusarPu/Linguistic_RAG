@@ -1,31 +1,37 @@
-You are a professional knowledge analysis and information extraction expert.
-I will provide you with an English text chunk and its identifier. Please complete the following tasks based on this text content:
+You are an expert in Search Engine Optimization (SEO) and Knowledge Graph Indexing.
+I will provide you with a text chunk and its identifier from a knowledge base.
+Your task is to generate high-quality metadata that maximizes the "retrievability" of this chunk in a RAG system.
 
-1.  **Evaluate Content Meaningfulness**:
-    * First, please determine whether this text chunk contains substantial, meaningful information suitable for building a Q&A knowledge base.
-    * If the text chunk content is very sparse with almost no information value (e.g., it might just be headers, footers, isolated chart numbers, blank content, or fragments too fragmented to understand), please indicate this in the returned results.
+Please strictly follow these steps:
 
-2.  **Keyword Summary Extraction (if the text chunk is meaningful)**:
-    * Extract or generate several (e.g., 1 to 5, no need to force quantity, quality first) "keyword summaries" or "tags" that best summarize the core content of this text chunk.
-    * Each keyword summary should be concise and precise, convenient for tag searching, or other phrase combinations that accurately capture core concepts.
-    * Keywords should be globally universal, should not appear like "this book", "the author of this book", but should clearly specify what this book is, who the author is, for easy future searching
-    * You can refer to information in the text chunk identifier to generate more accurate keywords
-    * If the text chunk is evaluated as meaningless, the keyword summary list should be empty.
+1. **Evaluate Indexing Value (Meaningfulness)**:
+   - Determine if this chunk contains specific, retrievable facts, definitions, or logic.
+   - Mark as `false` if it is purely navigational (headers/footers), disjointed fragments, or generic boilerplate with no factual density.
 
-3.  **Pre-generate Related Questions (if the text chunk is meaningful)**:
-    * Based on the content of this text chunk, generate several (e.g., 1 to 3, no need to force quantity, quality first) high-quality English questions that users are most likely to ask and that this text chunk can clearly and directly answer.
-    * Generated questions should be globally universal, should not appear like "this book", "the author of this book", but should clearly specify what this book is, who the author is, for easy future searching
-    * You can refer to information in the text chunk identifier to generate more accurate questions
-    * If the text chunk is evaluated as meaningless, the generated question list should be empty.
+2. **Extract Search Keywords (Taxonomy-Based)**:
+   - If meaningful, extract 5-10 keywords/phrases strictly following this priority hierarchy:
+     - **Tier 1 (High Priority):** Named Entities (Specific People, Organizations, Products, Locations).
+     - **Tier 2 (Medium Priority):** Domain Specific Terminology, Acronyms, Algorithms, or Professional Jargon.
+     - **Tier 3 (Contextual Constraints):** Timeframes (Years), Version Numbers, Error Codes, specific Metrics.
+   - **Negative Constraint:** Do NOT extract generic verbs (e.g., "analyze", "improve") or abstract nouns (e.g., "method", "system") unless they are part of a proper noun.
+   - **Goal:** These keywords must enable exact lexical matching for specific queries.
 
-Please return your results in strict JSON format, containing the following fields:
-- "is_meaningful": Boolean value (true means meaningful, false means no substantial meaning and should be considered for discarding).
-- "reason_if_not_meaningful": String, if "is_meaningful" is false, please briefly explain the reason (e.g., "Contains only headers", "Content too short and no information"). If "is_meaningful" is true, this field can be an empty string.
-- "keyword_summaries": A list containing extracted/generated keyword summary strings. If "is_meaningful" is false, this list must be empty.
-- "generated_questions": A list containing generated question strings. If "is_meaningful" is false, this list must be empty.
+3. **Generate Synthetic User Queries (Reverse-HyDE)**:
+   - If meaningful, generate 3-5 distinct questions/queries that a user would type to find *this specific* text chunk.
+   - **Style Diversity Requirement:**
+     - **Style A (Standard Question):** A complete, grammatical question.
+     - **Style B (Search Fragment):** A keyword-heavy, broken query simulating a search engine input.
+   - **Self-Containment Rule:** NEVER use pronouns like "this text", "the author", or "the article". You MUST resolve them to the specific subject/title provided in the chunk identifier or content (e.g., change "What is his theory?" to "What is [Name]'s theory?").
+   - **Specificity Rule:** The generated questions must be *primarily* answerable by this chunk. Do not generate broad questions if the chunk only discusses a specific sub-topic.
 
-**Important: Please return pure JSON format directly, do not use any markdown code block markers (such as ```json or ```), and do not add any explanatory text.**
-Ensure correct JSON format, all special characters within string values (such as newlines, double quotes) are properly escaped.
+Please return the result in strict JSON format with the following fields:
+- "is_meaningful": Boolean (true/false).
+- "reason_if_not_meaningful": String (brief reason if false, empty string if true).
+- "keyword_summaries": List of strings (extracted keywords). Empty if not meaningful.
+- "generated_questions": List of strings (synthetic queries). Empty if not meaningful.
+
+**Important: Return RAW JSON only. No Markdown formatting (no ```json). No explanations.**
+Ensure all strings are properly escaped.
 
 Text chunk identifier: {chunk_id}
 

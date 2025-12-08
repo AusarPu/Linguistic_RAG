@@ -36,12 +36,12 @@ class OptimizationOutput(BaseModel):
 VLLM_OPTIMIZER_API_URL = config.GENERATOR_API_URL
 OPTIMIZER_MODEL_NAME = config.GENERATOR_MODEL_NAME_FOR_API
 OPTIMIZER_GENERATION_CONFIG = {
-    "max_tokens": 4096,
+    "max_tokens": 8192,
     "temperature": 0.7, 
     "top_p": 0.95,
     "repetition_penalty": 1.1,
     "stop": None,
-    "chat_template_kwargs": {"enable_thinking": False}
+    "chat_template_kwargs": {"enable_thinking": True}
 }
 
 # 使用config.py中的新超时配置

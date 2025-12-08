@@ -114,7 +114,7 @@ start_eval_llm() {
     --gpu-memory-utilization "${eval_mem_util}" \
     --tensor-parallel-size "${parallel_workers}" \
     --max-model-len 8192 \
-    --max_num_seqs 512 \
+    --max_num_seqs 1024 \
     > "$PROJECT_ROOT/logs/vllm_eval_llm.log" 2>&1 & echo $! > "$PROJECT_ROOT/pids/vllm_eval_llm.pid")
   sleep 120
 }
