@@ -37,5 +37,5 @@ Please return the optimized Chunk B text strictly in the following JSON format.
 **Important: Please return pure JSON format directly, do not use any markdown code block markers (such as ```json or ```), and do not add any explanatory text.**
 Ensure that the value of the "optimized_chunk_B_text" field is a JSON-compliant string, which means that special characters within the string (such as newlines, double quotes, backslashes, etc.) need to be properly escaped (for example, newlines should be represented as \\n, double quotes as \", backslashes as \\\\).
 {{
-  "optimized_chunk_B_text": "Here is the optimized text content of Chunk B..."
+  "optimized_chunk_B_text": <strings>
 }}

@@ -25,8 +25,8 @@ class MetadataOutput(BaseModel):
     """元数据生成的结构化输出模型"""
     is_meaningful: bool
     reason_if_not_meaningful: str
-    keyword_summaries: List[str]
-    generated_questions: List[str]
+    keywords: List[str]
+    summary: List[str]
 
 class OptimizationOutput(BaseModel):
     """文本优化的结构化输出模型"""
@@ -155,9 +155,13 @@ def detect_text_language(text: str) -> str:
         return 'en'
 
 
+# def load_metadata_prompt(language: str) -> str:
+#     lang = 'zh' if language == 'mixed' else language
+#     path = config.METADATA_PROMPT_EN_FILE if lang == 'en' else config.METADATA_PROMPT_ZH_FILE
+#     return open(path, "r", encoding="utf-8").read()
+
 def load_metadata_prompt(language: str) -> str:
-    lang = 'zh' if language == 'mixed' else language
-    path = config.METADATA_PROMPT_EN_FILE if lang == 'en' else config.METADATA_PROMPT_ZH_FILE
+    path = config.METADATA_PROMPT_EN_FILE 
     return open(path, "r", encoding="utf-8").read()
 
 def load_optimization_prompt(language: str) -> str:
@@ -518,8 +522,8 @@ async def process_metadata_batch(chunks_batch, semaphore=None):
                     # 为有意义的块添加元数据
                     enhanced_chunk = chunk.copy()
                     enhanced_chunk.update({
-                        'keyword_summaries': metadata['keyword_summaries'],
-                        'generated_questions': metadata['generated_questions'],
+                        'keyword_summaries': metadata['keywords'],
+                        'generated_questions': metadata['summary'],
                         'is_meaningful': True
                     })
                     processed_chunks.append(enhanced_chunk)
