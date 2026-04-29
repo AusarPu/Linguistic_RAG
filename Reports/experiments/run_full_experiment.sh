@@ -53,6 +53,7 @@ show_help() {
     echo "  --no-dense-keywords     禁用密集关键字检索路径"
     echo "  --no-dense-questions    禁用密集问题检索路径"
     echo "  --no-usefulness-judger  禁用有用性判断模块"
+    echo "  --use-bm25-chunks-only  启用纯BM25块召回路径"
     echo ""
     echo "参数:"
     echo "  样本量              每个数据集的最大样本数量（必需）"
@@ -177,6 +178,7 @@ run_index() {
     
     print_info "========== 阶段4: 索引构建 =========="
     
+    python3 -c "import nltk; nltk.download('stopwords')"
     local cmd="python3 $SCRIPT_DIR/dataset_index/build_dataset_indexes.py"
     if [ "$test_mode" = true ]; then
         cmd="$cmd --test --test-limit $max_samples"
@@ -317,6 +319,10 @@ main() {
                 ;;
             --no-usefulness-judger)
                 ablation_args="$ablation_args --no-usefulness-judger"
+                shift
+                ;;
+            --use-bm25-chunks-only)
+                ablation_args="$ablation_args --use-bm25-chunks-only"
                 shift
                 ;;
             -*)

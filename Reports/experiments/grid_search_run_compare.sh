@@ -171,14 +171,16 @@ wait_for_eval_start() {
   local grace="$2"
   local extra=$((grace*3))
   local log_dir="$SCRIPT_DIR/logs/$run_name"
-  local r1="$log_dir/r1.log"
-  local r4="$log_dir/r4.log"
+  local r_dense="$log_dir/r_dense.log"
+  local r_bm25="$log_dir/r_dense_bm25.log"
+  local r_full="$log_dir/r_full.log"
 
   local end1=$(( $(date +%s) + grace ))
   while [ $(date +%s) -le $end1 ]; do
-    if [ -f "$r1" ] && [ -f "$r4" ]; then
-      if grep -q "阶段5: RAG评估" "$r1" || grep -q "evaluate_datasets.py" "$r1"; then
-        if grep -q "阶段5: RAG评估" "$r4" || grep -q "evaluate_datasets.py" "$r4"; then
+    if [ -f "$r_dense" ] && [ -f "$r_bm25" ] && [ -f "$r_full" ]; then
+      if grep -q "阶段5: RAG评估" "$r_dense" || grep -q "evaluate_datasets.py" "$r_dense"; then
+        if grep -q "阶段5: RAG评估" "$r_bm25" || grep -q "evaluate_datasets.py" "$r_bm25"; then
+          if grep -q "阶段5: RAG评估" "$r_full" || grep -q "evaluate_datasets.py" "$r_full"; then
           return 0
         fi
       fi
@@ -189,9 +191,10 @@ wait_for_eval_start() {
   local end2=$(( $(date +%s) + extra ))
   while [ $(date +%s) -le $end2 ]; do
     if [ -f "$r1" ] && [ -f "$r4" ]; then
-      if grep -q "阶段5: RAG评估" "$r1" || grep -q "evaluate_datasets.py" "$r1"; then
-        if grep -q "阶段5: RAG评估" "$r4" || grep -q "evaluate_datasets.py" "$r4"; then
-          return 0
+    if [ -f "$r_dense" ] && [ -f "$r_bm25" ] && [ -f "$r_full" ]; then
+      if grep -q "阶段5: RAG评估" "$r_dense" || grep -q "evaluate_datasets.py" "$r_dense"; then
+        if grep -q "阶段5: RAG评估" "$r_bm25" || grep -q "evaluate_datasets.py" "$r_bm25"; then
+          if grep -q "阶段5: RAG评估" "$r_full" || grep -q "evaluate_datasets.py" "$r_full"; then
         fi
       fi
     fi
@@ -199,6 +202,8 @@ wait_for_eval_start() {
   done
   return 1
 }
+
+run_one_combo() {
 
 run_one_combo() {
   local TC="$1"; local TQ="$2"; local TK="$3"; local CTP="$4"; local QTP="$5"; local KTP="$6"; local FTP="$7"; local RR="$8"
@@ -310,7 +315,7 @@ start_eval_llm
 declare -a ADV_PIDS=()
 while read -r RUN_NAME; do
   [ -z "$RUN_NAME" ] && continue
-  for variant in r1 r4; do
+  for variant in r_dense r_dense_bm25 r_full; do
     results_dir="$SCRIPT_DIR/datasets/runs/$RUN_NAME/$variant/rag_evaluation_results"
     output_dir="$SCRIPT_DIR/datasets/runs/$RUN_NAME/$variant/advanced_evaluation_results"
     if [ -d "$results_dir" ]; then

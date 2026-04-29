@@ -154,6 +154,31 @@ class KnowledgeBase:
         logger.info("All search indexes and necessary data loaded successfully.")
 
     # --- 检索方法 ---
+    async def search_bm25_chunks_only(self, query_text: Union[str, List[str]], top_k: int = 10) -> List[Dict[str, Any]]:
+        if not self.chunk_bm25_index:
+            return []
+        queries = [query_text] if isinstance(query_text, str) else query_text
+        agg = {}
+        from preprocess.build_core_indexes import tokenize_for_bm25
+        for q in queries:
+            tokens = tokenize_for_bm25(q)
+            bm25_scores = self.chunk_bm25_index.get_scores(tokens)
+            ranked = np.argsort(bm25_scores)[::-1]
+            for idx in ranked[:top_k * 2]:
+                s = float(bm25_scores[idx])
+                if s > 0 and 0 <= idx < len(self.indexed_chunks_metadata):
+                    m = self.indexed_chunks_metadata[idx]
+                    cid = m.get("chunk_id")
+                    if cid:
+                        prev = agg.get(cid)
+                        if not prev or s > prev.get("retrieval_score", 0.0):
+                            cp = dict(m)
+                            cp["retrieval_score"] = s
+                            cp["retrieval_type"] = "bm25_chunk_only"
+                            agg[cid] = cp
+        res = list(agg.values())
+        res.sort(key=lambda x: x["retrieval_score"], reverse=True)
+        return res[:top_k]
     async def search_dense_chunks(self, query_text: Union[str, List[str]], top_k: int = DENSE_CHUNK_RETRIEVAL_TOP_K,
                             threshold: float = DENSE_CHUNK_THRESHOLD) -> List[Dict[str, Any]]:
         """

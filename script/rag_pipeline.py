@@ -40,6 +40,7 @@ async def execute_rag_flow(
         use_dense_keywords: bool = True,
         use_dense_questions: bool = True,
         use_usefulness_judger: bool = True,
+        use_bm25_chunks_only: bool = False,
         # 你也可以将 reranker_client_fn, generator_client_fn 作为参数传入，以增加灵活性
         # 或者让它们直接从本模块或 vllm_clients.py 导入
 ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -112,6 +113,12 @@ async def execute_rag_flow(
             DENSE_QUESTION_THRESHOLD
         ))
         retrieval_paths_display_names.append("问题召回")
+
+    if use_bm25_chunks_only:
+        tasks.append(kb_instance.search_bm25_chunks_only([
+            _QUESTION
+        ], 10))
+        retrieval_paths_display_names.append("BM25召回")
     
     # 如果所有检索路径都被禁用，返回错误
     if not tasks:

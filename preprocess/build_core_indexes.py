@@ -24,6 +24,9 @@ import re
 from pathlib import Path as _P
 from script.config_rag import BM25_TOKENIZER_LANG, BM25_TOKENIZER_SOURCE, EN_STOPWORDS_FILE
 from preprocess.vllm_tokenizer import get_local_hf_tokenizer
+import nltk
+from nltk.corpus import stopwords
+import snowballstemmer
 
 _en_stopwords = set()
 if EN_STOPWORDS_FILE:
@@ -36,6 +39,7 @@ if EN_STOPWORDS_FILE:
                     _en_stopwords.add(t)
 
 _hf_tok = None
+_stemmer_en = None
 def _is_english(text: str) -> bool:
     letters = re.findall(r"[A-Za-z]", text)
     return len(letters) > 0 and (len(letters) / max(len(text), 1)) > 0.2
@@ -47,6 +51,16 @@ def _tokenize_en(text: str) -> list:
             _hf_tok = get_local_hf_tokenizer()
         toks = _hf_tok.tokenize(text)
         toks = [t.lower() for t in toks if any(c.isalpha() for c in t)]
+    elif BM25_TOKENIZER_SOURCE == "stem":
+        global _stemmer_en
+        if _stemmer_en is None:
+            _stemmer_en = snowballstemmer.stemmer('english')
+        toks = re.findall(r"[A-Za-z]+", text)
+        toks = [t.lower() for t in toks]
+        sw = set(stopwords.words("english"))
+        sw |= _en_stopwords
+        toks = [t for t in toks if t not in sw and len(t) > 1]
+        toks = _stemmer_en.stemWords(toks)
     else:
         toks = re.findall(r"[A-Za-z]+", text)
         toks = [t.lower() for t in toks]
@@ -279,19 +293,14 @@ def build_all_search_indexes(
             # --- 2.1 为文本块构建BM25索引 (使用jieba分词) ---
             logger.info(f"开始为 {len(texts_for_chunk_dense_embedding)} 个文本块构建BM25索引 (使用jieba分词)...")
             try:
-                # 使用jieba对文本块进行分词
                 tokenized_chunks = []
                 with tqdm(total=len(texts_for_chunk_dense_embedding), desc="文本块分词", unit="块") as pbar:
                     for text in texts_for_chunk_dense_embedding:
                         tokens = tokenize_for_bm25(text)
                         tokenized_chunks.append(tokens)
                         pbar.update(1)
-                
-                # 创建BM25索引
                 from rank_bm25 import BM25Okapi
                 chunk_bm25 = BM25Okapi(tokenized_chunks)
-                
-                # 保存文本块BM25索引
                 with open(output_path / chunk_bm25_index_filename, "wb") as f:
                     pickle.dump({
                         "bm25_model": chunk_bm25,
@@ -299,13 +308,34 @@ def build_all_search_indexes(
                         "tokenized_chunks": tokenized_chunks
                     }, f)
                 logger.info(f"文本块BM25索引已保存到: {output_path / chunk_bm25_index_filename}")
-                
             except Exception as e:
                 logger.error(f"构建文本块BM25索引时出错: {e}", exc_info=True)
 
         except Exception as e:
             logger.error(f"块文本稠密向量处理或Faiss索引构建过程中出错: {e}", exc_info=True)
-            # 如果这里失败，后续可能无法进行，或者至少稠密检索会失败
+            # 稠密向量或Faiss索引失败时，继续后续稀疏BM25处理与短语/问题索引尝试
+            try:
+                # 如果BM25索引文件尚未生成，则补建BM25
+                bm25_path = output_path / chunk_bm25_index_filename
+                if not bm25_path.exists():
+                    logger.info(f"因稠密向量失败，尝试仅构建BM25索引：{bm25_path}")
+                    tokenized_chunks = []
+                    with tqdm(total=len(texts_for_chunk_dense_embedding), desc="文本块分词", unit="块") as pbar:
+                        for text in texts_for_chunk_dense_embedding:
+                            tokens = tokenize_for_bm25(text)
+                            tokenized_chunks.append(tokens)
+                            pbar.update(1)
+                    from rank_bm25 import BM25Okapi
+                    chunk_bm25 = BM25Okapi(tokenized_chunks)
+                    with open(bm25_path, "wb") as f:
+                        pickle.dump({
+                            "bm25_model": chunk_bm25,
+                            "chunk_texts": texts_for_chunk_dense_embedding,
+                            "tokenized_chunks": tokenized_chunks
+                        }, f)
+                    logger.info(f"文本块BM25索引已保存到: {bm25_path}")
+            except Exception as e2:
+                logger.error(f"BM25后备构建失败: {e2}", exc_info=True)
     else:
         logger.warning("没有文本块可用于稠密索引，跳过此步骤。")
 
@@ -343,9 +373,8 @@ def build_all_search_indexes(
             
             logger.info("唯一关键词短语的稠密向量映射生成完成。")
 
-            # 创建并保存关键词短语BM25索引
             from rank_bm25 import BM25Okapi
-            tokenized_phrases = [phrase.split() for phrase in unique_phrases_list_for_encoding]
+            tokenized_phrases = [tokenize_for_bm25(phrase) for phrase in unique_phrases_list_for_encoding]
             phrase_bm25 = BM25Okapi(tokenized_phrases)
             
             with open(output_path / phrase_bm25_index_filename, "wb") as f:

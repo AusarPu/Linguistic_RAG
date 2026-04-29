@@ -91,7 +91,8 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
                                 use_dense_chunks: bool = True,
                                 use_dense_keywords: bool = True,
                                 use_dense_questions: bool = True,
-                                use_usefulness_judger: bool = True) -> Dict[str, Any]:
+                                use_usefulness_judger: bool = True,
+                                use_bm25_chunks_only: bool = False) -> Dict[str, Any]:
     """
     处理单个问题，返回结果
     """
@@ -113,7 +114,8 @@ async def process_single_question(question: str, kb_instance: KnowledgeBase, que
             use_dense_chunks=use_dense_chunks,
             use_dense_keywords=use_dense_keywords,
             use_dense_questions=use_dense_questions,
-            use_usefulness_judger=use_usefulness_judger
+            use_usefulness_judger=use_usefulness_judger,
+            use_bm25_chunks_only=use_bm25_chunks_only
         ):
             # 收集查询重写结果
             if event.get("type") == "rewritten_query_result":
@@ -187,7 +189,8 @@ async def process_questions_batch(questions_batch: List[Dict[str, Any]], kb_inst
                                 use_dense_chunks: bool = True,
                                 use_dense_keywords: bool = True,
                                 use_dense_questions: bool = True,
-                                use_usefulness_judger: bool = True) -> List[Dict[str, Any]]:
+                                use_usefulness_judger: bool = True,
+                                use_bm25_chunks_only: bool = False) -> List[Dict[str, Any]]:
     """
     并发处理一批问题
     """
@@ -205,7 +208,7 @@ async def process_questions_batch(questions_batch: List[Dict[str, Any]], kb_inst
         task = process_single_question(question, kb_instance, question_id, 
                                      use_query_rewriter, use_dense_chunks, 
                                      use_dense_keywords, use_dense_questions, 
-                                     use_usefulness_judger)
+                                     use_usefulness_judger, use_bm25_chunks_only)
         tasks.append((task, item))
     
     # 并发执行所有任务
@@ -244,7 +247,8 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
                                     use_dense_keywords: bool = True,
                                     use_dense_questions: bool = True,
                                     use_usefulness_judger: bool = True,
-                                    run_label: str = "RUN") -> None:
+                                    run_label: str = "RUN",
+                                    use_bm25_chunks_only: bool = False) -> None:
     """
     并发评估单个数据集
     """
@@ -335,6 +339,7 @@ async def evaluate_dataset_concurrent(dataset_name: str, config: Dict[str, str],
                     use_dense_keywords,
                     use_dense_questions,
                     use_usefulness_judger,
+                    use_bm25_chunks_only,
                 )
                 # 合并原始字段
                 result.update({
@@ -396,7 +401,8 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
                                          use_dense_keywords: bool = True,
                                          use_dense_questions: bool = True,
                                          use_usefulness_judger: bool = True,
-                                         run_label: str = "RUN") -> None:
+                                         run_label: str = "RUN",
+                                         use_bm25_chunks_only: bool = False) -> None:
     """
     评估所有数据集，支持数据集级别的并发
     """
@@ -409,7 +415,7 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
         tasks = [
             evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample,
                                       use_query_rewriter, use_dense_chunks, use_dense_keywords, 
-                                      use_dense_questions, use_usefulness_judger, run_label)
+                                      use_dense_questions, use_usefulness_judger, run_label, use_bm25_chunks_only)
             for dataset_name, config in datasets_to_process
         ]
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -420,8 +426,9 @@ async def evaluate_all_datasets_concurrent(datasets_to_process: List[tuple],
             try:
                 await evaluate_dataset_concurrent(dataset_name, config, batch_size, max_questions, is_sample,
                                                 use_query_rewriter, use_dense_chunks, use_dense_keywords, 
-                                                use_dense_questions, use_usefulness_judger, run_label)
+                                                use_dense_questions, use_usefulness_judger, run_label, use_bm25_chunks_only)
             except Exception as e:
+
                 logger.error(f"数据集 {dataset_name} 评估失败: {str(e)}")
                 continue
 
@@ -453,6 +460,8 @@ async def main():
                        help="禁用密集问题检索路径")
     parser.add_argument("--no-usefulness-judger", action="store_true", 
                        help="禁用有用性判断模块")
+    parser.add_argument("--use-bm25-chunks-only", action="store_true", 
+                       help="启用纯BM25块召回路径")
     
     args = parser.parse_args()
     
@@ -493,7 +502,8 @@ async def main():
         use_dense_keywords,
         use_dense_questions,
         use_usefulness_judger,
-        args.run_label
+        args.run_label,
+        args.use_bm25_chunks_only
     )
     await close_reranker_session()
     
