@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced RAG Architecture Visualization</title>
+
+    <style>
+        :root {
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-primary: #1e293b;
+            --border-color: #e2e8f0;
+            --primary-blue: #3b82f6;
+            --btn-hover: #eff6ff;
+        }
+
+        body {
+            font-family: 'Times New Roman', serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 40px 20px;
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0 0 8px 0;
+            color: #0f172a;
+        }
+
+        .header p {
+            font-size: 14px;
+            color: #64748b;
+            margin: 0;
+        }
+
+        /* 容器样式 */
+        .diagram-container {
+            position: relative;
+            background: var(--card-bg);
+            border-radius: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            width: 100%;
+            max-width: 1200px;
+            height: 80vh; /* 固定高度以支持滚动/缩放 */
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 工具栏样式 */
+        .toolbar {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(4px);
+            padding: 6px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            display: flex;
+            gap: 4px;
+            z-index: 10;
+        }
+
+        .btn {
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            width: 32px;
+            height: 32px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #475569;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background-color: var(--btn-hover);
+            color: var(--primary-blue);
+        }
+        
+        .btn svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        .btn-download {
+            width: auto;
+            padding: 0 12px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        /* Mermaid 渲染区域 */
+        #mermaid-wrapper {
+            width: 100%;
+            height: 100%;
+            overflow: auto; /* 允许原生滚动 */
+            display: flex;
+            justify-content: center;
+            padding: 40px;
+            box-sizing: border-box;
+            cursor: grab;
+        }
+
+        #mermaid-wrapper:active {
+            cursor: grabbing;
+        }
+
+        /* 隐藏原始 Mermaid 代码 */
+        .mermaid-source {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>多路召回 RAG 架构图</h1>
+        <p>包含离线索引构建与在线查询重写、多路检索及重排序流程</p>
+    </div>
+
+    <div class="diagram-container">
+        <!-- 工具栏 -->
+        <div class="toolbar">
+            <button class="btn" onclick="zoomIn()" title="放大">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+            <button class="btn" onclick="zoomOut()" title="缩小">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+            <button class="btn" onclick="resetZoom()" title="重置视图">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+            <div style="width: 1px; background: #e2e8f0; margin: 0 4px;"></div>
+            <!-- 修改了这里：由 SVG 改为 PNG -->
+            <button class="btn btn-download" onclick="downloadPNG()" title="下载 PNG 图片">
+                下载 PNG
+            </button>
+        </div>
+
+        <!-- 绘图区域 -->
+        <div id="mermaid-wrapper">
+            <div class="mermaid">
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#eff6ff',
+      'primaryTextColor': '#1e3a8a',
+      'primaryBorderColor': '#bfdbfe',
+      'lineColor': '#64748b',
+      'secondaryColor': '#f0fdf4',
+      'tertiaryColor': '#fff',
+      'fontFamily': 'Times New Roman, serif'
+    },
+    'flowchart': {
+      'curve': 'basis',
+      'nodeSpacing': 40,
+      'rankSpacing': 60,
+      'padding': 20
+    }
+  }
+}%%
+graph TD
+    %% 样式定义 %%
+    classDef default fill:#fff,stroke:#cbd5e1,stroke-width:1px,color:#334155,rx:6,ry:6;
+    classDef input fill:#f8fafc,stroke:#94a3b8,stroke-width:2px,color:#0f172a,font-weight:bold;
+    classDef process fill:#eff6ff,stroke:#60a5fa,stroke-width:2px,color:#1e40af;
+    classDef llm fill:#f3e8ff,stroke:#c084fc,stroke-width:2px,color:#6b21a8,stroke-dasharray: 5 5;
+    classDef index fill:#f0fdf4,stroke:#4ade80,stroke-width:2px,color:#166534;
+    classDef fusion fill:#fff7ed,stroke:#fb923c,stroke-width:2px,color:#9a3412,rx:20,ry:20;
+    classDef output fill:#1e293b,stroke:#0f172a,stroke-width:2px,color:#fff;
+    classDef ghost fill:none,stroke:none,color:transparent;
+
+    subgraph Offline [Offline Phase: Index Construction]
+        direction TB
+        Doc[知识库文档]:::input --> Chunk[文档分块: 生成文本块]:::process
+        
+        Chunk --> GenQ[LLM 元问题生成]:::llm
+        Chunk --> GenK[LLM 关键词生成]:::llm
+        Chunk --> IdxVec[文本块向量索引]:::index
+        
+        GenQ --> IdxQ[元问题向量索引]:::index
+        GenK --> IdxK[关键词向量索引]:::index
+        Chunk --> IdxBM[文本块词法索引: BM25]:::index
+
+        Doc --> G1[ ]:::ghost --> G2[ ]:::ghost --> G3[ ]:::ghost --> G4[ ]:::ghost --> G5[ ]:::ghost
+    end
+
+    subgraph Online [Online Phase: Retrieval & Generation]
+        direction TB
+        Query[用户查询]:::input --> Rewrite["查询重写器<br/>(生成 Q_sem, Q_broad, Q_keywords)"]:::process
+        
+        Rewrite --> Path1[路径1: 直接语义检索<br/>Q_sem vs 文本块向量]:::process
+        Rewrite --> Path2[路径2: 意图对齐检索<br/>Q_broad+Q_sem vs 元问题向量]:::process
+        Rewrite --> Path3A[路径3A: 关键词词法<br/>Q_keywords vs BM25]:::process
+        Rewrite --> Path3B[路径3B: 关键词语义<br/>Q_keywords vs 关键词向量]:::process
+        
+        Path3A --> RRF((RRF 融合)):::fusion
+        Path3B --> RRF
+        
+        Path1 --> Pool[候选池化与去重]:::process
+        Path2 --> Pool
+        RRF --> Pool
+        
+        Pool --> Rerank[全局重排序<br/>Cross-Encoder]:::llm
+        Rerank --> TopK["严格过滤: Top-K_{final}"]:::process
+        TopK --> GenAns[答案生成: Qwen3 30B]:::output
+    end
+
+    %% 跨子图的对齐关系 (Invisible links for layout) %%
+    IdxVec ~~~ Path1
+    IdxQ ~~~ Path2
+    IdxBM ~~~ Path3A
+    IdxK ~~~ Path3B
+
+    linkStyle default stroke:#64748b,stroke-width:1.5px,fill:none;
+            </div>
+        </div>
+    </div>
+
+    <!-- 引入 Mermaid -->
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        
+        mermaid.initialize({ 
+            startOnLoad: true,
+            securityLevel: 'loose',
+            flowchart: { useMaxWidth: false, htmlLabels: true }
+        });
+
+        // 渲染完成后调整 SVG 大小
+        mermaid.init(undefined, document.querySelectorAll('.mermaid')).then(() => {
+            const svg = document.querySelector('.mermaid svg');
+            if(svg) {
+                svg.style.maxWidth = 'none'; // 允许放大
+                svg.style.height = 'auto';
+            }
+        });
+    </script>
+
+    <!-- 缩放和平移逻辑 -->
+    <script>
+        let scale = 1;
+        let pannedX = 0;
+        let pannedY = 0;
+        const wrapper = document.getElementById('mermaid-wrapper');
+        let isDragging = false;
+        let startX, startY;
+
+        function updateTransform() {
+            const diagram = document.querySelector('.mermaid');
+            if(diagram) {
+                diagram.style.transform = `scale(${scale}) translate(${pannedX}px, ${pannedY}px)`;
+                diagram.style.transformOrigin = 'center top';
+                diagram.style.transition = isDragging ? 'none' : 'transform 0.2s ease-out';
+            }
+        }
+
+        window.zoomIn = () => {
+            scale += 0.1;
+            updateTransform();
+        }
+
+        window.zoomOut = () => {
+            if (scale > 0.2) scale -= 0.1;
+            updateTransform();
+        }
+
+        window.resetZoom = () => {
+            scale = 1;
+            pannedX = 0;
+            pannedY = 0;
+            updateTransform();
+        }
+        
+        // 简单的鼠标拖拽平移逻辑
+        wrapper.addEventListener('mousedown', (e) => {
+            if(e.target.closest('.btn')) return; // 如果点击的是按钮则忽略
+            isDragging = true;
+            startX = e.clientX - pannedX;
+            startY = e.clientY - pannedY;
+            wrapper.style.cursor = 'grabbing';
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            wrapper.style.cursor = 'grab';
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            e.preventDefault();
+            pannedX = e.clientX - startX;
+            pannedY = e.clientY - startY;
+            // 只有在非拖拽状态下才使用 transition，拖拽时为了流畅要实时更新
+            const diagram = document.querySelector('.mermaid');
+            if(diagram) {
+                 diagram.style.transition = 'none';
+                 diagram.style.transform = `scale(${scale}) translate(${pannedX}px, ${pannedY}px)`;
+            }
+        });
+
+        // 下载 PNG 功能 (High Resolution)
+        window.downloadPNG = () => {
+            const svgElement = document.querySelector('.mermaid svg');
+            if (!svgElement) {
+                alert('图表尚未加载完成');
+                return;
+            }
+
+            // 克隆 SVG 以便我们可以在不影响显示的情况下进行操作
+            const clonedSvg = svgElement.cloneNode(true);
+            
+            // 获取 SVG 的原始尺寸 (ViewBox)
+            const viewBox = svgElement.getAttribute('viewBox');
+            let svgW, svgH;
+            
+            if (viewBox) {
+                const parts = viewBox.split(/\s+|,/);
+                svgW = parseFloat(parts[2]);
+                svgH = parseFloat(parts[3]);
+            } else {
+                const box = svgElement.getBoundingClientRect();
+                svgW = box.width;
+                svgH = box.height;
+            }
+
+            // 设置导出目标宽度 (6 in @ 300dpi = 1800px)
+            const targetWidth = 1800;
+            const exportScale = targetWidth / svgW;
+            const finalWidth = targetWidth;
+            const finalHeight = Math.round(svgH * exportScale);
+
+            // 强制设置克隆节点的宽高，覆盖任何百分比设置
+            clonedSvg.setAttribute('width', finalWidth);
+            clonedSvg.setAttribute('height', finalHeight);
+
+            // 序列化 SVG
+            const serializer = new XMLSerializer();
+            let source = serializer.serializeToString(clonedSvg);
+
+            // 命名空间修复，确保作为 Image src 能被正确识别
+            if(!source.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)){
+                source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+            }
+
+            // 处理中文乱码问题，使用 base64 编码
+            const imgSrc = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(source)));
+
+            // 准备 Canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = finalWidth;
+            canvas.height = finalHeight;
+            const ctx = canvas.getContext('2d');
+
+            // 填充白色背景（PNG 默认透明，填充白色更适合文档）
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, finalWidth, finalHeight);
+
+            // 创建图片对象并绘制
+            const img = new Image();
+            img.onload = () => {
+                ctx.drawImage(img, 0, 0);
+                
+                // 导出为 PNG
+                const pngUrl = canvas.toDataURL('image/png');
+                
+                // 触发下载
+                const link = document.createElement('a');
+                link.href = pngUrl;
+                link.download = 'rag_architecture.png';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+            
+            img.onerror = (e) => {
+                console.error('PNG export failed:', e);
+                alert('图片生成失败，请重试');
+            };
+
+            img.src = imgSrc;
+        };
+    </script>
+</body>
+</html>

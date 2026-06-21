@@ -52,3 +52,4 @@ Evaluate_Linguistic/indexes
 .trae/
 script/api_keys
 Reports/experiments/params_grid.json
+paper_figures/

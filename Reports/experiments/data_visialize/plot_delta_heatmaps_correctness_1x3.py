@@ -4,6 +4,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Nimbus Roman", "Times New Roman", "DejaVu Serif"],
+    "font.size": 10,
+    "axes.titlesize": 10,
+    "axes.labelsize": 10,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "legend.fontsize": 9,
+    "figure.dpi": 300,
+    "savefig.dpi": 300,
+})
+
+FIG_SIZE = (6.0, 5.0)
+
 CSV_PATH = "/home/pushihao/RAG/Reports/experiments/data_visialize/aggregated_ragas_summary_structured.csv"
 OUTPUT_PATH = "/home/pushihao/RAG/Reports/docs/pics/delta_heatmap_answer_correctness_1x3.png"
 METRIC = "answer_correctness"
@@ -53,9 +68,9 @@ def main():
         mats.append(mat)
         tau_orders.append(tau_order)
     norm = build_global_norm(mats)
-    fig = plt.figure(figsize=(24, 6), dpi=480, constrained_layout=True)
-    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 1, 0.05])
-    axs = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1]), fig.add_subplot(gs[0, 2])]
+    fig = plt.figure(figsize=FIG_SIZE, constrained_layout=True)
+    gs = fig.add_gridspec(4, 1, height_ratios=[1, 1, 1, 0.06])
+    axs = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[1, 0]), fig.add_subplot(gs[2, 0])]
     for i, ds in enumerate(DATASETS):
         ax = axs[i]
         mat = mats[i]
@@ -70,10 +85,10 @@ def main():
         ax.set_title(ds)
         if i == 0:
             ax.set_ylabel("Threshold")
-    cax = fig.add_subplot(gs[0, 3])
+    cax = fig.add_subplot(gs[3, 0])
     sm = plt.cm.ScalarMappable(cmap="seismic", norm=norm)
     sm.set_array([])
-    cbar = fig.colorbar(sm, cax=cax)
+    cbar = fig.colorbar(sm, cax=cax, orientation="horizontal")
     cbar.set_label("Delta")
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     plt.savefig(OUTPUT_PATH)
